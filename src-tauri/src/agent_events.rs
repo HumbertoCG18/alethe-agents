@@ -174,12 +174,14 @@ fn write_codex_mcp_bridge(port: u16, planner_id: &str, safe_planner: &str) -> Re
         "while ($line = [Console]::In.ReadLine()) {{\r\n\
          \x20\x20if ([string]::IsNullOrWhiteSpace($line)) {{ continue }}\r\n\
          \x20\x20try {{\r\n\
-         \x20\x20\x20\x20$resp = Invoke-WebRequest -UseBasicParsing -Uri '{endpoint}/mcp' -Method Post -Body $line -ContentType 'application/json' -Headers @{{ 'X-Alethe-Token' = '{token}'; 'X-Alethe-Planner' = '{planner}' }}\r\n\
+         \x20\x20\x20\x20$resp = Invoke-WebRequest -UseBasicParsing -ErrorAction Stop -Uri '{endpoint}/mcp' -Method Post -Body $line -ContentType 'application/json' -Headers @{{ 'X-Alethe-Token' = '{token}'; 'X-Alethe-Planner' = '{planner}' }}\r\n\
          \x20\x20\x20\x20if ($resp.Content) {{\r\n\
          \x20\x20\x20\x20\x20\x20[Console]::Out.WriteLine($resp.Content)\r\n\
          \x20\x20\x20\x20\x20\x20[Console]::Out.Flush()\r\n\
          \x20\x20\x20\x20}}\r\n\
-         \x20\x20}} catch {{}}\r\n\
+         \x20\x20}} catch {{\r\n\
+         \x20\x20\x20\x20[Console]::Error.WriteLine('[alethe-mcp] request failed: ' + $_.Exception.Message)\r\n\
+         \x20\x20}}\r\n\
          }}\r\n",
         endpoint = endpoint,
         token = ps_escape(token),
@@ -584,12 +586,21 @@ mod tests {
         let removed = std::fs::remove_file(&path);
 
         assert!(
-            script.contains("Invoke-WebRequest -UseBasicParsing -Uri"),
-            "bridge script should pass -UseBasicParsing before -Uri to Invoke-WebRequest"
+            script.contains("Invoke-WebRequest -UseBasicParsing -ErrorAction Stop -Uri"),
+            "bridge script should pass -UseBasicParsing and -ErrorAction Stop to Invoke-WebRequest"
         );
         assert!(
             !script.contains("Invoke-WebRequest -Uri"),
             "bridge script should not call Invoke-WebRequest without -UseBasicParsing"
+        );
+        // Failures go to stderr; stdout stays reserved for JSON-RPC responses.
+        assert!(
+            !script.contains("catch {}"),
+            "bridge script should not swallow request failures"
+        );
+        assert!(
+            script.contains("[Console]::Error.WriteLine("),
+            "bridge script should report request failures on stderr"
         );
         removed.expect("generated bridge script should be removable");
     }

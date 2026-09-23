@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { codexHeadlineWindow, hasCodexWindow, type CodexUsage } from './usage'
+import { codexHeadlineWindow, type CodexUsage, hasCodexWindow } from './usage'
 
 const absent = { used_percent: 0, window_minutes: 0, resets_at_ms: 0 }
 const weekly = { used_percent: 92, window_minutes: 10_080, resets_at_ms: 1_790_403_968_000 }

@@ -20,7 +20,7 @@ import {
 import { costClassFor } from '../../lib/agentCanvasUtils'
 import { fmtTokens, fmtUsd } from '../../lib/costFormat'
 import { useT } from '../../lib/i18n'
-import { hasCodexWindow, type ClaudeUsage, type CodexUsage } from '../../lib/tauri'
+import { type ClaudeUsage, type CodexUsage, hasCodexWindow } from '../../lib/tauri'
 import { CodexIcon } from '../icons/AgentIcons'
 import styles from './AgentCanvasPOC.module.css'
 import { UsageDropdown, type UsageTab } from './UsageDropdown'

@@ -83,8 +83,9 @@ pub fn agent_hooks_settings_path(
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
         .collect();
     let variant = if orchestrator { "full" } else { "session" };
-    let path = std::env::temp_dir()
-        .join(format!("alethe-agent-hooks-{port}-{variant}-{safe_planner}.json"));
+    let path = std::env::temp_dir().join(format!(
+        "alethe-agent-hooks-{port}-{variant}-{safe_planner}.json"
+    ));
     let token = init_token();
     let hook = serde_json::json!([
         { "hooks": [ {
@@ -145,7 +146,11 @@ fn toml_string(value: &str) -> String {
 /// Codex CLI hooks only run `command`/`commandWindows` handlers — there is no built-in http type
 /// like Claude Code's. So a tiny PowerShell forwarder is generated per terminal, carrying its own
 /// endpoint/token/planner baked in, and piped Codex's hook JSON on stdin.
-fn write_codex_hook_forwarder(port: u16, planner_id: &str, safe_planner: &str) -> Result<PathBuf, String> {
+fn write_codex_hook_forwarder(
+    port: u16,
+    planner_id: &str,
+    safe_planner: &str,
+) -> Result<PathBuf, String> {
     let endpoint = listener_endpoint(port);
     let token = init_token();
     let script = format!(
@@ -157,7 +162,9 @@ fn write_codex_hook_forwarder(port: u16, planner_id: &str, safe_planner: &str) -
         token = ps_escape(token),
         planner = ps_escape(planner_id),
     );
-    let path = std::env::temp_dir().join(format!("alethe-codex-hook-forward-{port}-{safe_planner}.ps1"));
+    let path = std::env::temp_dir().join(format!(
+        "alethe-codex-hook-forward-{port}-{safe_planner}.ps1"
+    ));
     std::fs::write(&path, script).map_err(|e| format!("write_failed:{e}"))?;
     Ok(path)
 }
@@ -167,7 +174,11 @@ const CODEX_MCP_MARK_END: &str = "# alethe-managed-mcp-end";
 
 /// Codex's MCP client only declares servers via `command`/`args` (stdio), unlike Claude Code's
 /// remote `http` support — this script bridges stdin/stdout JSON-RPC to Alethe's `/mcp` endpoint.
-fn write_codex_mcp_bridge(port: u16, planner_id: &str, safe_planner: &str) -> Result<PathBuf, String> {
+fn write_codex_mcp_bridge(
+    port: u16,
+    planner_id: &str,
+    safe_planner: &str,
+) -> Result<PathBuf, String> {
     let endpoint = listener_endpoint(port);
     let token = init_token();
     let script = format!(
@@ -187,7 +198,8 @@ fn write_codex_mcp_bridge(port: u16, planner_id: &str, safe_planner: &str) -> Re
         token = ps_escape(token),
         planner = ps_escape(planner_id),
     );
-    let path = std::env::temp_dir().join(format!("alethe-codex-mcp-bridge-{port}-{safe_planner}.ps1"));
+    let path =
+        std::env::temp_dir().join(format!("alethe-codex-mcp-bridge-{port}-{safe_planner}.ps1"));
     std::fs::write(&path, script).map_err(|e| format!("write_failed:{e}"))?;
     Ok(path)
 }
@@ -253,11 +265,13 @@ pub async fn codex_mcp_config_write(
     planner_agent: String,
 ) -> Result<(), String> {
     let state = app.state::<crate::orchestrator::OrchestratorState>();
-    state.core().register_planner(crate::orchestrator_core::Planner {
-        id: planner_id.clone(),
-        label: planner_label,
-        agent: planner_agent,
-    });
+    state
+        .core()
+        .register_planner(crate::orchestrator_core::Planner {
+            id: planner_id.clone(),
+            label: planner_label,
+            agent: planner_agent,
+        });
     tokio::task::spawn_blocking(move || codex_mcp_config_write_inner(repo, planner_id))
         .await
         .map_err(|error| format!("codex_mcp_config_write: falha na task bloqueante: {error}"))?
@@ -304,7 +318,10 @@ fn codex_hooks_config_write_inner(repo: String, planner_id: String) -> Result<()
         body.push('\n');
     }
 
-    let command_toml = format!("powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"{script_path}\"", script_path = script_path.to_string_lossy());
+    let command_toml = format!(
+        "powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"{script_path}\"",
+        script_path = script_path.to_string_lossy()
+    );
     let mut block = String::new();
     block.push_str(&format!("\n{CODEX_HOOKS_MARK_START}\n"));
     for event in ["SubagentStart", "SubagentStop"] {

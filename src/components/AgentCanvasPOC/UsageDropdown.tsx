@@ -1,7 +1,7 @@
 import { Clock, X } from 'lucide-react'
 
 import { useT } from '../../lib/i18n'
-import type { ClaudeUsage, CodexUsage } from '../../lib/tauri'
+import { hasCodexWindow, type ClaudeUsage, type CodexUsage } from '../../lib/tauri'
 import { ClaudeIcon, CodexIcon } from '../icons/AgentIcons'
 import styles from './AgentCanvasPOC.module.css'
 
@@ -117,11 +117,13 @@ export function UsageDropdown({
         )
       ) : codexUsage ? (
         <div className={styles.usageBody}>
-          <Row
-            label={t('ws.usage5hLabel')}
-            util={codexUsage.primary.used_percent}
-            reset={fmtReset(codexUsage.primary.resets_at_ms, now)}
-          />
+          {hasCodexWindow(codexUsage.primary) ? (
+            <Row
+              label={t('ws.usage5hLabel')}
+              util={codexUsage.primary.used_percent}
+              reset={fmtReset(codexUsage.primary.resets_at_ms, now)}
+            />
+          ) : null}
           <Row
             label={t('ws.usageWeekLabel')}
             util={codexUsage.secondary.used_percent}

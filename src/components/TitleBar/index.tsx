@@ -33,7 +33,7 @@ import { useT } from '../../lib/i18n'
 import { useSidebarViews } from '../../lib/viewPlacement'
 import { observeClaudeReset, observeCodexReset } from '../../lib/limitResetWatch'
 import { formatShortcut } from '../../lib/platform'
-import { killPty, remoteControlInfo } from '../../lib/tauri'
+import { codexHeadlineWindow, hasCodexWindow, killPty, remoteControlInfo } from '../../lib/tauri'
 import { usePomodoroStore } from '../../stores/pomodoroStore'
 import { useProjectsStore } from '../../stores/projectsStore'
 import { useUiStore } from '../../stores/uiStore'
@@ -777,7 +777,7 @@ export function TitleBar() {
                   className={`${styles.usagePill} ${styles.codexUsage}`}
                   style={
                     {
-                      '--pill-color': usagePillColor(codexUsage.primary.used_percent),
+                      '--pill-color': usagePillColor(codexHeadlineWindow(codexUsage).used_percent),
                     } as React.CSSProperties
                   }
                   onClick={() => openModal('aiUsage')}
@@ -785,7 +785,7 @@ export function TitleBar() {
                   aria-label={t('ui.titlebar.openUsageDetails')}
                 >
                   <CodexIcon size={13} />
-                  <span>{codexUsage.primary.used_percent.toFixed(0)}%</span>
+                  <span>{codexHeadlineWindow(codexUsage).used_percent.toFixed(0)}%</span>
                 </button>
                 <div
                   className={styles.usagePopover}
@@ -793,14 +793,23 @@ export function TitleBar() {
                   aria-label={t('ui.titlebar.itemCodex')}
                 >
                   <div className={styles.usagePopoverTitle}>{t('ui.titlebar.itemCodex')}</div>
-                  <div className={styles.usagePopoverMain}>
-                    <span>{t('widget.usage5h')}</span>
-                    <strong>{formatPct(codexUsage.primary.used_percent)}</strong>
-                  </div>
-                  <div className={styles.usagePopoverLine}>
-                    <span>{t('widget.week')}</span>
-                    <strong>{formatPct(codexUsage.secondary.used_percent)}</strong>
-                  </div>
+                  {hasCodexWindow(codexUsage.primary) ? (
+                    <>
+                      <div className={styles.usagePopoverMain}>
+                        <span>{t('widget.usage5h')}</span>
+                        <strong>{formatPct(codexUsage.primary.used_percent)}</strong>
+                      </div>
+                      <div className={styles.usagePopoverLine}>
+                        <span>{t('widget.week')}</span>
+                        <strong>{formatPct(codexUsage.secondary.used_percent)}</strong>
+                      </div>
+                    </>
+                  ) : (
+                    <div className={styles.usagePopoverMain}>
+                      <span>{t('widget.week')}</span>
+                      <strong>{formatPct(codexUsage.secondary.used_percent)}</strong>
+                    </div>
+                  )}
                   <div className={styles.usagePopoverLine}>
                     <span>{t('widget.statusLabel')}</span>
                     <strong>

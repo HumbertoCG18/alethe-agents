@@ -98,6 +98,21 @@ fn parse_wham_window(value: Option<&Value>) -> CodexUsageWindow {
     }
 }
 
+/// Codex lists its windows by position, not by length: a plan whose only limit is weekly (Pro
+/// Lite) sends it as `primary`. Consumers read `primary` as the 5h window and `secondary` as the
+/// weekly one, so a window longer than a day moves to `secondary`.
+fn by_duration(
+    primary: CodexUsageWindow,
+    secondary: CodexUsageWindow,
+) -> (CodexUsageWindow, CodexUsageWindow) {
+    const DAY_MINUTES: u64 = 24 * 60;
+    if primary.window_minutes > DAY_MINUTES && secondary.window_minutes <= DAY_MINUTES {
+        (secondary, primary)
+    } else {
+        (primary, secondary)
+    }
+}
+
 fn either<'a>(obj: &'a Value, camel: &str, snake: &str) -> Option<&'a Value> {
     obj.get(camel).or_else(|| obj.get(snake))
 }
@@ -154,9 +169,13 @@ fn parse_wham_usage(body: &Value) -> Result<CodexUsage, String> {
         .ok_or("no rate limits")?;
     let (reset_credits, reset_credit_items) =
         parse_reset_credits(body.get("rate_limit_reset_credits"));
+    let (primary, secondary) = by_duration(
+        parse_wham_window(rate_limit.get("primary_window")),
+        parse_wham_window(rate_limit.get("secondary_window")),
+    );
     Ok(CodexUsage {
-        primary: parse_wham_window(rate_limit.get("primary_window")),
-        secondary: parse_wham_window(rate_limit.get("secondary_window")),
+        primary,
+        secondary,
         plan: body
             .get("plan_type")
             .and_then(Value::as_str)
@@ -292,17 +311,24 @@ fn app_server_call(method: &str, params: Option<Value>) -> Result<Value, String>
 
 /// Blocking — run via `spawn_blocking`.
 fn fetch_usage_app_server() -> Result<CodexUsage, String> {
-    let result = app_server_call("account/rateLimits/read", None)?;
+    parse_app_server_usage(&app_server_call("account/rateLimits/read", None)?)
+}
+
+fn parse_app_server_usage(result: &Value) -> Result<CodexUsage, String> {
     let rate_limits = result
         .get("rateLimits")
         .filter(|v| !v.is_null())
         .ok_or("no rate limits")?;
     let (reset_credits, reset_credit_items) =
         parse_reset_credits(result.get("rateLimitResetCredits"));
+    let (primary, secondary) = by_duration(
+        parse_window(rate_limits.get("primary")),
+        parse_window(rate_limits.get("secondary")),
+    );
 
     Ok(CodexUsage {
-        primary: parse_window(rate_limits.get("primary")),
-        secondary: parse_window(rate_limits.get("secondary")),
+        primary,
+        secondary,
         plan: rate_limits
             .get("planType")
             .and_then(Value::as_str)
@@ -391,6 +417,41 @@ mod tests {
             usage.reset_credit_items[0].expires_at_ms,
             1_791_076_493_000.0
         );
+    }
+
+    #[test]
+    fn app_server_weekly_only_plan_reports_its_window_as_weekly() {
+        // Pro Lite (#187): the only limit is weekly and arrives as `primary`.
+        let usage = super::parse_app_server_usage(&json!({
+            "rateLimits": {
+                "planType": "prolite",
+                "primary": { "usedPercent": 92, "windowDurationMins": 10_080, "resetsAt": 1_790_403_968 },
+                "secondary": null
+            }
+        }))
+        .expect("usage should parse");
+
+        assert_eq!(usage.primary.window_minutes, 0);
+        assert_eq!(usage.primary.used_percent, 0.0);
+        assert_eq!(usage.secondary.used_percent, 92.0);
+        assert_eq!(usage.secondary.window_minutes, 10_080);
+        assert_eq!(usage.secondary.resets_at_ms, 1_790_403_968_000.0);
+    }
+
+    #[test]
+    fn wham_weekly_only_plan_reports_its_window_as_weekly() {
+        let usage = super::parse_wham_usage(&json!({
+            "plan_type": "prolite",
+            "rate_limit": {
+                "primary_window": { "used_percent": 92, "limit_window_seconds": 604_800, "reset_at": 1_790_403_968 },
+                "secondary_window": null
+            }
+        }))
+        .expect("usage should parse");
+
+        assert_eq!(usage.primary.window_minutes, 0);
+        assert_eq!(usage.secondary.used_percent, 92.0);
+        assert_eq!(usage.secondary.window_minutes, 10_080);
     }
 
     #[test]

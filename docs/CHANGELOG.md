@@ -10,6 +10,13 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ## [Unreleased]
 
+### Fixed
+
+- The Graphify MCP server now starts for Claude, Codex, and opencode. Alethe configured it as
+  `graphify <repo> --mcp`, a flag Graphify does not have, so the agent timed out waiting for it;
+  it now runs `graphify-mcp <repo>/graphify-out/graph.json`. Existing entries are rewritten the
+  next time a session starts.
+
 ## [1.7.0] — 2026-09-20
 
 The release where Alethe stops being one fixed app and becomes a platform. Features now load as

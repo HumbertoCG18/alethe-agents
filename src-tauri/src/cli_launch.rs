@@ -29,7 +29,7 @@ fn extract_path_arg(args: &[String]) -> Option<String> {
     None
 }
 
-fn strip_verbatim_prefix(path: PathBuf) -> PathBuf {
+pub(crate) fn strip_verbatim_prefix(path: PathBuf) -> PathBuf {
     let text = path.to_string_lossy();
 
     if let Some(stripped) = text.strip_prefix(r"\\?\UNC\") {

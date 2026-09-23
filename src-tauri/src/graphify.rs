@@ -22,6 +22,8 @@ use crate::git_control::{hide_console, repository_root};
 use crate::provider_common::now_ms;
 
 const DEFAULT_COMMAND: &str = "graphify";
+/// The Graphify CLI has no `--mcp` flag; its MCP server is this separate console script.
+const DEFAULT_MCP_COMMAND: &str = "graphify-mcp";
 
 /// resultado vem truncado (com a flag `truncated`), preservando os N primeiros
 
@@ -99,10 +101,18 @@ fn snapshots_dir(root: &Path) -> PathBuf {
     root.join(".alethe").join(SNAPSHOTS_SUBDIR)
 }
 
+/// `graphify-mcp` takes the graph file; the `\\?\` prefix from `canonicalize` is dropped so
+/// the generated configs stay readable.
+fn mcp_graph_arg(root: &Path) -> String {
+    crate::cli_launch::strip_verbatim_prefix(graph_path(root))
+        .to_string_lossy()
+        .into_owned()
+}
+
 fn mcp_server_spec(command: &str, root: &Path) -> Value {
     serde_json::json!({
         "command": command,
-        "args": [ root.to_string_lossy(), "--mcp" ]
+        "args": [ mcp_graph_arg(root) ]
     })
 }
 
@@ -230,7 +240,7 @@ pub async fn graphify_detect(command: Option<String>) -> Result<GraphifyStatus, 
 
 fn graphify_mcp_config_path_inner(repo: String, command: Option<String>) -> Result<String, String> {
     let root = repository_root(&repo)?;
-    let cmd = command.unwrap_or_else(|| DEFAULT_COMMAND.to_string());
+    let cmd = command.unwrap_or_else(|| DEFAULT_MCP_COMMAND.to_string());
     let config = serde_json::json!({
         "mcpServers": { "graphify": mcp_server_spec(&cmd, &root) }
     });
@@ -271,7 +281,7 @@ pub(crate) fn graphify_opencode_config_write_inner(
         .lock()
         .map_err(|_| "opencode.json lock poisoned".to_string())?;
     let root = repository_root(&repo)?;
-    let cmd = command.unwrap_or_else(|| DEFAULT_COMMAND.to_string());
+    let cmd = command.unwrap_or_else(|| DEFAULT_MCP_COMMAND.to_string());
     let path = root.join("opencode.json");
 
     let mut config: serde_json::Map<String, Value> = if path.is_file() {
@@ -298,7 +308,7 @@ pub(crate) fn graphify_opencode_config_write_inner(
             "graphify".to_string(),
             serde_json::json!({
                 "type": "local",
-                "command": [cmd, root.to_string_lossy(), "--mcp"],
+                "command": [cmd, mcp_graph_arg(&root)],
                 "enabled": true,
             }),
         );
@@ -322,7 +332,7 @@ pub async fn graphify_opencode_config_write(
 
 fn graphify_codex_config_write_inner(repo: String, command: Option<String>) -> Result<(), String> {
     let root = repository_root(&repo)?;
-    let cmd = command.unwrap_or_else(|| DEFAULT_COMMAND.to_string());
+    let cmd = command.unwrap_or_else(|| DEFAULT_MCP_COMMAND.to_string());
     let codex_dir = root.join(".codex");
     std::fs::create_dir_all(&codex_dir).map_err(|e| format!("mkdir_failed:{e}"))?;
     let path = codex_dir.join("config.toml");
@@ -355,7 +365,7 @@ fn graphify_codex_config_write_inner(repo: String, command: Option<String>) -> R
 
     let toml_escape = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
     let cmd_toml = toml_escape(&cmd);
-    let args_toml = format!("\"{}\", \"--mcp\"", toml_escape(&root.to_string_lossy()));
+    let args_toml = format!("\"{}\"", toml_escape(&mcp_graph_arg(&root)));
     body.push_str(&format!(
         "\n[mcp_servers.graphify]\ncommand = \"{cmd_toml}\"\nargs = [{args_toml}]\n",
     ));
@@ -767,6 +777,29 @@ mod tests {
         root
     }
 
+    fn assert_graph_json_arg(arg: &str) {
+        assert!(
+            Path::new(arg).ends_with(Path::new(GRAPH_SUBDIR).join(GRAPH_FILE)),
+            "graphify-mcp must receive graph.json: {arg}"
+        );
+        assert!(!arg.starts_with(r"\\?\"), "verbatim prefix leaked: {arg}");
+    }
+
+    #[test]
+    fn mcp_config_path_starts_graphify_mcp_on_graph_json() {
+        let root = temp_repo_with_graph();
+        let path =
+            graphify_mcp_config_path_inner(root.to_string_lossy().into_owned(), None).unwrap();
+        let parsed: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        let spec = &parsed["mcpServers"]["graphify"];
+        assert_eq!(spec["command"], "graphify-mcp");
+        assert_eq!(spec["args"].as_array().unwrap().len(), 1);
+        assert_graph_json_arg(spec["args"][0].as_str().unwrap());
+
+        fs::remove_file(path).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn reads_and_normalizes_graph() {
         let root = temp_repo_with_graph();
@@ -863,7 +896,10 @@ mod tests {
         let body = fs::read_to_string(&path).unwrap();
         let parsed: Value = serde_json::from_str(&body).unwrap();
         assert_eq!(parsed["mcp"]["graphify"]["type"], "local");
-        assert_eq!(parsed["mcp"]["graphify"]["command"][0], "graphify");
+        let command = parsed["mcp"]["graphify"]["command"].as_array().unwrap();
+        assert_eq!(command.len(), 2);
+        assert_eq!(command[0], "graphify-mcp");
+        assert_graph_json_arg(command[1].as_str().unwrap());
         assert_eq!(parsed["mcp"]["graphify"]["enabled"], true);
 
         fs::write(&path, r#"{"model": "anthropic/claude-sonnet-4-5", "mcp": {"other": {"type": "local", "command": ["x"]}}}"#).unwrap();
@@ -900,8 +936,12 @@ mod tests {
             "outro servidor MCP deve sobreviver: {body}"
         );
         assert!(body.contains("command = \"other-cmd\""));
-        assert!(body.contains("[mcp_servers.graphify]"));
-        assert!(body.contains("command = \"graphify\""));
+        let doc: toml_edit::DocumentMut = body.parse().unwrap();
+        let server = &doc["mcp_servers"]["graphify"];
+        assert_eq!(server["command"].as_str(), Some("graphify-mcp"));
+        let args = server["args"].as_array().unwrap();
+        assert_eq!(args.len(), 1);
+        assert_graph_json_arg(args.get(0).and_then(|v| v.as_str()).unwrap());
 
         graphify_codex_config_write(root_str, None).unwrap();
         let body2 = fs::read_to_string(codex_dir.join("config.toml")).unwrap();

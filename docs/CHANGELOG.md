@@ -10,6 +10,12 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ## [Unreleased]
 
+### Added
+
+- **Per-model Claude limits.** The Claude usage card, the title-bar popover, and the canvas usage
+  panel now list each model-scoped weekly limit, such as Fable, below the Opus row
+  ([#208](https://github.com/Kc1t/alethe-agents/issues/208)).
+
 ### Fixed
 
 - **Graphify MCP server starts for Claude, Codex, and opencode.** Alethe configured it as

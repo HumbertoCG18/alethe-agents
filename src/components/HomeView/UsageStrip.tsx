@@ -225,10 +225,12 @@ function ClaudeCard({ usage }: { usage: ClaudeUsage | null }) {
     )
   }
 
+  const modelLimits = usage.model_limits ?? []
   const maxUtil = Math.max(
     usage.five_hour.utilization,
     usage.seven_day.utilization,
     usage.seven_day_opus.utilization,
+    ...modelLimits.map((limit) => limit.utilization),
   )
 
   return (
@@ -267,6 +269,15 @@ function ClaudeCard({ usage }: { usage: ClaudeUsage | null }) {
             util={usage.seven_day_opus.utilization}
             base={accent}
           />
+          {modelLimits.map((limit) => (
+            <Meter
+              key={limit.model}
+              label={limit.model.toLowerCase()}
+              value={`${pctNum(limit.utilization)}%`}
+              util={limit.utilization}
+              base={accent}
+            />
+          ))}
         </div>
         <div className={styles.statGrid}>
           <StatCell
@@ -290,7 +301,12 @@ function ClaudeCard({ usage }: { usage: ClaudeUsage | null }) {
       </div>
       <CardFoot
         accent={accent}
-        left={`5h · ${t('widget.week')} · opus`}
+        left={[
+          '5h',
+          t('widget.week'),
+          'opus',
+          ...modelLimits.map((l) => l.model.toLowerCase()),
+        ].join(' · ')}
         right={t('widget.peak', { v: `${pctNum(maxUtil)}%` })}
       />
     </div>

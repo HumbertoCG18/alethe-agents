@@ -1968,6 +1968,7 @@ export const ptBR: Record<MessageKey, string> = {
   'ws.usage5hLabel': '5h',
   'ws.usageWeekLabel': '7 dias',
   'ws.usageOpusLabel': 'opus 7d',
+  'ws.usageModelLabel': '{model} 7d',
   'ws.usageStatus': 'status',
   'ws.usageOk': 'ok',
   'ws.usageLimited': 'limite atingido',

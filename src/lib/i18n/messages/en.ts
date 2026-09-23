@@ -1941,6 +1941,7 @@ export const en = {
   'ws.usage5hLabel': '5h',
   'ws.usageWeekLabel': '7 days',
   'ws.usageOpusLabel': 'opus 7d',
+  'ws.usageModelLabel': '{model} 7d',
   'ws.usageStatus': 'status',
   'ws.usageOk': 'ok',
   'ws.usageLimited': 'rate limited',

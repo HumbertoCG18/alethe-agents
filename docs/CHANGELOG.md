@@ -20,6 +20,9 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
   Codex CLI's saved ChatGPT login, falling back to `codex app-server` only when that fails, and the
   fallback now lets the process exit on its own instead of killing it. Frequent short-lived
   `codex.exe` processes were linked to `lsass.exe` crashes that forced a reboot on Windows 11 ([#202](https://github.com/Kc1t/alethe-agents/issues/202)).
+- **Codex weekly quota shown in the right place.** On plans whose only limit is weekly, such as
+  ChatGPT Pro Lite, the weekly usage appeared as the 5-hour quota and the week read 0%. Windows are
+  now placed by their length, and plans without a 5-hour limit show only the weekly one ([#187](https://github.com/Kc1t/alethe-agents/issues/187)).
 
 ## [1.7.0] — 2026-09-20
 

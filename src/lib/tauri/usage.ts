@@ -41,6 +41,16 @@ export type CodexResetCredit = {
   description: string
 }
 
+/** An all-zero window means the plan has no such limit (Pro Lite has no 5h window). */
+export function hasCodexWindow(window: CodexUsageWindow): boolean {
+  return window.window_minutes > 0 || window.resets_at_ms > 0 || window.used_percent > 0
+}
+
+/** The 5h window when the plan has one, otherwise the weekly window. */
+export function codexHeadlineWindow(usage: CodexUsage): CodexUsageWindow {
+  return hasCodexWindow(usage.primary) ? usage.primary : usage.secondary
+}
+
 export async function getCodexUsage(): Promise<CodexUsage> {
   return invoke<CodexUsage>('get_codex_usage')
 }

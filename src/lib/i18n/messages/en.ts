@@ -1936,6 +1936,7 @@ export const en = {
   'ws.now': 'now',
   'ws.claude5h': 'claude 5h {pct}%',
   'ws.codex5h': 'codex 5h {pct}%',
+  'ws.codexWeek': 'codex week {pct}%',
   'ws.usagePanelOpen': 'Usage stats (Claude / Codex)',
   'ws.usage5hLabel': '5h',
   'ws.usageWeekLabel': '7 days',

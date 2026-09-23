@@ -1963,6 +1963,7 @@ export const ptBR: Record<MessageKey, string> = {
   'ws.now': 'agora',
   'ws.claude5h': 'claude 5h {pct}%',
   'ws.codex5h': 'codex 5h {pct}%',
+  'ws.codexWeek': 'codex semana {pct}%',
   'ws.usagePanelOpen': 'Stats de uso (Claude / Codex)',
   'ws.usage5hLabel': '5h',
   'ws.usageWeekLabel': '7 dias',

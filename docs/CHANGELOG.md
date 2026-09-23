@@ -10,6 +10,14 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ## [Unreleased]
 
+### Fixed
+
+- **Codex usage no longer starts `codex.exe` on every poll.** Usage is read over HTTP with the
+  Codex CLI's saved ChatGPT login, falling back to `codex app-server` only when that fails, and the
+  fallback now lets the process exit on its own instead of killing it. Frequent short-lived
+  `codex.exe` processes were linked to `lsass.exe` crashes that forced a reboot on Windows 11 ([#202](https://github.com/Kc1t/alethe-agents/issues/202)).
+
+
 ## [1.7.0] — 2026-09-20
 
 The release where Alethe stops being one fixed app and becomes a platform. Features now load as

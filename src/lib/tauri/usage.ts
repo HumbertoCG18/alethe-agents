@@ -7,10 +7,18 @@ export type ClaudeUsageWindow = {
   resets_at: string
 }
 
+/** A weekly limit scoped to one model other than Opus, such as Fable. */
+export type ClaudeModelLimit = {
+  model: string
+  utilization: number
+  resets_at: string
+}
+
 export type ClaudeUsage = {
   five_hour: ClaudeUsageWindow
   seven_day: ClaudeUsageWindow
   seven_day_opus: ClaudeUsageWindow
+  model_limits?: ClaudeModelLimit[]
 }
 
 export async function getClaudeUsage(): Promise<ClaudeUsage> {

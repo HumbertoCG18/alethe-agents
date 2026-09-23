@@ -108,6 +108,14 @@ export function UsageDropdown({
               util={claudeUsage.seven_day_opus.utilization}
               reset={fmtReset(new Date(claudeUsage.seven_day_opus.resets_at).getTime(), now)}
             />
+            {(claudeUsage.model_limits ?? []).map((limit) => (
+              <Row
+                key={limit.model}
+                label={t('ws.usageModelLabel', { model: limit.model.toLowerCase() })}
+                util={limit.utilization}
+                reset={fmtReset(new Date(limit.resets_at).getTime(), now)}
+              />
+            ))}
             <button type="button" className={styles.usageAction} onClick={onForceFallback}>
               {t('ws.forceCodexFallback')}
             </button>

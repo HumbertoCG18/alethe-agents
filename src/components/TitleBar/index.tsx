@@ -763,6 +763,12 @@ export function TitleBar() {
                     <span>{t('ws.usageOpusLabel')}</span>
                     <strong>{formatPct(claudeUsage.seven_day_opus.utilization)}</strong>
                   </div>
+                  {(claudeUsage.model_limits ?? []).map((limit) => (
+                    <div key={limit.model} className={styles.usagePopoverLine}>
+                      <span>{t('ws.usageModelLabel', { model: limit.model.toLowerCase() })}</span>
+                      <strong>{formatPct(limit.utilization)}</strong>
+                    </div>
+                  ))}
                   <div className={styles.usagePopoverFooter}>
                     {t('widget.resetLabel', { w: '5h' })} ·{' '}
                     {formatResetTime(claudeUsage.five_hour.resets_at)}

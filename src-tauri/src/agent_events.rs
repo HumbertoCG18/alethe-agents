@@ -83,8 +83,9 @@ pub fn agent_hooks_settings_path(
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
         .collect();
     let variant = if orchestrator { "full" } else { "session" };
-    let path = std::env::temp_dir()
-        .join(format!("alethe-agent-hooks-{port}-{variant}-{safe_planner}.json"));
+    let path = std::env::temp_dir().join(format!(
+        "alethe-agent-hooks-{port}-{variant}-{safe_planner}.json"
+    ));
     let token = init_token();
     let hook = serde_json::json!([
         { "hooks": [ {
@@ -145,7 +146,11 @@ fn toml_string(value: &str) -> String {
 /// Codex CLI hooks only run `command`/`commandWindows` handlers — there is no built-in http type
 /// like Claude Code's. So a tiny PowerShell forwarder is generated per terminal, carrying its own
 /// endpoint/token/planner baked in, and piped Codex's hook JSON on stdin.
-fn write_codex_hook_forwarder(port: u16, planner_id: &str, safe_planner: &str) -> Result<PathBuf, String> {
+fn write_codex_hook_forwarder(
+    port: u16,
+    planner_id: &str,
+    safe_planner: &str,
+) -> Result<PathBuf, String> {
     let endpoint = listener_endpoint(port);
     let token = init_token();
     let script = format!(
@@ -157,7 +162,9 @@ fn write_codex_hook_forwarder(port: u16, planner_id: &str, safe_planner: &str) -
         token = ps_escape(token),
         planner = ps_escape(planner_id),
     );
-    let path = std::env::temp_dir().join(format!("alethe-codex-hook-forward-{port}-{safe_planner}.ps1"));
+    let path = std::env::temp_dir().join(format!(
+        "alethe-codex-hook-forward-{port}-{safe_planner}.ps1"
+    ));
     std::fs::write(&path, script).map_err(|e| format!("write_failed:{e}"))?;
     Ok(path)
 }
@@ -167,25 +174,32 @@ const CODEX_MCP_MARK_END: &str = "# alethe-managed-mcp-end";
 
 /// Codex's MCP client only declares servers via `command`/`args` (stdio), unlike Claude Code's
 /// remote `http` support — this script bridges stdin/stdout JSON-RPC to Alethe's `/mcp` endpoint.
-fn write_codex_mcp_bridge(port: u16, planner_id: &str, safe_planner: &str) -> Result<PathBuf, String> {
+fn write_codex_mcp_bridge(
+    port: u16,
+    planner_id: &str,
+    safe_planner: &str,
+) -> Result<PathBuf, String> {
     let endpoint = listener_endpoint(port);
     let token = init_token();
     let script = format!(
         "while ($line = [Console]::In.ReadLine()) {{\r\n\
          \x20\x20if ([string]::IsNullOrWhiteSpace($line)) {{ continue }}\r\n\
          \x20\x20try {{\r\n\
-         \x20\x20\x20\x20$resp = Invoke-WebRequest -Uri '{endpoint}/mcp' -Method Post -Body $line -ContentType 'application/json' -Headers @{{ 'X-Alethe-Token' = '{token}'; 'X-Alethe-Planner' = '{planner}' }}\r\n\
+         \x20\x20\x20\x20$resp = Invoke-WebRequest -UseBasicParsing -ErrorAction Stop -Uri '{endpoint}/mcp' -Method Post -Body $line -ContentType 'application/json' -Headers @{{ 'X-Alethe-Token' = '{token}'; 'X-Alethe-Planner' = '{planner}' }}\r\n\
          \x20\x20\x20\x20if ($resp.Content) {{\r\n\
          \x20\x20\x20\x20\x20\x20[Console]::Out.WriteLine($resp.Content)\r\n\
          \x20\x20\x20\x20\x20\x20[Console]::Out.Flush()\r\n\
          \x20\x20\x20\x20}}\r\n\
-         \x20\x20}} catch {{}}\r\n\
+         \x20\x20}} catch {{\r\n\
+         \x20\x20\x20\x20[Console]::Error.WriteLine('[alethe-mcp] request failed: ' + $_.Exception.Message)\r\n\
+         \x20\x20}}\r\n\
          }}\r\n",
         endpoint = endpoint,
         token = ps_escape(token),
         planner = ps_escape(planner_id),
     );
-    let path = std::env::temp_dir().join(format!("alethe-codex-mcp-bridge-{port}-{safe_planner}.ps1"));
+    let path =
+        std::env::temp_dir().join(format!("alethe-codex-mcp-bridge-{port}-{safe_planner}.ps1"));
     std::fs::write(&path, script).map_err(|e| format!("write_failed:{e}"))?;
     Ok(path)
 }
@@ -251,11 +265,13 @@ pub async fn codex_mcp_config_write(
     planner_agent: String,
 ) -> Result<(), String> {
     let state = app.state::<crate::orchestrator::OrchestratorState>();
-    state.core().register_planner(crate::orchestrator_core::Planner {
-        id: planner_id.clone(),
-        label: planner_label,
-        agent: planner_agent,
-    });
+    state
+        .core()
+        .register_planner(crate::orchestrator_core::Planner {
+            id: planner_id.clone(),
+            label: planner_label,
+            agent: planner_agent,
+        });
     tokio::task::spawn_blocking(move || codex_mcp_config_write_inner(repo, planner_id))
         .await
         .map_err(|error| format!("codex_mcp_config_write: falha na task bloqueante: {error}"))?
@@ -302,7 +318,10 @@ fn codex_hooks_config_write_inner(repo: String, planner_id: String) -> Result<()
         body.push('\n');
     }
 
-    let command_toml = format!("powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"{script_path}\"", script_path = script_path.to_string_lossy());
+    let command_toml = format!(
+        "powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"{script_path}\"",
+        script_path = script_path.to_string_lossy()
+    );
     let mut block = String::new();
     block.push_str(&format!("\n{CODEX_HOOKS_MARK_START}\n"));
     for event in ["SubagentStart", "SubagentStop"] {
@@ -565,5 +584,41 @@ mod tests {
             .expect("generated path should be valid TOML");
 
         assert_eq!(document["path"].as_str(), Some(path));
+    }
+
+    #[test]
+    fn codex_mcp_bridge_script_requests_with_basic_parsing() {
+        let unique_planner = format!(
+            "test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system time should be after the UNIX epoch")
+                .as_nanos()
+        );
+
+        let path = super::write_codex_mcp_bridge(8123, "test-planner", &unique_planner)
+            .expect("bridge script should be written");
+        let script = std::fs::read_to_string(&path).expect("bridge script should be readable");
+        let removed = std::fs::remove_file(&path);
+
+        assert!(
+            script.contains("Invoke-WebRequest -UseBasicParsing -ErrorAction Stop -Uri"),
+            "bridge script should pass -UseBasicParsing and -ErrorAction Stop to Invoke-WebRequest"
+        );
+        assert!(
+            !script.contains("Invoke-WebRequest -Uri"),
+            "bridge script should not call Invoke-WebRequest without -UseBasicParsing"
+        );
+        // Failures go to stderr; stdout stays reserved for JSON-RPC responses.
+        assert!(
+            !script.contains("catch {}"),
+            "bridge script should not swallow request failures"
+        );
+        assert!(
+            script.contains("[Console]::Error.WriteLine("),
+            "bridge script should report request failures on stderr"
+        );
+        removed.expect("generated bridge script should be removable");
     }
 }

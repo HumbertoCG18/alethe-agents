@@ -11,6 +11,8 @@ use crate::cli_resolver;
 
 /// Quota endpoint the Codex CLI itself reads for ChatGPT logins.
 const WHAM_USAGE_URL: &str = "https://chatgpt.com/backend-api/wham/usage";
+const WHAM_RESET_CREDITS_URL: &str =
+    "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits";
 
 const APP_SERVER_INITIALIZE: &str =
     r#"{"id":1,"method":"initialize","params":{"clientInfo":{"name":"alethe","version":"1.2.0"}}}"#;
@@ -162,13 +164,18 @@ fn parse_reset_credits(value: Option<&Value>) -> (u64, Vec<CodexResetCredit>) {
     (count, items)
 }
 
-fn parse_wham_usage(body: &Value) -> Result<CodexUsage, String> {
+/// `credits` is the `/wham/rate-limit-reset-credits` body: `/wham/usage` only counts the
+/// available reset credits, while their titles and expiry come from that endpoint.
+fn parse_wham_usage(body: &Value, credits: Option<&Value>) -> Result<CodexUsage, String> {
     let rate_limit = body
         .get("rate_limit")
         .filter(|v| !v.is_null())
         .ok_or("no rate limits")?;
-    let (reset_credits, reset_credit_items) =
+    let (reset_credits, mut reset_credit_items) =
         parse_reset_credits(body.get("rate_limit_reset_credits"));
+    if credits.is_some() {
+        reset_credit_items = parse_reset_credits(credits).1;
+    }
     let (primary, secondary) = by_duration(
         parse_wham_window(rate_limit.get("primary_window")),
         parse_wham_window(rate_limit.get("secondary_window")),
@@ -222,8 +229,23 @@ async fn fetch_usage_http() -> Result<CodexUsage, String> {
         serde_json::from_slice(&raw).map_err(|e| format!("auth parse failed: {e}"))?;
     let (token, account_id) = oauth_credentials(&auth).ok_or("no_oauth_token")?;
 
+    let body = wham_get(WHAM_USAGE_URL, &token, account_id.as_deref()).await?;
+    let usage = parse_wham_usage(&body, None)?;
+    if usage.reset_credits == 0 {
+        return Ok(usage);
+    }
+    match wham_get(WHAM_RESET_CREDITS_URL, &token, account_id.as_deref()).await {
+        Ok(credits) => parse_wham_usage(&body, Some(&credits)),
+        Err(e) => {
+            eprintln!("[codex_usage] reset credit details unavailable: {e}");
+            Ok(usage)
+        }
+    }
+}
+
+async fn wham_get(url: &str, token: &str, account_id: Option<&str>) -> Result<Value, String> {
     let mut request = http_client()
-        .get(WHAM_USAGE_URL)
+        .get(url)
         .bearer_auth(token)
         .header("User-Agent", concat!("Alethe/", env!("CARGO_PKG_VERSION")))
         .timeout(Duration::from_secs(10));
@@ -237,8 +259,7 @@ async fn fetch_usage_http() -> Result<CodexUsage, String> {
     if !resp.status().is_success() {
         return Err(format!("API returned {}", resp.status()));
     }
-    let body: Value = resp.json().await.map_err(|e| format!("json parse: {e}"))?;
-    parse_wham_usage(&body)
+    resp.json().await.map_err(|e| format!("json parse: {e}"))
 }
 
 /// One JSON-RPC call against a short-lived `codex app-server`; returns its `result`.
@@ -401,7 +422,7 @@ mod tests {
             }
         });
 
-        let usage = super::parse_wham_usage(&body).expect("usage should parse");
+        let usage = super::parse_wham_usage(&body, None).expect("usage should parse");
 
         assert_eq!(usage.plan, "plus");
         assert!(usage.rate_limited);
@@ -440,13 +461,16 @@ mod tests {
 
     #[test]
     fn wham_weekly_only_plan_reports_its_window_as_weekly() {
-        let usage = super::parse_wham_usage(&json!({
-            "plan_type": "prolite",
-            "rate_limit": {
-                "primary_window": { "used_percent": 92, "limit_window_seconds": 604_800, "reset_at": 1_790_403_968 },
-                "secondary_window": null
-            }
-        }))
+        let usage = super::parse_wham_usage(
+            &json!({
+                "plan_type": "prolite",
+                "rate_limit": {
+                    "primary_window": { "used_percent": 92, "limit_window_seconds": 604_800, "reset_at": 1_790_403_968 },
+                    "secondary_window": null
+                }
+            }),
+            None,
+        )
         .expect("usage should parse");
 
         assert_eq!(usage.primary.window_minutes, 0);
@@ -455,9 +479,39 @@ mod tests {
     }
 
     #[test]
+    fn wham_reset_credit_details_come_from_their_endpoint() {
+        // `/wham/usage` only counts the credits; the dedicated endpoint lists them.
+        let usage = super::parse_wham_usage(
+            &json!({
+                "plan_type": "pro",
+                "rate_limit": { "primary_window": null, "secondary_window": null },
+                "rate_limit_reset_credits": { "available_count": 1, "applicable_available_count": 1 }
+            }),
+            Some(&json!({
+                "available_count": 1,
+                "total_earned_count": 1,
+                "credits": [{
+                    "id": "c1", "reset_type": "full", "status": "available",
+                    "expires_at": "2026-10-04T01:14:53Z", "title": "Full reset", "description": "Refills your limits"
+                }]
+            })),
+        )
+        .expect("usage should parse");
+
+        assert_eq!(usage.reset_credits, 1);
+        assert_eq!(usage.reset_credit_items.len(), 1);
+        assert_eq!(usage.reset_credit_items[0].title, "Full reset");
+        assert_eq!(
+            usage.reset_credit_items[0].expires_at_ms,
+            1_791_076_493_000.0
+        );
+    }
+
+    #[test]
     fn wham_usage_without_rate_limit_is_an_error() {
         assert!(
-            super::parse_wham_usage(&json!({ "plan_type": "free", "rate_limit": null })).is_err()
+            super::parse_wham_usage(&json!({ "plan_type": "free", "rate_limit": null }), None)
+                .is_err()
         );
     }
 

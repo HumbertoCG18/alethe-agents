@@ -88,3 +88,9 @@ export const CHANGELOG_RELEASES: ChangelogRelease[] = [
 ]
 
 export const CURRENT_VERSION = CHANGELOG_RELEASES[0].version
+
+/** Release dates are calendar days (the changelog uses UTC). `new Date('YYYY-MM-DD')` is UTC midnight,
+ * so formatting it in the viewer's time zone shows the previous day anywhere west of UTC. */
+export function formatReleaseDate(date: string, locale: string): string {
+  return new Date(date).toLocaleDateString(locale, { timeZone: 'UTC' })
+}

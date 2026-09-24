@@ -133,10 +133,6 @@ fn generating_set() -> &'static std::sync::Mutex<std::collections::HashSet<PathB
     GENERATING.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()))
 }
 
-// de verdade (git, probe do CLI do Graphify) — rodavam direto na thread de
-
-// em projetos com Graphify ligado (ver XTermView/index.tsx). Sob AV escaneando
-
 /// `graphify update` builds the code graph without an LLM. The bare `graphify <root>` runs the
 /// full extraction, which needs an API key for docs and images and exits without a graph when
 /// none is set; it would also spend the user's credits every time a session bootstraps a graph.
@@ -197,9 +193,9 @@ fn graphify_ensure_graph_inner(repo: String, command: Option<String>) -> Result<
             }
             Ok(output) => {
                 let stderr = String::from_utf8_lossy(&output.stderr);
-                eprintln!("[graphify] geração falhou: {}", stderr.trim());
+                eprintln!("[graphify] graph generation failed: {}", stderr.trim());
             }
-            Err(error) => eprintln!("[graphify] geração não executou: {error}"),
+            Err(error) => eprintln!("[graphify] graph generation did not run: {error}"),
         }
     });
 

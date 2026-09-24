@@ -94,7 +94,7 @@ export const TerminalPane = memo(function TerminalPane({
     droppable.setNodeRef(node)
   }
 
-  // Foco vindo da sidebar — scroll into view + foca o textarea do xterm.
+  // Focus requested from the sidebar: scroll into view and focus xterm's textarea.
   const focusReq = useUiStore((s) => s.focusRequest)
   useEffect(() => {
     if (!focusReq || focusReq.terminalId !== terminal.id) return
@@ -147,7 +147,8 @@ export const TerminalPane = memo(function TerminalPane({
   const nativeTerminalMacos = useProjectsStore((s) => s.preferences.nativeTerminalMacos ?? false)
   const useNativeBackend = shouldUseNativeBackend(nativeTerminalMacos)
 
-  // repo para injetar o MCP (o XTermView resolve o config/bootstrap).
+  // Repository to hand the Graphify MCP to when the project enables it (XTermView resolves the
+  // config and bootstrap).
   const graphifyRepo = useProjectsStore((s) => {
     const p = s.projects.find((p) => p.id === projectId)
     if (!p?.graphifyEnabled) return null
@@ -331,7 +332,6 @@ export const TerminalPane = memo(function TerminalPane({
     const agentType = sessionTitleAgentType
     const sessionId = sessionTitleId
     let cancelled = false
-    let intervalId: number | undefined
     const fetchTitle = () => {
       const request =
         agentType === 'claude' ? getClaudeSessionTitle(cwd, sessionId) : getCodexSessionTitle(sessionId)
@@ -339,15 +339,16 @@ export const TerminalPane = memo(function TerminalPane({
         .then((title) => {
           if (cancelled || !title) return
           setSessionTitle(title)
-          if (intervalId !== undefined) window.clearInterval(intervalId)
+          // Promise callbacks run after the interval below is assigned.
+          window.clearInterval(intervalId)
         })
         .catch(() => {})
     }
     fetchTitle()
-    intervalId = window.setInterval(fetchTitle, 6000)
+    const intervalId = window.setInterval(fetchTitle, 6000)
     return () => {
       cancelled = true
-      if (intervalId !== undefined) window.clearInterval(intervalId)
+      window.clearInterval(intervalId)
     }
   }, [sessionTitleAgentType, sessionTitleId, cwd])
 

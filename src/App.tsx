@@ -71,6 +71,7 @@ import { ghosttyKillAll, setWindowOpacity } from './lib/tauri'
 import { getLastCrashReport } from './lib/tauri'
 import { applyLegacyPluginMigrations } from './lib/plugins'
 import { useSidebarViews } from './lib/viewPlacement'
+import { rememberBootAppearance } from './lib/bootAppearance'
 import { useAppliedTheme } from './lib/themes'
 import { loadThemeIconBytes } from './lib/themeIcons'
 import { checkForUpdate } from './lib/updater'
@@ -300,17 +301,17 @@ export default function App() {
   }, [])
 
   useEffect(() => {
+    // Before hydration the preferences are defaults; keep the boot theme applied.
+    if (!hydrated) return
     document.documentElement.dataset.theme = appliedTheme
-  }, [appliedTheme])
+    document.documentElement.dataset.visualStyle = visualStyle
+    rememberBootAppearance({ theme: appliedTheme, visualStyle })
+  }, [appliedTheme, hydrated, visualStyle])
 
   useEffect(() => {
     if (!hydrated) return
     void applyLegacyPluginMigrations()
   }, [hydrated])
-
-  useEffect(() => {
-    document.documentElement.dataset.visualStyle = visualStyle
-  }, [visualStyle])
 
   useEffect(() => {
     if (!hydrated) return

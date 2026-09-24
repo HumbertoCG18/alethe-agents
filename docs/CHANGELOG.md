@@ -38,6 +38,11 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 - **Codex weekly quota shown in the right place.** On plans whose only limit is weekly, such as
   ChatGPT Pro Lite, the weekly usage appeared as the 5-hour quota and the week read 0%. Windows are
   now placed by their length, and plans without a 5-hour limit show only the weekly one ([#187](https://github.com/Kc1t/alethe-agents/issues/187)).
+### Changed
+
+- The startup loading screen now opens in your selected theme and visual style instead of the
+  default dark theme, and its card, backdrop and progress indicator follow the design system
+  tokens used across the rest of the app.
 
 ## [1.7.0] — 2026-09-20
 

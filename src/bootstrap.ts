@@ -1,3 +1,5 @@
+import { applyBootAppearance } from './lib/bootAppearance'
+
 if (import.meta.env.DEV) {
   document.title = '(DEV) Alethe'
 }
@@ -8,3 +10,6 @@ if (import.meta.env.DEV) {
 document.documentElement.dataset.platform = /Macintosh|Mac OS X/i.test(navigator.userAgent)
   ? 'macos'
   : 'other'
+
+// Paint the startup screen with the last known theme; App.tsx takes over after hydration.
+applyBootAppearance()

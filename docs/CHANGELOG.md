@@ -19,6 +19,10 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ### Fixed
 
+- **What's New lists 1.6.0 and 1.7.0.** The in-app panel stopped at 1.5.0 and its title read
+  1.5.0. It now covers both releases, and the test suite fails when the list does not start at the
+  app version, so a release can no longer ship with stale notes
+  ([#213](https://github.com/Kc1t/alethe-agents/issues/213)).
 - **Graphify MCP server starts for Claude, Codex, and opencode.** Alethe configured it as
   `graphify <repo> --mcp`, a flag Graphify does not have, so the agent timed out waiting for it;
   it now runs `graphify-mcp <repo>/graphify-out/graph.json`. Existing entries are rewritten the

@@ -137,6 +137,16 @@ fn generating_set() -> &'static std::sync::Mutex<std::collections::HashSet<PathB
 
 // em projetos com Graphify ligado (ver XTermView/index.tsx). Sob AV escaneando
 
+/// `graphify update` builds the code graph without an LLM. The bare `graphify <root>` runs the
+/// full extraction, which needs an API key for docs and images and exits without a graph when
+/// none is set; it would also spend the user's credits every time a session bootstraps a graph.
+fn generation_command(cmd: &str, root: &Path) -> Command {
+    let mut generate = Command::new(cmd);
+    generate.arg("update").arg(root).current_dir(root);
+    hide_console(&mut generate);
+    generate
+}
+
 fn graphify_ensure_graph_inner(repo: String, command: Option<String>) -> Result<String, String> {
     let root = repository_root(&repo)?;
     if graph_path(&root).is_file() {
@@ -173,10 +183,7 @@ fn graphify_ensure_graph_inner(repo: String, command: Option<String>) -> Result<
 
     let root_for_task = root.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let mut generate = Command::new(&cmd);
-        generate.arg(&root_for_task).current_dir(&root_for_task);
-        hide_console(&mut generate);
-        let outcome = generate.output();
+        let outcome = generation_command(&cmd, &root_for_task).output();
         if let Ok(mut set) = generating_set().lock() {
             set.remove(&root_for_task);
         }
@@ -875,6 +882,17 @@ mod tests {
 
         fs::remove_dir_all(root).unwrap();
         fs::remove_dir_all(bare).unwrap();
+    }
+
+    #[test]
+    fn generation_builds_the_code_graph_without_an_llm_key() {
+        // `graphify <root>` runs the full extraction, which needs an LLM API key for docs and
+        // images and leaves no graph.json without one (#211).
+        let root = Path::new("repo-root");
+        let command = generation_command("graphify", root);
+        let args: Vec<_> = command.get_args().collect();
+        assert_eq!(args, [std::ffi::OsStr::new("update"), root.as_os_str()]);
+        assert_eq!(command.get_current_dir(), Some(root));
     }
 
     #[test]

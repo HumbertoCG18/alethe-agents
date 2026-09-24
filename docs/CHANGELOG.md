@@ -13,7 +13,8 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 ### Added
 
 - **Per-model Claude limits.** The Claude usage card, the title-bar popover, and the canvas usage
-  panel now list each model-scoped weekly limit, such as Fable, below the Opus row
+  panel now list each model-scoped weekly limit, such as Fable, below the Opus row, and the
+  orchestrator counts them when it checks Claude's remaining quota
   ([#208](https://github.com/Kc1t/alethe-agents/issues/208)).
 
 ### Fixed
@@ -22,6 +23,10 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
   `graphify <repo> --mcp`, a flag Graphify does not have, so the agent timed out waiting for it;
   it now runs `graphify-mcp <repo>/graphify-out/graph.json`. Existing entries are rewritten the
   next time a session starts ([#206](https://github.com/Kc1t/alethe-agents/issues/206)).
+- **Graphify builds the code graph without an LLM API key.** Alethe generated a missing graph with
+  Graphify's full extraction, which needs an API key for docs and images; without one it failed
+  and the graph never appeared. It now runs `graphify update`, which builds the code graph in
+  seconds and spends no LLM credits ([#211](https://github.com/Kc1t/alethe-agents/issues/211)).
 - **Codex usage no longer starts `codex.exe` on every poll.** Usage is read over HTTP with the
   Codex CLI's saved ChatGPT login, falling back to `codex app-server` only when that fails, and the
   fallback now lets the process exit on its own instead of killing it. Frequent short-lived

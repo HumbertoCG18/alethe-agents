@@ -212,19 +212,20 @@ fn handle_http(
             stream,
             200,
             "text/javascript; charset=utf-8",
-            include_str!("../../../node_modules/@xterm/xterm/lib/xterm.js"),
+            // Staged by build.rs from node_modules (a stub when npm packages are missing).
+            include_str!(concat!(env!("OUT_DIR"), "/xterm.js")),
         ),
         "/vendor/xterm.css" => respond_immutable_asset(
             stream,
             200,
             "text/css; charset=utf-8",
-            include_str!("../../../node_modules/@xterm/xterm/css/xterm.css"),
+            include_str!(concat!(env!("OUT_DIR"), "/xterm.css")),
         ),
         "/vendor/addon-unicode11.js" => respond_immutable_asset(
             stream,
             200,
             "text/javascript; charset=utf-8",
-            include_str!("../../../node_modules/@xterm/addon-unicode11/lib/addon-unicode11.js"),
+            include_str!(concat!(env!("OUT_DIR"), "/addon-unicode11.js")),
         ),
         "/brand-icon.png" => respond_asset_bytes(
             stream,

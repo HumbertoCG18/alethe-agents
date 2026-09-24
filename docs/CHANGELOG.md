@@ -10,6 +10,12 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ## [Unreleased]
 
+### Changed
+
+- The startup loading screen now opens in your selected theme and visual style instead of the
+  default dark theme, and its card, backdrop and progress indicator follow the design system
+  tokens used across the rest of the app.
+
 ## [1.7.0] — 2026-09-20
 
 The release where Alethe stops being one fixed app and becomes a platform. Features now load as

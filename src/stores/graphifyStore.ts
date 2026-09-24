@@ -89,7 +89,7 @@ export const useGraphifyStore = create<GraphifyState>((set, get) => ({
             return
           }
         } catch {
-                                                                               
+          // The graph is not readable yet while it is being generated; retry on the next tick.
         }
       }
 

@@ -64,7 +64,7 @@ function pickSessionId(
   return pool.reduce((a, b) => (b.modified_at_ms > a.modified_at_ms ? b : a)).id
 }
 
-/** Acha o ID da conversa a retomar no disco para o cwd, por agente. */
+/** Finds the on-disk ID of the conversation to resume for the cwd, per agent. */
 async function latestSessionId(
   agent: AgentType,
   cwd: string,
@@ -103,7 +103,7 @@ function buildResumeArgs(agent: AgentType, baseArgs: string[], sessionId: string
     return sessionId ? ['--resume', sessionId, ...clean] : ['--continue', ...clean]
   }
   if (agent === 'codex') {
-    // codex usa `resume <id>` / `resume --last` como subcomando (1º arg).
+    // Codex takes `resume <id>` / `resume --last` as a subcommand (first argument).
     let clean = baseArgs
     if (baseArgs[0] === 'resume') {
       const rest = baseArgs.slice(1)
@@ -245,7 +245,7 @@ export async function resetLastSession(): Promise<ResetLastSessionResult> {
 
       resumed++
     } catch {
-                                                 
+      // One session failing to resume must not stop the others; the slot is released below.
     } finally {
       releaseSpawnSlot()
     }

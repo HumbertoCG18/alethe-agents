@@ -7,10 +7,18 @@ export type ClaudeUsageWindow = {
   resets_at: string
 }
 
+/** A weekly limit scoped to one model other than Opus, such as Fable. */
+export type ClaudeModelLimit = {
+  model: string
+  utilization: number
+  resets_at: string
+}
+
 export type ClaudeUsage = {
   five_hour: ClaudeUsageWindow
   seven_day: ClaudeUsageWindow
   seven_day_opus: ClaudeUsageWindow
+  model_limits?: ClaudeModelLimit[]
 }
 
 export async function getClaudeUsage(): Promise<ClaudeUsage> {
@@ -39,6 +47,16 @@ export type CodexResetCredit = {
   expires_at_ms: number
   title: string
   description: string
+}
+
+/** An all-zero window means the plan has no such limit (Pro Lite has no 5h window). */
+export function hasCodexWindow(window: CodexUsageWindow): boolean {
+  return window.window_minutes > 0 || window.resets_at_ms > 0 || window.used_percent > 0
+}
+
+/** The 5h window when the plan has one, otherwise the weekly window. */
+export function codexHeadlineWindow(usage: CodexUsage): CodexUsageWindow {
+  return hasCodexWindow(usage.primary) ? usage.primary : usage.secondary
 }
 
 export async function getCodexUsage(): Promise<CodexUsage> {

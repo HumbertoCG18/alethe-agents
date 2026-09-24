@@ -23,6 +23,11 @@ export function claudeFitness(usage: ClaudeUsage): AgentFitness {
     { label: '5h', used: usage.five_hour.utilization, resetsAt: usage.five_hour.resets_at || null },
     { label: 'week', used: usage.seven_day.utilization, resetsAt: usage.seven_day.resets_at || null },
     { label: 'opus', used: usage.seven_day_opus.utilization, resetsAt: usage.seven_day_opus.resets_at || null },
+    ...(usage.model_limits ?? []).map((limit) => ({
+      label: limit.model.toLowerCase(),
+      used: limit.utilization,
+      resetsAt: limit.resets_at || null,
+    })),
   ])
   return {
     worst: worst.label,

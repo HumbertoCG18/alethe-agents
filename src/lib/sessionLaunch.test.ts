@@ -100,5 +100,4 @@ describe('buildAgentLaunch', () => {
     expect(launch.args).toEqual([])
     expect(launch.sessionId).toBeUndefined()
   })
-
 })

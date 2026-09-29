@@ -191,12 +191,14 @@ fn write_codex_mcp_bridge(port: u16) -> Result<PathBuf, String> {
          while ($line = [Console]::In.ReadLine()) {{\r\n\
          \x20\x20if ([string]::IsNullOrWhiteSpace($line)) {{ continue }}\r\n\
          \x20\x20try {{\r\n\
-         \x20\x20\x20\x20$resp = Invoke-WebRequest -Uri '{endpoint}/mcp' -Method Post -Body $line -ContentType 'application/json' -Headers @{{ 'X-Alethe-Token' = '{token}'; 'X-Alethe-Planner' = $planner }}\r\n\
+         \x20\x20\x20\x20$resp = Invoke-WebRequest -UseBasicParsing -ErrorAction Stop -Uri '{endpoint}/mcp' -Method Post -Body $line -ContentType 'application/json' -Headers @{{ 'X-Alethe-Token' = '{token}'; 'X-Alethe-Planner' = $planner }}\r\n\
          \x20\x20\x20\x20if ($resp.Content) {{\r\n\
          \x20\x20\x20\x20\x20\x20[Console]::Out.WriteLine($resp.Content)\r\n\
          \x20\x20\x20\x20\x20\x20[Console]::Out.Flush()\r\n\
          \x20\x20\x20\x20}}\r\n\
-         \x20\x20}} catch {{}}\r\n\
+         \x20\x20}} catch {{\r\n\
+         \x20\x20\x20\x20[Console]::Error.WriteLine('[alethe-mcp] request failed: ' + $_.Exception.Message)\r\n\
+         \x20\x20}}\r\n\
          }}\r\n",
         endpoint = endpoint,
         token = ps_escape(token),
@@ -573,5 +575,33 @@ mod tests {
             .expect("generated path should be valid TOML");
 
         assert_eq!(document["path"].as_str(), Some(path));
+    }
+
+    #[test]
+    fn codex_mcp_bridge_script_requests_with_basic_parsing() {
+        // The file name comes from the test binary's own path, so this never touches the bridge
+        // a running app uses.
+        let path = super::write_codex_mcp_bridge(8123).expect("bridge script should be written");
+        let script = std::fs::read_to_string(&path).expect("bridge script should be readable");
+        let removed = std::fs::remove_file(&path);
+
+        assert!(
+            script.contains("Invoke-WebRequest -UseBasicParsing -ErrorAction Stop -Uri"),
+            "bridge script should pass -UseBasicParsing and -ErrorAction Stop to Invoke-WebRequest"
+        );
+        assert!(
+            !script.contains("Invoke-WebRequest -Uri"),
+            "bridge script should not call Invoke-WebRequest without -UseBasicParsing"
+        );
+        // Failures go to stderr; stdout stays reserved for JSON-RPC responses.
+        assert!(
+            !script.contains("catch {}"),
+            "bridge script should not swallow request failures"
+        );
+        assert!(
+            script.contains("[Console]::Error.WriteLine("),
+            "bridge script should report request failures on stderr"
+        );
+        removed.expect("generated bridge script should be removable");
     }
 }

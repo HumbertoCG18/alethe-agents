@@ -73,6 +73,10 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
   closes the bar immediately and the sidebar takes over, so transcription and routing no longer hold
   a modal open; only a destructive plan reopens it to ask. Each entry also lists what actually
   happened, terminal by terminal, so the plan and the result can be told apart.
+- **Per-model Claude limits.** The Claude usage card, the title-bar popover, and the canvas usage
+  panel now list each model-scoped weekly limit, such as Fable, below the Opus row, and the
+  orchestrator counts them when it checks Claude's remaining quota
+  ([#208](https://github.com/Kc1t/alethe-agents/issues/208)).
 
 ### Changed
 
@@ -127,12 +131,35 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 - Terminal links to files in your home folder now open. A `~\` path was cut down to a path inside
   the terminal's folder, and neither `~/` nor `~\` was expanded to the home folder, so opening such
   a link in its folder, in VS Code, in a pane or in a preview reported that the path did not exist.
+- The close button of a pane shown inside a group, such as the Orchestration pane next to its
+  planner, now closes it. It did nothing, because the group kept drawing the pane. Closing the
+  first pane of a group also no longer hides the other panes in it.
 
 ### Fixed
 
 - On Linux, closing a terminal could end every process of your user session instead of only that
   terminal's processes, depending on the process ID it got. Terminals are now stopped directly
   through the system call, so only their own processes are affected.
+- **What's New lists 1.6.0 and 1.7.0.** The in-app panel stopped at 1.5.0 and its title read
+  1.5.0. It now covers both releases, and the test suite fails when the list does not start at the
+  app version, so a release can no longer ship with stale notes. Release dates in the panel no
+  longer show the day before for anyone west of UTC
+  ([#213](https://github.com/Kc1t/alethe-agents/issues/213)).
+- **Graphify MCP server starts for Claude, Codex, and opencode.** Alethe configured it as
+  `graphify <repo> --mcp`, a flag Graphify does not have, so the agent timed out waiting for it;
+  it now runs `graphify-mcp <repo>/graphify-out/graph.json`. Existing entries are rewritten the
+  next time a session starts ([#206](https://github.com/Kc1t/alethe-agents/issues/206)).
+- **Graphify builds the code graph without an LLM API key.** Alethe generated a missing graph with
+  Graphify's full extraction, which needs an API key for docs and images; without one it failed
+  and the graph never appeared. It now runs `graphify update`, which builds the code graph in
+  seconds and spends no LLM credits ([#211](https://github.com/Kc1t/alethe-agents/issues/211)).
+- **Codex usage no longer starts `codex.exe` on every poll.** Usage is read over HTTP with the
+  Codex CLI's saved ChatGPT login, falling back to `codex app-server` only when that fails, and the
+  fallback now lets the process exit on its own instead of killing it. Frequent short-lived
+  `codex.exe` processes were linked to `lsass.exe` crashes that forced a reboot on Windows 11 ([#202](https://github.com/Kc1t/alethe-agents/issues/202)).
+- **Codex weekly quota shown in the right place.** On plans whose only limit is weekly, such as
+  ChatGPT Pro Lite, the weekly usage appeared as the 5-hour quota and the week read 0%. Windows are
+  now placed by their length, and plans without a 5-hour limit show only the weekly one ([#187](https://github.com/Kc1t/alethe-agents/issues/187)).
 
 ## [1.7.0] — 2026-09-20
 

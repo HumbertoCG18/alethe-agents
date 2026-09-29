@@ -128,6 +128,12 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 - Opening a pull request now uses the system browser instead of creating an unexpected app surface.
 - The Features preferences page now matches the grouped, searchable feature selector used during
   onboarding, with consistent Browser and Playwright controls.
+- The close button of a pane shown inside a group, such as the Orchestration pane next to its
+  planner, now closes it. It did nothing, because the group kept drawing the pane. Closing the
+  first pane of a group also no longer hides the other panes in it.
+
+### Fixed
+
 - On Linux, closing a terminal could end every process of your user session instead of only that
   terminal's processes, depending on the process ID it got. Terminals are now stopped directly
   through the system call, so only their own processes are affected.

@@ -67,6 +67,25 @@ pub fn agent_hooks_token() -> String {
     init_token().to_string()
 }
 
+/// The main window's subagent canvas, as it last published it. A detached orchestration board has
+/// its own, empty store and only sees hook events from the moment it opens, so it shows this
+/// instead (#247).
+static CANVAS_MIRROR: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+const CANVAS_MIRROR_EVENT: &str = "agent-canvas://mirror";
+
+#[tauri::command]
+pub fn set_agent_canvas_mirror(app: AppHandle, snapshot: String) {
+    if let Ok(mut slot) = CANVAS_MIRROR.lock() {
+        *slot = Some(snapshot.clone());
+    }
+    let _ = app.emit(CANVAS_MIRROR_EVENT, snapshot);
+}
+
+#[tauri::command]
+pub fn agent_canvas_mirror() -> Option<String> {
+    CANVAS_MIRROR.lock().ok().and_then(|slot| slot.clone())
+}
+
 #[tauri::command]
 pub fn agent_hooks_settings_path(
     planner_id: String,

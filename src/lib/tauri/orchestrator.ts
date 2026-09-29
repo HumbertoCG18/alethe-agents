@@ -163,6 +163,11 @@ export async function orchestratorMessage(
   return invoke<unknown>('orchestrator_message', { jobId, message, steer })
 }
 
+/** Opens an orchestration pane's board in its own window, or brings back the one already open. */
+export async function openOrchestrationWindow(terminalId: string): Promise<void> {
+  await invoke('open_orchestration_window', { terminalId })
+}
+
 /** Stops a worker the way the lead's `alethe_cancel` does. */
 export async function orchestratorCancel(jobId: string): Promise<unknown> {
   return invoke<unknown>('orchestrator_cancel', { jobId })

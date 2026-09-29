@@ -12,6 +12,11 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ### Added
 
+- **Open the orchestration board in its own window.** A button in the orchestration pane's header
+  opens its board in a separate window, handy on a second monitor, and brings it back if it is
+  already open. It follows the same live workers and keeps the board's own actions; actions that
+  change the main workspace stay in the main window. The detached window reads the saved state
+  but never writes it, so the two windows cannot overwrite each other.
 - **Right-click a worker to open, stop or restart it.** On the orchestration board and in the
   Executions list, a worker's context menu opens its details, stops it while it is queued,
   running or waiting on you, or runs the same request again as a new worker under the same

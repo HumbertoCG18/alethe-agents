@@ -152,6 +152,40 @@ pub fn orchestrator_job_diff(
     state.core.job_diff(&job_id)
 }
 
+/// The label of the detached board window for one orchestration pane. The frontend reads the pane
+/// back from it, and `capabilities/orchestration-window.json` covers exactly `orchestration-*`.
+fn orchestration_window_label(terminal_id: &str) -> String {
+    let safe: String = terminal_id
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    format!("orchestration-{safe}")
+}
+
+/// Opens an orchestration pane's board in its own window, or brings back the one already open.
+/// Async on purpose: building a window from a synchronous command can deadlock on Windows.
+#[tauri::command]
+pub async fn open_orchestration_window(app: AppHandle, terminal_id: String) -> Result<(), String> {
+    let label = orchestration_window_label(&terminal_id);
+    if let Some(window) = app.get_webview_window(&label) {
+        let _ = window.unminimize();
+        return window.set_focus().map_err(|error| error.to_string());
+    }
+    tauri::WebviewWindowBuilder::new(&app, &label, tauri::WebviewUrl::App("index.html".into()))
+        .title("Alethe")
+        .inner_size(1180.0, 780.0)
+        .min_inner_size(640.0, 420.0)
+        .build()
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+}
+
 /// Lets the pane talk to one worker without going through the lead. A worker mid-turn is steered so
 /// the correction lands on what it is doing now; an idle one gets the message as a new turn.
 #[tauri::command]
@@ -186,4 +220,22 @@ pub fn orchestrator_restart(
     job_id: String,
 ) -> Result<Value, String> {
     crate::orchestrator_core::restart_job(&state.core, &job_id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::orchestration_window_label;
+
+    // One detached board window per orchestration pane, with a label the capability matches (#247).
+    #[test]
+    fn a_board_window_label_is_safe_and_matches_its_capability() {
+        assert_eq!(
+            orchestration_window_label("orchestrator-mWHJe7AX_ilh-tn"),
+            "orchestration-orchestrator-mWHJe7AX_ilh-tn"
+        );
+        assert_eq!(
+            orchestration_window_label("../pane id?"),
+            "orchestration-___pane_id_"
+        );
+    }
 }

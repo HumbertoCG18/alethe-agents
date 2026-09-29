@@ -8,6 +8,34 @@ export type ChangelogRelease = {
 
 export const CHANGELOG_RELEASES: ChangelogRelease[] = [
   {
+    version: '1.7.0',
+    date: '2026-09-20',
+    noteKeys: [
+      'whatsNew.v170.note1',
+      'whatsNew.v170.note2',
+      'whatsNew.v170.note3',
+      'whatsNew.v170.note4',
+      'whatsNew.v170.note5',
+      'whatsNew.v170.note6',
+      'whatsNew.v170.note7',
+      'whatsNew.v170.note8',
+    ],
+  },
+  {
+    version: '1.6.0',
+    date: '2026-08-17',
+    noteKeys: [
+      'whatsNew.v160.note1',
+      'whatsNew.v160.note2',
+      'whatsNew.v160.note3',
+      'whatsNew.v160.note4',
+      'whatsNew.v160.note5',
+      'whatsNew.v160.note6',
+      'whatsNew.v160.note7',
+      'whatsNew.v160.note8',
+    ],
+  },
+  {
     version: '1.5.0',
     date: '2026-08-09',
     noteKeys: [
@@ -60,3 +88,9 @@ export const CHANGELOG_RELEASES: ChangelogRelease[] = [
 ]
 
 export const CURRENT_VERSION = CHANGELOG_RELEASES[0].version
+
+/** Release dates are calendar days (the changelog uses UTC). `new Date('YYYY-MM-DD')` is UTC midnight,
+ * so formatting it in the viewer's time zone shows the previous day anywhere west of UTC. */
+export function formatReleaseDate(date: string, locale: string): string {
+  return new Date(date).toLocaleDateString(locale, { timeZone: 'UTC' })
+}

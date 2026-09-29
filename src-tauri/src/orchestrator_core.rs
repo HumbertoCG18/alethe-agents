@@ -292,6 +292,8 @@ impl Job {
             "approvalPolicy": self.approval_policy,
             "sandbox": self.sandbox,
             "webSearch": self.web_search,
+            // 0 is "no limit", so a record that lacks the field can still mean the old default.
+            "timeoutMs": self.timeout_ms.unwrap_or(0),
             "summary": self.report,
             "startedAt": self.started_at,
             "endedAt": self.ended_at,
@@ -347,7 +349,11 @@ impl Job {
             started_at: value.get("startedAt").and_then(Value::as_u64),
             ended_at: value.get("endedAt").and_then(Value::as_u64),
             worktree: text("worktree"),
-            timeout_ms: Some(DEFAULT_JOB_TIMEOUT_MS),
+            timeout_ms: match value.get("timeoutMs").and_then(Value::as_u64) {
+                Some(0) => None,
+                Some(ms) => Some(ms),
+                None => Some(DEFAULT_JOB_TIMEOUT_MS),
+            },
             approval_policy: text("approvalPolicy").unwrap_or_else(|| "never".to_string()),
             sandbox: text("sandbox").unwrap_or_else(|| "workspace-write".to_string()),
             web_search: value
@@ -770,6 +776,10 @@ impl Core {
             let Some(job) = inner.jobs.get_mut(job_id) else {
                 return;
             };
+            // A worker that ended while it waited in the queue stays ended.
+            if job.settled() {
+                return;
+            }
             job.status = STATUS_RUNNING.to_string();
             job.started_at = Some(now_ms());
             job.ended_at = None;
@@ -1429,6 +1439,9 @@ impl Core {
             if job.settled() {
                 return;
             }
+            // Only a running worker, or one blocked on a question, holds a slot. A queued one never
+            // took a slot and is still in the queue, which would start it despite this ending.
+            let held_slot = matches!(job.status.as_str(), STATUS_RUNNING | STATUS_BLOCKED);
             job.status = status.to_string();
             job.pending = None;
             if !text.trim().is_empty() {
@@ -1440,7 +1453,10 @@ impl Core {
             if terminal {
                 job.teardown();
             }
-            inner.running = inner.running.saturating_sub(1);
+            if held_slot {
+                inner.running = inner.running.saturating_sub(1);
+            }
+            inner.queue.retain(|queued| queued != job_id);
             if announce {
                 inner.push_delivery("worker_done", job_id, outcome, text);
             }
@@ -1741,6 +1757,60 @@ fn headroom_hint(block: &Value, requested: &str) -> Option<Value> {
             format!("{here}; {other} is at {other_used:.0}%")
         }
     }))
+}
+
+/// The `alethe_delegate` arguments that run `job`'s request again as a new worker. An isolated
+/// worker ran in `<repo>/.alethe/worktrees/<id>` (see `isolate_worktree`), so its rerun asks for a
+/// fresh worktree of that same repository instead of reusing the old one.
+fn restart_arguments(job: &Job) -> Map<String, Value> {
+    let repository = job
+        .worktree
+        .as_deref()
+        .and_then(|path| std::path::Path::new(path).ancestors().nth(3))
+        .map(|root| root.to_string_lossy().into_owned());
+    let mut arguments = Map::new();
+    arguments.insert("tasks".into(), json!([job.spec]));
+    arguments.insert("agent".into(), json!(job.agent));
+    arguments.insert(
+        "cwd".into(),
+        json!(repository.unwrap_or_else(|| job.cwd.clone())),
+    );
+    if let Some(label) = &job.run_label {
+        arguments.insert("label".into(), json!(label));
+    }
+    arguments.insert("isolate".into(), json!(job.worktree.is_some()));
+    // `approval_policy` holds the JSON the delegate built: a `granular` object when the worker was
+    // asked to stop before reaching outside its workspace, the string "never" otherwise.
+    arguments.insert(
+        "askForApproval".into(),
+        json!(job.approval_policy.contains("granular")),
+    );
+    arguments.insert("webSearch".into(), json!(job.web_search));
+    arguments.insert(
+        "timeoutSeconds".into(),
+        json!(job.timeout_ms.map_or(0, |ms| ms / 1000)),
+    );
+    arguments
+}
+
+/// The board's Restart: runs a worker's request again as a new worker under the same planner,
+/// stopping the old one first while it is still active.
+pub fn restart_job(core: &Core, job_id: &str) -> Result<Value, String> {
+    let (arguments, planner, active) = {
+        let inner = guard(&core.inner);
+        let job = inner
+            .jobs
+            .get(job_id)
+            .ok_or_else(|| format!("unknown job {job_id}"))?;
+        let active = [STATUS_QUEUED, STATUS_RUNNING, STATUS_BLOCKED].contains(&job.status.as_str());
+        (restart_arguments(job), job.planner_id.clone(), active)
+    };
+    if active {
+        let mut cancel = Map::new();
+        cancel.insert("jobIds".into(), json!([job_id]));
+        call_tool(core, "alethe_cancel", &cancel, None)?;
+    }
+    call_tool(core, "alethe_delegate", &arguments, planner.as_deref())
 }
 
 /// Every tool answers with the current per-agent headroom, because a tool result is the only
@@ -2377,4 +2447,155 @@ pub fn handle_mcp_body(core: &Core, body: &str, planner: Option<&str>) -> Option
     };
 
     Some(response.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn finished_job(worktree: Option<&str>, approval_policy: &str, timeout_ms: Option<u64>) -> Job {
+        Job {
+            id: "job-07".into(),
+            planner_id: Some("planner-a".into()),
+            agent: "claude".into(),
+            run_id: "run-03".into(),
+            run_label: Some("fix the parser".into()),
+            spec: "Make the parser accept trailing commas.".into(),
+            cwd: worktree.unwrap_or("C:/repo/app").into(),
+            status: STATUS_FAILED.into(),
+            thread_id: Some("thread-1".into()),
+            active_turn_id: None,
+            reply: String::new(),
+            report: String::new(),
+            plan: Vec::new(),
+            diff: None,
+            tokens: None,
+            cost_usd: None,
+            quota: None,
+            outcome: Some("failed".into()),
+            started_at: Some(1),
+            ended_at: Some(2),
+            worktree: worktree.map(Into::into),
+            timeout_ms,
+            approval_policy: approval_policy.into(),
+            sandbox: "workspace-write".into(),
+            web_search: true,
+            pending: None,
+            child: None,
+            stdin: None,
+            inbox: VecDeque::new(),
+            routing: None,
+            awaiting_steer: false,
+            next_request_id: 10,
+        }
+    }
+
+    // The board's Restart runs the same request again as a new worker (#242).
+    #[test]
+    fn restart_repeats_the_original_request() {
+        let arguments = restart_arguments(&finished_job(None, "\"never\"", Some(900_000)));
+
+        assert_eq!(
+            arguments["tasks"],
+            json!(["Make the parser accept trailing commas."])
+        );
+        assert_eq!(arguments["agent"], json!("claude"));
+        assert_eq!(arguments["cwd"], json!("C:/repo/app"));
+        assert_eq!(arguments["label"], json!("fix the parser"));
+        assert_eq!(arguments["isolate"], json!(false));
+        assert_eq!(arguments["askForApproval"], json!(false));
+        assert_eq!(arguments["webSearch"], json!(true));
+        assert_eq!(arguments["timeoutSeconds"], json!(900));
+    }
+
+    #[test]
+    fn restart_of_an_isolated_worker_gets_a_fresh_worktree_of_the_same_repository() {
+        let worktree = PathBuf::from("C:/repo")
+            .join(".alethe")
+            .join("worktrees")
+            .join("job-07");
+        let arguments = restart_arguments(&finished_job(
+            Some(&worktree.to_string_lossy()),
+            "{\"granular\":{\"sandbox_approval\":true}}",
+            None,
+        ));
+
+        assert_eq!(
+            arguments["cwd"],
+            json!(PathBuf::from("C:/repo").to_string_lossy())
+        );
+        assert_eq!(arguments["isolate"], json!(true));
+        assert_eq!(arguments["askForApproval"], json!(true));
+        assert_eq!(arguments["timeoutSeconds"], json!(0));
+    }
+
+    // A restored worker restarts with the budget it was given, not the default one (#242).
+    #[test]
+    fn a_saved_worker_keeps_its_timeout() {
+        for timeout_ms in [None, Some(1_800_000)] {
+            let saved = finished_job(None, "\"never\"", timeout_ms).record();
+            let restored = Job::from_record(&saved).expect("restore");
+            assert_eq!(restored.timeout_ms, timeout_ms);
+        }
+
+        let mut legacy = finished_job(None, "\"never\"", None).record();
+        legacy.as_object_mut().unwrap().remove("timeoutMs");
+        let restored = Job::from_record(&legacy).expect("restore");
+        assert_eq!(restored.timeout_ms, Some(DEFAULT_JOB_TIMEOUT_MS));
+    }
+
+    /// One slot, taken by a running worker, and a second worker waiting for it. The directory does
+    /// not exist and no launcher is registered, so nothing can really start if the queue drains.
+    fn core_with_a_queued_worker() -> Core {
+        let core = Core::default();
+        {
+            let mut inner = guard(&core.inner);
+            inner.max_concurrent = 1;
+            for (id, status) in [("job-01", STATUS_RUNNING), ("job-02", STATUS_QUEUED)] {
+                let job = Job {
+                    id: id.into(),
+                    status: status.into(),
+                    cwd: "Z:/alethe-test/missing".into(),
+                    worktree: None,
+                    ended_at: None,
+                    ..finished_job(None, "\"never\"", Some(900_000))
+                };
+                inner.jobs.insert(id.into(), job);
+                inner.order.push(id.into());
+            }
+            inner.queue.push_back("job-02".into());
+            inner.running = 1;
+        }
+        core
+    }
+
+    // Stopping a worker that never got a slot must not free one, nor leave it in the queue (#242).
+    #[test]
+    fn stopping_a_queued_worker_does_not_start_it() {
+        let core = core_with_a_queued_worker();
+        let mut arguments = Map::new();
+        arguments.insert("jobIds".into(), json!(["job-02"]));
+
+        call_tool(&core, "alethe_cancel", &arguments, None).expect("cancel");
+
+        let inner = guard(&core.inner);
+        assert_eq!(inner.jobs["job-02"].status, STATUS_CANCELLED);
+        assert_eq!(inner.running, 1);
+        assert!(inner.queue.is_empty());
+    }
+
+    #[test]
+    fn restarting_a_queued_worker_leaves_one_worker_waiting() {
+        let core = core_with_a_queued_worker();
+
+        restart_job(&core, "job-02").expect("restart");
+
+        let inner = guard(&core.inner);
+        assert_eq!(inner.jobs["job-02"].status, STATUS_CANCELLED);
+        assert_eq!(inner.running, 1);
+        let waiting: Vec<&String> = inner.queue.iter().collect();
+        assert_eq!(waiting.len(), 1);
+        assert_ne!(waiting[0], "job-02");
+        assert_eq!(inner.jobs[waiting[0].as_str()].status, STATUS_QUEUED);
+    }
 }

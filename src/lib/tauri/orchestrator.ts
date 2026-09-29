@@ -168,6 +168,16 @@ export async function openOrchestrationWindow(terminalId: string): Promise<void>
   await invoke('open_orchestration_window', { terminalId })
 }
 
+/** Stops a worker the way the lead's `alethe_cancel` does. */
+export async function orchestratorCancel(jobId: string): Promise<unknown> {
+  return invoke<unknown>('orchestrator_cancel', { jobId })
+}
+
+/** Runs a worker's request again as a new worker under the same planner. */
+export async function orchestratorRestart(jobId: string): Promise<unknown> {
+  return invoke<unknown>('orchestrator_restart', { jobId })
+}
+
 export async function listenOrchestratorJobs(
   handler: (snapshot: OrchestratorSnapshot) => void,
 ): Promise<UnlistenFn> {

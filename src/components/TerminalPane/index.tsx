@@ -139,6 +139,7 @@ export const TerminalPane = memo(function TerminalPane({
   const requestPaneFocus = useUiStore((s) => s.requestPaneFocus)
   const pushToast = useUiStore((s) => s.pushToast)
   const claudeUsage = useUiStore((s) => s.claudeUsage)
+  const claudeUsageStale = useUiStore((s) => s.claudeUsageError !== null)
   const codexUsage = useUiStore((s) => s.codexUsage)
   const terminalTheme = useProjectsStore(
     (s) => s.preferences.terminalTheme ?? s.preferences.uiTheme,
@@ -186,8 +187,11 @@ export const TerminalPane = memo(function TerminalPane({
   const ptyExited = ptyRuntime !== null && !ptyRuntime.alive
   const ptyParked = ptyRuntime?.parked === true
   const canHandoff = activeTab?.type === 'claude' || activeTab?.type === 'codex'
+  // A reading kept from before a failed refresh may predate a reset, so it cannot justify a switch.
   const handoffSuggested =
-    (activeTab?.type === 'claude' && (claudeUsage?.five_hour.utilization ?? 0) >= 100) ||
+    (activeTab?.type === 'claude' &&
+      !claudeUsageStale &&
+      (claudeUsage?.five_hour.utilization ?? 0) >= 100) ||
     (activeTab?.type === 'codex' && codexUsage?.rate_limited === true)
 
   const openVscode = async () => {

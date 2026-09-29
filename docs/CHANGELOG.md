@@ -17,6 +17,11 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
   already open. It follows the same live workers and keeps the board's own actions; actions that
   change the main workspace stay in the main window. The detached window reads the saved state
   but never writes it, so the two windows cannot overwrite each other.
+- **Right-click a worker to open, stop or restart it.** On the orchestration board and in the
+  Executions list, a worker's context menu opens its details, stops it while it is queued,
+  running or waiting on you, or runs the same request again as a new worker under the same
+  planner. Claude's own subagents and background shells run inside the planner, so they can only
+  be opened.
 - **Grok Build and Codewhale are now native agents.** Grok Build (xAI, `grok` CLI) and
   Codewhale (`codewhale` CLI) appear in every agent picker with their own icons and accent
   colors. Install entries cover the official Grok PowerShell/npm installers and
@@ -78,6 +83,10 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
   closes the bar immediately and the sidebar takes over, so transcription and routing no longer hold
   a modal open; only a destructive plan reopens it to ask. Each entry also lists what actually
   happened, terminal by terminal, so the plan and the result can be told apart.
+- **Per-model Claude limits.** The Claude usage card, the title-bar popover, and the canvas usage
+  panel now list each model-scoped weekly limit, such as Fable, below the Opus row, and the
+  orchestrator counts them when it checks Claude's remaining quota
+  ([#208](https://github.com/Kc1t/alethe-agents/issues/208)).
 
 ### Changed
 
@@ -129,12 +138,65 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 - Opening a pull request now uses the system browser instead of creating an unexpected app surface.
 - The Features preferences page now matches the grouped, searchable feature selector used during
   onboarding, with consistent Browser and Playwright controls.
+- Cancelling a worker that was still waiting in the orchestration queue no longer starts it. It
+  also freed a slot it never held, letting one more worker run than the concurrency limit allows.
+- A worker restored after a restart keeps the time budget it was delegated with, instead of
+  falling back to 15 minutes.
+- The Claude Code usage card no longer claims "no token configured" when the usage service is
+  only rate limiting. A refresh it refuses keeps the last reading on screen, without the live
+  marker and dimmed in the title bar, and a card with no reading yet says usage is unavailable.
+  Such an old reading no longer suggests switching agents, and pressing refresh while a read is
+  already on its way no longer sends another request.
+- A background command started by a Claude planner no longer stays running on the orchestration
+  board after it finishes. The board only noticed a background task when the agent stopped it,
+  so one that ended on its own kept its timer counting indefinitely; it now ends when Claude
+  reports the task as completed, failed or killed. At the end of each of the planner's turns, any
+  background command or subagent Claude no longer lists as running is ended too, which also clears
+  a subagent that was interrupted before reporting that it stopped.
+- Terminal links to files in your home folder now open. A `~\` path was cut down to a path inside
+  the terminal's folder, and neither `~/` nor `~\` was expanded to the home folder, so opening such
+  a link in its folder, in VS Code, in a pane or in a preview reported that the path did not exist.
+- The close button of a pane shown inside a group, such as the Orchestration pane next to its
+  planner, now closes it. It did nothing, because the group kept drawing the pane. Closing the
+  first pane of a group also no longer hides the other panes in it.
 
 ### Fixed
 
 - On Linux, closing a terminal could end every process of your user session instead of only that
   terminal's processes, depending on the process ID it got. Terminals are now stopped directly
   through the system call, so only their own processes are affected.
+- **What's New lists 1.6.0 and 1.7.0.** The in-app panel stopped at 1.5.0 and its title read
+  1.5.0. It now covers both releases, and the test suite fails when the list does not start at the
+  app version, so a release can no longer ship with stale notes. Release dates in the panel no
+  longer show the day before for anyone west of UTC
+  ([#213](https://github.com/Kc1t/alethe-agents/issues/213)).
+- **Graphify MCP server starts for Claude, Codex, and opencode.** Alethe configured it as
+  `graphify <repo> --mcp`, a flag Graphify does not have, so the agent timed out waiting for it;
+  it now runs `graphify-mcp <repo>/graphify-out/graph.json`. Existing entries are rewritten the
+  next time a session starts ([#206](https://github.com/Kc1t/alethe-agents/issues/206)).
+- **Graphify builds the code graph without an LLM API key.** Alethe generated a missing graph with
+  Graphify's full extraction, which needs an API key for docs and images; without one it failed
+  and the graph never appeared. It now runs `graphify update`, which builds the code graph in
+  seconds and spends no LLM credits ([#211](https://github.com/Kc1t/alethe-agents/issues/211)).
+- **Codex usage no longer starts `codex.exe` on every poll.** Usage is read over HTTP with the
+  Codex CLI's saved ChatGPT login, falling back to `codex app-server` only when that fails, and the
+  fallback now lets the process exit on its own instead of killing it. Frequent short-lived
+  `codex.exe` processes were linked to `lsass.exe` crashes that forced a reboot on Windows 11 ([#202](https://github.com/Kc1t/alethe-agents/issues/202)).
+- **Codex weekly quota shown in the right place.** On plans whose only limit is weekly, such as
+  ChatGPT Pro Lite, the weekly usage appeared as the 5-hour quota and the week read 0%. Windows are
+  now placed by their length, and plans without a 5-hour limit show only the weekly one ([#187](https://github.com/Kc1t/alethe-agents/issues/187)).
+
+### Fixed
+
+- Agent and 9router install and uninstall dialogs can now be cancelled while an installer runs, so
+  one stuck on a prompt no longer locks the dialog and every other install until Alethe restarts.
+- npm installs now work on a fresh Windows, where the default PowerShell execution policy refused
+  to run the `npm.ps1` shipped with Node.js; the relaxed policy only applies to the installer's own
+  shell.
+- WinGet and Chocolatey installs no longer stop on a confirmation prompt the dialog could not
+  answer, such as WinGet's source agreement on its first run.
+- Installing Node.js through WinGet, Scoop or Chocolatey is no longer cut short as soon as `npm`
+  appears on disk; Alethe now waits for the package manager to finish.
 
 ## [1.7.0] — 2026-09-20
 

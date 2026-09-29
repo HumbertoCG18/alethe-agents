@@ -95,6 +95,8 @@ type UiState = {
   runtimeSnapshot: RuntimeSnapshot | null
   memoryHistory: MemorySample[]
   claudeUsage: ClaudeUsage | null
+  /** Why the last Claude usage read failed; null after a successful one. */
+  claudeUsageError: 'no_token' | 'unavailable' | null
   codexUsage: CodexUsage | null
   antigravityUsage: AntigravityUsage | null
 
@@ -150,6 +152,7 @@ type UiState = {
   setRuntimeSnapshot: (value: RuntimeSnapshot | null) => void
   clearMemoryHistory: () => void
   setClaudeUsage: (value: ClaudeUsage | null) => void
+  setClaudeUsageError: (value: 'no_token' | 'unavailable' | null) => void
   setCodexUsage: (value: CodexUsage | null) => void
   setAntigravityUsage: (value: AntigravityUsage | null) => void
   setFocusedTerminal: (id: string | null) => void
@@ -199,6 +202,7 @@ export const useUiStore = create<UiState>((set) => ({
   runtimeSnapshot: null,
   memoryHistory: [],
   claudeUsage: null,
+  claudeUsageError: null,
   codexUsage: null,
   antigravityUsage: null,
   focusedTerminalId: null,
@@ -250,6 +254,7 @@ export const useUiStore = create<UiState>((set) => ({
   setRuntimeSnapshot: (value) => set({ runtimeSnapshot: value }),
   clearMemoryHistory: () => set({ memoryHistory: [] }),
   setClaudeUsage: (value) => set({ claudeUsage: value }),
+  setClaudeUsageError: (value) => set({ claudeUsageError: value }),
   setCodexUsage: (value) => set({ codexUsage: value }),
   setAntigravityUsage: (value) => set({ antigravityUsage: value }),
   setFocusedTerminal: (id) => set({ focusedTerminalId: id }),

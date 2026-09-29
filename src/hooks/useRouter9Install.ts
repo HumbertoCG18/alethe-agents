@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { installShellLine } from '../lib/agentInstall'
+import { INSTALL_SHELL_ENV, installShellLine } from '../lib/agentInstall'
 import {
   killPty,
   listenPtyData,
@@ -31,6 +31,8 @@ export function useRouter9Install(onSettled?: () => void) {
   const ptyIdRef = useRef<string | null>(null)
   const cleanupRef = useRef<Array<() => void>>([])
   const disposedRef = useRef(false)
+  // Bumped by every run and by reset(), so an in-flight run can tell it was cancelled.
+  const runRef = useRef(0)
   const settledRef = useRef(onSettled)
   settledRef.current = onSettled
 
@@ -54,6 +56,8 @@ export function useRouter9Install(onSettled?: () => void) {
   const run = useCallback(
     async (next: Router9InstallAction) => {
       if (status === 'running') return
+      const token = ++runRef.current
+      const stale = () => disposedRef.current || runRef.current !== token
       teardown()
       if (!acquireAgentOperation(LOCK_KEY)) return
       setLog('')
@@ -62,50 +66,64 @@ export function useRouter9Install(onSettled?: () => void) {
 
       // Removing the package under a live process would leave an orphan holding the port.
       if (next === 'uninstall') await router9Stop().catch(() => undefined)
+      if (stale()) return
 
       const ptyId = `router9-${next}:${Date.now()}`
       try {
         const command =
           next === 'install' ? await router9InstallCommand() : await router9UninstallCommand()
-        const spawned = await spawnPty({ cols: 100, rows: 24, id: ptyId })
-        if (disposedRef.current) {
+        if (stale()) return
+        const spawned = await spawnPty({ cols: 100, rows: 24, id: ptyId, env: INSTALL_SHELL_ENV })
+        if (stale()) {
           void killPty(spawned.id).catch(() => undefined)
           return
         }
         ptyIdRef.current = spawned.id
 
-        cleanupRef.current.push(
-          await listenPtyData(spawned.id, (chunk) => {
-            setLog((current) => trimInstallLog(current + chunk))
-          }),
-        )
-        cleanupRef.current.push(
-          await listenPtyExit(spawned.id, (payload) => {
-            ptyIdRef.current = null
-            releaseAgentOperation(LOCK_KEY)
-            if (payload.code !== 0) {
-              setStatus('failed')
-              return
-            }
-            // npm exiting clean is not proof the package landed: ask the backend what is on disk.
-            void router9Status()
-              .then((result) => {
-                if (disposedRef.current) return
-                const worked =
-                  next === 'install' ? result.managed.installed : !result.managed.installed
-                setStatus(worked ? 'success' : 'failed')
-                settledRef.current?.()
-              })
-              .catch(() => {
-                if (!disposedRef.current) setStatus('failed')
-              })
-          }),
-        )
+        // Checked after each await: a cancel meanwhile already ran teardown(), which never sees a
+        // listener that registers later.
+        const keep = (stop: () => void): boolean => {
+          if (stale()) {
+            stop()
+            return false
+          }
+          cleanupRef.current.push(stop)
+          return true
+        }
+
+        const stopData = await listenPtyData(spawned.id, (chunk) => {
+          if (stale()) return
+          setLog((current) => trimInstallLog(current + chunk))
+        })
+        if (!keep(stopData)) return
+        const stopExit = await listenPtyExit(spawned.id, (payload) => {
+          if (stale()) return
+          ptyIdRef.current = null
+          releaseAgentOperation(LOCK_KEY)
+          if (payload.code !== 0) {
+            setStatus('failed')
+            return
+          }
+          // npm exiting clean is not proof the package landed: ask the backend what is on disk.
+          void router9Status()
+            .then((result) => {
+              if (stale()) return
+              const worked =
+                next === 'install' ? result.managed.installed : !result.managed.installed
+              setStatus(worked ? 'success' : 'failed')
+              settledRef.current?.()
+            })
+            .catch(() => {
+              if (!stale()) setStatus('failed')
+            })
+        })
+        if (!keep(stopExit)) return
 
         await new Promise((resolve) => setTimeout(resolve, PROMPT_SETTLE_MS))
-        if (disposedRef.current) return
+        if (stale()) return
         await writePty(spawned.id, installShellLine(command))
       } catch (error) {
+        if (stale()) return
         setLog((current) => trimInstallLog(`${current}\n${String(error)}`))
         setStatus('failed')
         teardown()
@@ -115,6 +133,7 @@ export function useRouter9Install(onSettled?: () => void) {
   )
 
   const reset = useCallback(() => {
+    runRef.current += 1
     teardown()
     setLog('')
     setAction(null)

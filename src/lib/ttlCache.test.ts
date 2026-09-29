@@ -60,6 +60,20 @@ describe('makeTtlCache', () => {
     await expect(cache()).resolves.toBe('ok')
     expect(fetcher).toHaveBeenCalledTimes(2)
   })
+
+  // Clicking refresh while a read is already on its way must not send a second request (#244).
+  it('lets a forced read join the one already in flight', async () => {
+    let finish: (value: string) => void = () => undefined
+    const fetcher = vi.fn(() => new Promise<string>((resolve) => (finish = resolve)))
+    const cache = makeTtlCache(fetcher, 60_000)
+
+    const first = cache()
+    const forced = cache(true)
+    finish('value')
+
+    expect(await Promise.all([first, forced])).toEqual(['value', 'value'])
+    expect(fetcher).toHaveBeenCalledTimes(1)
+  })
 })
 
 describe('makeKeyedTtlCache', () => {

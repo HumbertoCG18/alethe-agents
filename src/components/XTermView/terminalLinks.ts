@@ -28,7 +28,7 @@ export type LogicalTerminalLine = {
 }
 
 const LINK_START_PATTERN =
-  /https?:\/\/|(?<![@\w.-])(?:localhost(?::\d{1,5})?|(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:app|ai|biz|br|ca|cloud|co|com|de|dev|edu|fr|gg|gov|info|io|jp|live|me|net|online|org|page|sh|site|tech|tools|tv|uk|xyz))(?::\d{1,5})?(?:\/[^\s<>"'`|]*)?|(?:[A-Za-z]:\\|\\\\)|(?<![\w])(?:~\/|\/)(?=[A-Za-z0-9_.~])|(?<![@\w.-])(?:\.\.?[\\/])?(?:[A-Za-z0-9_.-]+[\\/])*[A-Za-z0-9_.-]+\.(?:md|markdown|mdx|png|jpe?g|gif|webp|bmp|avif|ico|svg|txt|tsx?|jsx?|json|ya?ml|toml|csv|pdf|mp4|m4v|mov|avi|mkv|webm|mp3|wav|flac|m4a|zip|7z|rar|tar|gz|exe|msi|dll)(?=$|[\s),.;:\]}`])/gi
+  /https?:\/\/|(?<![@\w.-])(?:localhost(?::\d{1,5})?|(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:app|ai|biz|br|ca|cloud|co|com|de|dev|edu|fr|gg|gov|info|io|jp|live|me|net|online|org|page|sh|site|tech|tools|tv|uk|xyz))(?::\d{1,5})?(?:\/[^\s<>"'`|]*)?|(?:[A-Za-z]:\\|\\\\)|(?<![\w])(?:~[\\/]|\/)(?=[A-Za-z0-9_.~])|(?<![@\w.-])(?:\.\.?[\\/])?(?:[A-Za-z0-9_.-]+[\\/])*[A-Za-z0-9_.-]+\.(?:md|markdown|mdx|png|jpe?g|gif|webp|bmp|avif|ico|svg|txt|tsx?|jsx?|json|ya?ml|toml|csv|pdf|mp4|m4v|mov|avi|mkv|webm|mp3|wav|flac|m4a|zip|7z|rar|tar|gz|exe|msi|dll)(?=$|[\s),.;:\]}`])/gi
 const URL_PROTOCOL_PATTERN = /^https?:\/\//i
 const BARE_URL_PATTERN =
   /^(?:localhost(?::\d{1,5})?|(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:app|ai|biz|br|ca|cloud|co|com|de|dev|edu|fr|gg|gov|info|io|jp|live|me|net|online|org|page|sh|site|tech|tools|tv|uk|xyz))(?::\d{1,5})?(?:\/[^\s<>"'`|]*)?/i
@@ -65,23 +65,33 @@ export function classifyFileLink(text: string): FileLinkKind | undefined {
 const HARD_LINK_DELIMITERS = new Set(['\t', '\r', '\n', '<', '>', '"', "'", '`', '|'])
 
 function isLikelyAbsolutePath(text: string): boolean {
-  if (!/^(?:~\/|\/)/.test(text)) return true
+  if (!/^(?:~[\\/]|\/)/.test(text)) return true
   const clean = stripLineColumn(text)
-  const withoutRoot = clean.startsWith('~/') ? clean.slice(2) : clean.slice(1)
-  return withoutRoot.includes('/') || FILE_EXT_PATTERN.test(clean)
+  const withoutRoot = clean.startsWith('~') ? clean.slice(2) : clean.slice(1)
+  return /[\\/]/.test(withoutRoot) || FILE_EXT_PATTERN.test(clean)
 }
 
 function isLikelyFilePath(text: string): boolean {
   return isLikelyAbsolutePath(text) || Boolean(classifyFileLink(text))
 }
 
-export function resolveTerminalFilePath(path: string, cwd?: string | null): string {
+function joinPath(base: string, relative: string): string {
+  const separator = base.includes('\\') ? '\\' : '/'
+  const root = base.replace(/[\\/]+$/, '')
+  return relative ? `${root}${separator}${relative.replace(/[\\/]/g, separator)}` : root
+}
+
+export function resolveTerminalFilePath(
+  path: string,
+  cwd?: string | null,
+  home?: string | null,
+): string {
   const clean = stripLineColumn(path.trim())
-  if (!cwd || /^(?:[A-Za-z]:[\\/]|\\\\|~\/|\/)/.test(clean)) return clean
-  const separator = cwd.includes('\\') ? '\\' : '/'
-  const base = cwd.replace(/[\\/]+$/, '')
-  const relative = clean.replace(/^\.([\\/])/, '').replace(/[\\/]/g, separator)
-  return `${base}${separator}${relative}`
+  // A `~` path belongs to the home folder, never to the terminal's. Until the home folder is
+  // known it is kept as printed, since nothing downstream expands the tilde.
+  if (/^~(?:[\\/]|$)/.test(clean)) return home ? joinPath(home, clean.slice(2)) : clean
+  if (!cwd || /^(?:[A-Za-z]:[\\/]|\\\\|\/)/.test(clean)) return clean
+  return joinPath(cwd, clean.replace(/^\.([\\/])/, ''))
 }
 
 function normalizeUrlTarget(text: string): string {
@@ -109,7 +119,7 @@ function findLinkEnd(line: string, start: number, isUrl: boolean): number {
       const pathSoFar = line.slice(start, end)
       const endsAtDirectorySeparator =
         pathSoFar.endsWith('/') ||
-        (/^(?:[A-Za-z]:\\|\\\\)/.test(pathSoFar) && pathSoFar.endsWith('\\'))
+        (/^(?:[A-Za-z]:\\|\\\\|~\\)/.test(pathSoFar) && pathSoFar.endsWith('\\'))
       if (endsAtDirectorySeparator) break
 
       // A space is only worth crossing to reach a file extension — that is what a path
@@ -121,7 +131,7 @@ function findLinkEnd(line: string, start: number, isUrl: boolean): number {
     // A second link after whitespace belongs to a separate match.
     if (char === ' ') {
       const remainder = line.slice(end + 1)
-      if (/^(?:https?:\/\/|[A-Za-z]:\\|\\\\|~\/|\/)/.test(remainder)) break
+      if (/^(?:https?:\/\/|[A-Za-z]:\\|\\\\|~[\\/]|\/)/.test(remainder)) break
     }
     end += 1
 

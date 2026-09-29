@@ -55,6 +55,12 @@ export function AgentUninstallButton({ agent, label, onUninstalled, nested }: Pr
   const blocked = busyAgent !== null && busyAgent !== agent
   const cleanLog = stripInstallLogAnsi(log)
 
+  // Closing kills a running uninstaller, so a stuck one cannot hold the modal and the install lock.
+  const cancel = () => {
+    if (running) reset()
+    setOpen(false)
+  }
+
   return (
     <>
       <button
@@ -72,20 +78,12 @@ export function AgentUninstallButton({ agent, label, onUninstalled, nested }: Pr
 
       <Modal
         open={open}
-        onClose={() => {
-          if (running) return
-          setOpen(false)
-        }}
+        onClose={cancel}
         title={t('agentInstall.uninstallTitle', { agent: label })}
         nested={nested}
         footer={
           <>
-            <button
-              type="button"
-              className={controls.btn}
-              disabled={running}
-              onClick={() => setOpen(false)}
-            >
+            <button type="button" className={controls.btn} onClick={cancel}>
               {t('agentInstall.cancel')}
             </button>
             <button

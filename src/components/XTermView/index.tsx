@@ -19,7 +19,13 @@ import { normalizeBrowserUrl } from '../../lib/browserUrl'
 import { pickFile } from '../../lib/dialog'
 import { getLocale, translate, useT } from '../../lib/i18n'
 import { writeScopedStorage } from '../../lib/storageNamespace'
-import { openInBrowser, openInFileExplorer, writeClipboardText, writePty } from '../../lib/tauri'
+import {
+  homeDirectory,
+  openInBrowser,
+  openInFileExplorer,
+  writeClipboardText,
+  writePty,
+} from '../../lib/tauri'
 import { agentLabel, resolveAgentCliCommand } from '../../lib/agentProviders'
 import type { AgentRuntimeProfile, AgentType, Theme } from '../../lib/types'
 import { useProjectsStore } from '../../stores/projectsStore'
@@ -153,6 +159,17 @@ export function XTermView({
     setLinkActions(null)
   }, [])
 
+  // Read when a link is clicked, not captured: the link provider keeps the menu callback it was
+  // registered with, and the home folder only arrives after mount.
+  const homeRef = useRef<string | null>(null)
+  useEffect(() => {
+    void homeDirectory()
+      .then((home) => {
+        homeRef.current = home
+      })
+      .catch(() => undefined)
+  }, [])
+
   // estimativa conservadora do tamanho para nunca cortar o menu na viewport.
   const showLinkActionsMenu = useCallback(
     (event: MouseEvent, link: DetectedTerminalLink) => {
@@ -172,7 +189,10 @@ export function XTermView({
 
       setLinkActions({
         text: link.text,
-        target: link.kind === 'path' ? resolveTerminalFilePath(link.target, cwd) : link.target,
+        target:
+          link.kind === 'path'
+            ? resolveTerminalFilePath(link.target, cwd, homeRef.current)
+            : link.target,
         kind: link.kind,
         fileKind: link.fileKind,
         x,

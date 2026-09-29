@@ -1,0 +1,12 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+.gone {
+  margin: auto;
+  color: var(--fg-muted);
+}

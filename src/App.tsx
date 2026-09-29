@@ -1,10 +1,10 @@
 import { getCurrentWebview } from '@tauri-apps/api/webview'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { Bell, X } from 'lucide-react'
-import { type CSSProperties, lazy, Suspense, useEffect, useRef } from 'react'
+import { lazy, Suspense, useEffect, useRef } from 'react'
 import { Group as PanelGroup, Panel, Separator, usePanelRef } from 'react-resizable-panels'
 
 import styles from './App.module.css'
+import { InAppNotifications } from './components/InAppNotifications'
 import homeBackground from './assets/home-bg-right.png'
 import { AgentSandbox } from './components/AgentSandbox'
 import { ContributedModals } from './components/ContributedModals'
@@ -12,7 +12,6 @@ import { DictationButton } from './components/DictationButton'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { FocusOverlay } from './components/FocusOverlay'
 import { GsdSyncActivityView } from './components/GsdSyncActivityView'
-import { AgentIcon } from './components/icons/AgentIcons'
 import { LinkViewerOverlay } from './components/LinkViewerOverlay'
 import { MainMenu } from './components/MainMenu'
 import { AddBrowserModal } from './components/modals/AddBrowserModal'
@@ -62,7 +61,6 @@ import { useRemoteControlService } from './hooks/useRemoteControlService'
 import { useResourceSupervisor } from './hooks/useResourceSupervisor'
 import { useRouter9AutoStart } from './hooks/useRouter9AutoStart'
 import { startActivityTracker } from './lib/activityTracker'
-import { agentAccentVar } from './lib/agentProviders'
 import { APP_SHELL_ID } from './lib/appShell'
 import { AGENT_SANDBOX_ENABLED } from './lib/featureFlags'
 import { intlLocale, translate, useT } from './lib/i18n'
@@ -77,7 +75,7 @@ import { useAppliedTheme } from './lib/themes'
 import { checkForUpdate } from './lib/updater'
 import { useSidebarViews } from './lib/viewPlacement'
 import { useProjectsStore } from './stores/projectsStore'
-import { type InAppToast, useUiStore } from './stores/uiStore'
+import { useUiStore } from './stores/uiStore'
 
 const AgentCanvasPOC = lazy(() =>
   import('./components/AgentCanvasPOC').then((module) => ({ default: module.AgentCanvasPOC })),
@@ -141,85 +139,6 @@ function LoadingScreen({ reducedMotion = false }: { reducedMotion?: boolean }) {
           ))}
         </div>
       </div>
-    </div>
-  )
-}
-
-function ToastItem({ toast }: { toast: InAppToast }) {
-  const dismissToast = useUiStore((s) => s.dismissToast)
-  const uiTheme = useProjectsStore((s) => s.preferences.uiTheme)
-
-  useEffect(() => {
-    // A toast that asks something has to outlive a glance, or the offer is gone before it is read.
-    const timer = window.setTimeout(
-      () => dismissToast(toast.id),
-      toast.actions?.length ? 20000 : 6500,
-    )
-    return () => window.clearTimeout(timer)
-  }, [dismissToast, toast.id, toast.actions])
-
-  const accentStyle = {
-    '--toast-accent': toast.agent ? agentAccentVar(toast.agent) : 'var(--accent)',
-  } as CSSProperties
-
-  return (
-    <div className={styles.toast} role="status" style={accentStyle}>
-      <div className={styles.toastIcon} aria-hidden>
-        {toast.agent ? (
-          <AgentIcon type={toast.agent} size={16} theme={uiTheme} />
-        ) : (
-          <Bell size={14} />
-        )}
-      </div>
-      <div className={styles.toastText}>
-        <strong>{toast.title}</strong>
-        <span title={toast.body}>{toast.body}</span>
-        {toast.actions?.length ? (
-          <div className={styles.toastActions}>
-            {toast.actions.map((action, index) => (
-              <button
-                key={action.label}
-                type="button"
-                className={
-                  action.quiet
-                    ? styles.toastActionQuiet
-                    : index === 0
-                      ? styles.toastAction
-                      : styles.toastActionSecondary
-                }
-                onClick={() => {
-                  action.run()
-                  dismissToast(toast.id)
-                }}
-              >
-                {action.label}
-              </button>
-            ))}
-          </div>
-        ) : null}
-      </div>
-      <button
-        type="button"
-        className={styles.toastClose}
-        onClick={() => dismissToast(toast.id)}
-        aria-label="Close notification"
-        title="Close"
-      >
-        <X size={14} />
-      </button>
-    </div>
-  )
-}
-
-function InAppNotifications() {
-  const toasts = useUiStore((s) => s.toasts)
-  if (toasts.length === 0) return null
-
-  return (
-    <div className={styles.toastStack} aria-live="polite" aria-relevant="additions">
-      {toasts.map((toast) => (
-        <ToastItem key={toast.id} toast={toast} />
-      ))}
     </div>
   )
 }

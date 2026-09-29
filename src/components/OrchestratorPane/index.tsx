@@ -53,6 +53,7 @@ import {
   type Attention,
   type AttentionLane,
   attentionOf,
+  boardPlannerIds,
   emptyCounts,
   groupPlanners,
   LANE_OF,
@@ -1061,8 +1062,15 @@ export const OrchestratorPane = memo(function OrchestratorPane({
     [snapshot.planners, projectPtyIds],
   )
   const groups = useMemo(() => groupPlanners(jobs, planners), [jobs, planners])
+  const ownPlannerIds = useMemo(
+    () => boardPlannerIds(project ?? undefined, terminal.id),
+    [project, terminal.id],
+  )
   const activeGroup =
-    groups.find((group) => plannerKey(group) === selectedPlanner) ?? groups[0] ?? null
+    groups.find((group) => plannerKey(group) === selectedPlanner) ??
+    ownPlannerIds.flatMap((id) => groups.filter((group) => group.id === id))[0] ??
+    groups[0] ??
+    null
   const groupJobs = useMemo(() => activeGroup?.jobs ?? [], [activeGroup])
   const spendByAgent = useMemo(() => aggregateAgentSpend(groupJobs), [groupJobs])
   const runs = useMemo(() => activeGroup?.runs ?? [], [activeGroup])

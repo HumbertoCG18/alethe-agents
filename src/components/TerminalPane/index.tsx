@@ -1,10 +1,12 @@
 import { useDraggable, useDroppable } from '@dnd-kit/core'
+import { confirm } from '@tauri-apps/plugin-dialog'
 import {
   ArrowRightLeft,
   Clock,
   GripVertical,
   Maximize2,
   Minimize2,
+  Network,
   PanelLeftClose,
   PanelLeftOpen,
   Pin,
@@ -15,11 +17,12 @@ import {
 } from 'lucide-react'
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 
-import { preparePtyRuntimeLaunch } from '../../lib/agentRuntimeAdapter'
+import { relaunchAgentPty } from '../../lib/agentRelaunch'
+import { graphifyRepoOf } from '../../lib/claudeMcpConfigs'
 import { buildGhosttyCommand } from '../../lib/ghosttyCommand'
 import { useT } from '../../lib/i18n'
+import { startOrchestrationOn } from '../../lib/orchestrationOnTerminal'
 import { shouldUseNativeBackend } from '../../lib/platform'
-import { buildAgentLaunch } from '../../lib/sessionLaunch'
 import {
   conversationFields,
   getActiveSessions,
@@ -27,19 +30,16 @@ import {
   saveSession,
 } from '../../lib/sessionResume'
 import {
-  agentHooksSettingsPath,
   completeAgentHandoff,
   getClaudeSessionTitle,
   getCodexSessionTitle,
   getPtyCwd,
   openInVscode,
-  restartPty,
   snapshotCodexSessions,
 } from '../../lib/tauri'
-import { resolveAgentCliCommand } from '../../lib/agentProviders'
 import {
-  isShellAgentType,
   type AgentType,
+  isShellAgentType,
   type SubTab,
   type Terminal as TerminalEntry,
   type Theme,
@@ -150,11 +150,12 @@ export const TerminalPane = memo(function TerminalPane({
 
   // Repository to hand the Graphify MCP to when the project enables it (XTermView resolves the
   // config and bootstrap).
-  const graphifyRepo = useProjectsStore((s) => {
-    const p = s.projects.find((p) => p.id === projectId)
-    if (!p?.graphifyEnabled) return null
-    return terminal.cwd || p.terminals[0]?.cwd || null
-  })
+  const graphifyRepo = useProjectsStore((s) =>
+    graphifyRepoOf(
+      s.projects.find((p) => p.id === projectId),
+      terminal.cwd,
+    ),
+  )
 
   // sozinho (ver XTermView, gatilho condicionado a command === 'opencode').
   const gsdWatcherEnabled = useProjectsStore((s) => {
@@ -205,14 +206,53 @@ export const TerminalPane = memo(function TerminalPane({
     })
   }
 
-  const onRestart = async () => {
-    if (!activeTab?.ptyId || terminal.disabled) return
+  // Whether this terminal already has its orchestration board next to it.
+  const orchestrated = useProjectsStore(
+    (s) =>
+      s.projects
+        .find((p) => p.id === projectId)
+        ?.paneGroups?.some(
+          (group) => group.kind === 'orchestration' && group.paneIds.includes(terminal.id),
+        ) ?? false,
+  )
+
+  const [orchestrationPending, setOrchestrationPending] = useState(false)
+  const onOpenOrchestration = async () => {
+    if (activeTab?.type !== 'claude' || !activeTab.ptyId || orchestrationPending) return
+    setOrchestrationPending(true)
+    try {
+      const outcome = await startOrchestrationOn({
+        projectId,
+        terminalId: terminal.id,
+        ptyId: activeTab.ptyId,
+        cwd: activeTab.cwd || terminal.cwd || '',
+        confirmRestart: () =>
+          confirm(t('ui.terminal.orchestrationRestartBody'), {
+            title: t('ui.terminal.orchestrationRestartTitle'),
+            kind: 'info',
+          }),
+        restart: onRestart,
+      })
+      if (outcome === 'failed') {
+        pushToast({
+          title: t('ui.terminal.orchestrationStartFailed'),
+          body: t('ui.terminal.orchestrationStartFailedBody'),
+        })
+      }
+    } finally {
+      setOrchestrationPending(false)
+    }
+  }
+
+  /** Restarts the pane's agent, or resumes it when parked; false when that could not happen. */
+  const onRestart = async (): Promise<boolean> => {
+    if (!activeTab?.ptyId || terminal.disabled) return false
     if (ptyParked) {
-      if (resumePending) return
+      if (resumePending) return true
       setResumePending(true)
       setResumeNonce((value) => value + 1)
       requestPaneFocus(terminal.id)
-      return
+      return true
     }
     const ptyId = activeTab.ptyId
     let restartCwd = (activeTab.cwd || terminal.cwd || '').trim()
@@ -227,41 +267,20 @@ export const TerminalPane = memo(function TerminalPane({
     if (!resumeSessionId && activeTab.type === 'codex' && restartCwd) {
       resumeSessionId = (await snapshotCodexSessions(restartCwd).catch(() => []))[0]?.id
     }
-    const preparedRuntime = preparePtyRuntimeLaunch(
-      activeTab.type,
-      activeTab.runtimeProfile,
-      activeTab.extraArgs ?? [],
-    )
-    const hooksSettingsPath =
-      activeTab.type === 'claude'
-        ? await agentHooksSettingsPath(
-            ptyId,
-            useProjectsStore.getState().preferences.enabledFeatures.orchestrator,
-          ).catch(() => undefined)
-        : undefined
-    const launch = buildAgentLaunch(
-      activeTab.type,
-      preparedRuntime.args,
-      resumeSessionId,
-      undefined,
-      undefined,
-      hooksSettingsPath,
-    )
-    if (launch.sessionId && launch.sessionId !== activeTab.sessionId) {
-      setSubTabSessionId(projectId, terminal.id, activeTab.id, launch.sessionId)
-    }
 
-    useTerminalsStore.getState().beginRestart(ptyId)
     try {
-      await restartPty({
-        id: ptyId,
-        cols: 80,
-        rows: 24,
-        command: resolveAgentCliCommand(activeTab.type),
-        cwd: restartCwd || undefined,
-        extraArgs: launch.args,
-        env: preparedRuntime.env,
+      const launch = await relaunchAgentPty({
+        ptyId,
+        agent: activeTab.type,
+        runtimeProfile: activeTab.runtimeProfile,
+        extraArgs: activeTab.extraArgs,
+        sessionId: resumeSessionId,
+        cwd: restartCwd,
+        graphifyRepo,
       })
+      if (launch.sessionId && launch.sessionId !== activeTab.sessionId) {
+        setSubTabSessionId(projectId, terminal.id, activeTab.id, launch.sessionId)
+      }
       if (launch.sessionId) {
         saveSession(activeTab.id, {
           sessionId: ptyId,
@@ -274,9 +293,11 @@ export const TerminalPane = memo(function TerminalPane({
       window.dispatchEvent(new CustomEvent('alethe:terminal-resize-request', { detail: { ptyId } }))
       requestPaneFocus(terminal.id)
       window.setTimeout(() => requestPaneFocus(terminal.id), 160)
+      return true
     } catch (err) {
       console.error('restart pty falhou', err)
       pushToast({ title: t('ui.terminal.restartFailed'), body: String(err) })
+      return false
     }
   }
 
@@ -590,6 +611,18 @@ export const TerminalPane = memo(function TerminalPane({
               >
                 {isFocusMode ? <Minimize2 size={12} /> : <Maximize2 size={12} />}
               </button>
+              {activeTab?.type === 'claude' && activeTab.ptyId && !orchestrated ? (
+                <button
+                  type="button"
+                  className={styles.action}
+                  onClick={() => void onOpenOrchestration()}
+                  title={t('ui.terminal.openOrchestration')}
+                  aria-label={t('ui.terminal.openOrchestration')}
+                  disabled={terminal.disabled || orchestrationPending}
+                >
+                  <Network size={12} />
+                </button>
+              ) : null}
               {activeTab?.ptyId ? (
                 <button
                   type="button"

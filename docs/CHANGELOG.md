@@ -12,6 +12,10 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ### Added
 
+- **Start orchestration on a Claude terminal that is already open.** A button in a Claude
+  terminal's header puts an orchestration board next to it, so the conversation where the work
+  was planned can become the planner. A conversation started before orchestration was on is
+  restarted on the same conversation, after asking, to get the orchestrator tools.
 - **Open the orchestration board in its own window.** A button in the orchestration pane's header
   opens its board in a separate window, handy on a second monitor, and brings it back if it is
   already open. It follows the same live workers and keeps the board's own actions; actions that
@@ -138,6 +142,11 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 - Opening a pull request now uses the system browser instead of creating an unexpected app surface.
 - The Features preferences page now matches the grouped, searchable feature selector used during
   onboarding, with consistent Browser and Playwright controls.
+- Relaunching a Claude terminal no longer drops its MCP servers and hooks. Claude only reads them
+  at launch, and only the first launch passed them, so restarting a terminal (from its header, the
+  inspector or the sidebar), resuming a conversation in it, resetting the last session or moving
+  it to a new worktree left a planner without the orchestrator tools, along with Playwright,
+  Graphify and AI memory.
 - Cancelling a worker that was still waiting in the orchestration queue no longer starts it. It
   also freed a slot it never held, letting one more worker run than the concurrency limit allows.
 - A worker restored after a restart keeps the time budget it was delegated with, instead of

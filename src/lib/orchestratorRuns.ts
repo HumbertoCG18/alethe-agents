@@ -1,4 +1,5 @@
 import type { OrchestratorJob, OrchestratorPlanner } from './tauri'
+import type { Project } from './types'
 
 export type RunLane = 'blocked' | 'running' | 'queued' | 'interrupted' | 'failed' | 'finished'
 
@@ -203,4 +204,23 @@ export function groupPlanners(
   if (orphans) groups.push(toGroup(null, null, null, orphans))
 
   return groups
+}
+
+/**
+ * The planners a board should show first: the ptys of the terminal it is grouped with, its active
+ * tab first. Without it, a board opened next to one terminal would show whichever planner sorts
+ * first by name (#248).
+ */
+export function boardPlannerIds(project: Project | undefined, boardTerminalId: string): string[] {
+  const group = project?.paneGroups?.find(
+    (entry) => entry.kind === 'orchestration' && entry.paneIds.includes(boardTerminalId),
+  )
+  const planner = project?.terminals.find(
+    (terminal) => terminal.id === group?.paneIds[0] && terminal.id !== boardTerminalId,
+  )
+  if (!planner) return []
+  const tabs = [...planner.tabs].sort(
+    (a, b) => Number(b.id === planner.activeTabId) - Number(a.id === planner.activeTabId),
+  )
+  return tabs.flatMap((tab) => (tab.ptyId ? [tab.ptyId] : []))
 }

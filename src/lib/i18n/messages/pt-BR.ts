@@ -2264,6 +2264,13 @@ export const ptBR: Record<MessageKey, string> = {
   'mod.jobGuardInactive':
     'Proteção contra processos órfãos: indisponível nesta plataforma/sessão. Um crash pode deixar processos rodando; o próximo boot ainda tenta limpar automaticamente.',
   'ui.terminal.restartFailed': 'Falha ao reiniciar o terminal',
+  'ui.terminal.orchestrationStartFailed': 'Não foi possível iniciar a orquestração',
+  'ui.terminal.orchestrationStartFailedBody':
+    'O Claude não voltou com as ferramentas do orquestrador.',
+  'ui.terminal.openOrchestration': 'Abrir orquestração',
+  'ui.terminal.orchestrationRestartTitle': 'Reiniciar o Claude para a orquestração?',
+  'ui.terminal.orchestrationRestartBody':
+    'Esta conversa foi iniciada sem as ferramentas do orquestrador. O Claude reinicia na mesma conversa para recebê-las.',
   'git.initOffer.title': 'Ainda não é um repositório Git',
   'git.initOffer.body':
     'Isolamento de agentes, worktrees e merges precisam que esta pasta seja um repositório Git. Inicializar agora?',

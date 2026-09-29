@@ -1,0 +1,52 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+import { useProjectsStore } from '../stores/projectsStore'
+import { relaunchAgentPty } from './agentRelaunch'
+import { hasOrchestratorTools, recordClaudeLaunch } from './claudeMcpConfigs'
+import { restartPty } from './tauri'
+
+vi.mock('./tauri', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./tauri')>()),
+  agentHooksSettingsPath: vi.fn(async () => 'C:\\Temp\\hooks.json'),
+  restartPty: vi.fn(async ({ id }: { id: string }) => ({ id })),
+  orchestratorMcpConfigPath: vi.fn(async () => 'C:\\Temp\\orchestrator-mcp.json'),
+  playwrightMcpConfigPath: vi.fn(async () => 'C:\\Temp\\playwright-mcp.json'),
+  aiMemoryDetect: vi.fn(async () => ({ installed: false })),
+}))
+
+beforeEach(() => {
+  vi.mocked(restartPty).mockClear()
+  recordClaudeLaunch('pty-1', false)
+  const { preferences } = useProjectsStore.getState()
+  useProjectsStore.setState({
+    preferences: {
+      ...preferences,
+      enabledFeatures: { ...preferences.enabledFeatures, orchestrator: true },
+    },
+  })
+})
+
+// Every relaunch of a Claude pane keeps its MCP servers and hooks, and only a launch that went
+// through counts as the pane having the orchestrator tools (#248).
+describe('relaunchAgentPty', () => {
+  it('relaunches Claude with its MCP servers and hooks and records the tools', async () => {
+    await relaunchAgentPty({ ptyId: 'pty-1', agent: 'claude', cwd: 'C:\\repo' })
+
+    const args = vi.mocked(restartPty).mock.calls[0][0].extraArgs ?? []
+    expect(args).toEqual(
+      expect.arrayContaining(['--mcp-config', 'C:\\Temp\\orchestrator-mcp.json']),
+    )
+    expect(args).toEqual(expect.arrayContaining(['--settings', 'C:\\Temp\\hooks.json']))
+    expect(hasOrchestratorTools('pty-1')).toBe(true)
+  })
+
+  it('records nothing when the restart fails', async () => {
+    vi.mocked(restartPty).mockRejectedValueOnce(new Error('spawn failed'))
+
+    await expect(
+      relaunchAgentPty({ ptyId: 'pty-1', agent: 'claude', cwd: 'C:\\repo' }),
+    ).rejects.toThrow('spawn failed')
+
+    expect(hasOrchestratorTools('pty-1')).toBe(false)
+  })
+})

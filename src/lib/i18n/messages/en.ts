@@ -2238,6 +2238,13 @@ export const en = {
   'mod.jobGuardInactive':
     'Orphan process protection: unavailable on this platform/session. A crash may leave processes running; the next boot still tries to clean up automatically.',
   'ui.terminal.restartFailed': 'Failed to restart terminal',
+  'ui.terminal.orchestrationStartFailed': 'Could not start orchestration',
+  'ui.terminal.orchestrationStartFailedBody':
+    'Claude did not come back with the orchestrator tools.',
+  'ui.terminal.openOrchestration': 'Open orchestration',
+  'ui.terminal.orchestrationRestartTitle': 'Restart Claude for orchestration?',
+  'ui.terminal.orchestrationRestartBody':
+    'This conversation was started without the orchestrator tools. Claude restarts on the same conversation to get them.',
   'git.initOffer.title': 'Not a Git repository yet',
   'git.initOffer.body':
     'Agent isolation, worktrees and merges all need this folder to be a Git repository. Initialize one now?',

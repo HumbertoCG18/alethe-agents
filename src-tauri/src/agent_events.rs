@@ -115,6 +115,10 @@ pub fn agent_hooks_settings_path(
             "TeammateIdle",
             "TaskCreated",
             "TaskCompleted",
+            // Lists what is still running when a turn ends, which is how the board notices a
+            // background worker whose own end event never came. `/hook` answers with an empty
+            // body, so this never blocks the agent from stopping.
+            "Stop",
         ] {
             hooks.insert(event.to_string(), hook.clone());
         }

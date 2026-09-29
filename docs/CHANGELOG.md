@@ -128,6 +128,12 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 - Opening a pull request now uses the system browser instead of creating an unexpected app surface.
 - The Features preferences page now matches the grouped, searchable feature selector used during
   onboarding, with consistent Browser and Playwright controls.
+- A background command started by a Claude planner no longer stays running on the orchestration
+  board after it finishes. The board only noticed a background task when the agent stopped it,
+  so one that ended on its own kept its timer counting indefinitely; it now ends when Claude
+  reports the task as completed, failed or killed. At the end of each of the planner's turns, any
+  background command or subagent Claude no longer lists as running is ended too, which also clears
+  a subagent that was interrupted before reporting that it stopped.
 - Terminal links to files in your home folder now open. A `~\` path was cut down to a path inside
   the terminal's folder, and neither `~/` nor `~\` was expanded to the home folder, so opening such
   a link in its folder, in VS Code, in a pane or in a preview reported that the path did not exist.

@@ -1,13 +1,12 @@
 import { Clock, X } from 'lucide-react'
 
 import { useT } from '../../lib/i18n'
-import type { ClaudeUsage, CodexUsage } from '../../lib/tauri'
+import { type ClaudeUsage, type CodexUsage, hasCodexWindow } from '../../lib/tauri'
 import { ClaudeIcon, CodexIcon } from '../icons/AgentIcons'
 import styles from './AgentCanvasPOC.module.css'
 
 export type UsageTab = 'claude' | 'codex'
 
-                                                                             
 function fmtReset(ms: number, nowLabel: string): string {
   if (!Number.isFinite(ms) || ms <= 0) return '—'
   const diff = ms - Date.now()
@@ -18,7 +17,6 @@ function fmtReset(ms: number, nowLabel: string): string {
   return h > 0 ? `${h}h ${m}m` : `${m}m`
 }
 
-                                                                                  
 function meterColor(util: number): string {
   if (util >= 80) return 'var(--status-offline)'
   if (util >= 50) return 'var(--status-waiting)'
@@ -108,6 +106,14 @@ export function UsageDropdown({
               util={claudeUsage.seven_day_opus.utilization}
               reset={fmtReset(new Date(claudeUsage.seven_day_opus.resets_at).getTime(), now)}
             />
+            {(claudeUsage.model_limits ?? []).map((limit) => (
+              <Row
+                key={limit.model}
+                label={t('ws.usageModelLabel', { model: limit.model.toLowerCase() })}
+                util={limit.utilization}
+                reset={fmtReset(new Date(limit.resets_at).getTime(), now)}
+              />
+            ))}
             <button type="button" className={styles.usageAction} onClick={onForceFallback}>
               {t('ws.forceCodexFallback')}
             </button>
@@ -117,11 +123,13 @@ export function UsageDropdown({
         )
       ) : codexUsage ? (
         <div className={styles.usageBody}>
-          <Row
-            label={t('ws.usage5hLabel')}
-            util={codexUsage.primary.used_percent}
-            reset={fmtReset(codexUsage.primary.resets_at_ms, now)}
-          />
+          {hasCodexWindow(codexUsage.primary) ? (
+            <Row
+              label={t('ws.usage5hLabel')}
+              util={codexUsage.primary.used_percent}
+              reset={fmtReset(codexUsage.primary.resets_at_ms, now)}
+            />
+          ) : null}
           <Row
             label={t('ws.usageWeekLabel')}
             util={codexUsage.secondary.used_percent}

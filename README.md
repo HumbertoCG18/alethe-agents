@@ -101,6 +101,9 @@ Cross-platform (Windows, macOS, Linux), local-first, built with Tauri, Rust, Rea
 | **Antigravity** | `agy` | Usage cards |
 | **OpenCode** | `opencode` | Session resume |
 | **Kiro CLI** | `kiro-cli` | |
+| **Kimi Code** | `kimi` | |
+| **Grok Build** | `grok` | |
+| **Codewhale** | `codewhale` | |
 | **Mimo** | `mimo` | |
 | **Freebuff** | `freebuff` | |
 | **Shell** | pwsh / bash / zsh | The plain terminal, same pane model |
@@ -363,6 +366,7 @@ Thanks to everyone helping shape Alethe.
   <a href="https://github.com/MiguelSilvaPorto"><img src="https://github.com/MiguelSilvaPorto.png?size=100" width="80" height="80" alt="MiguelSilvaPorto" title="MiguelSilvaPorto" /></a>
   <a href="https://github.com/HayatoG"><img src="https://github.com/HayatoG.png?size=100" width="80" height="80" alt="HayatoG" title="HayatoG" /></a>
   <a href="https://github.com/slegarraga"><img src="https://github.com/slegarraga.png?size=100" width="80" height="80" alt="slegarraga" title="slegarraga" /></a>
+  <a href="https://github.com/HumbertoCG18"><img src="https://github.com/HumbertoCG18.png?size=100" width="80" height="80" alt="HumbertoCG18" title="HumbertoCG18" /></a>
   <a href="https://github.com/lucapohl-angel"><img src="https://github.com/lucapohl-angel.png?size=100" width="80" height="80" alt="lucapohl-angel" title="lucapohl-angel" /></a>
   <a href="https://github.com/1arley"><img src="https://github.com/1arley.png?size=100" width="80" height="80" alt="1arley" title="1arley" /></a>
   <a href="https://github.com/potatoiscompiled"><img src="https://github.com/potatoiscompiled.png?size=100" width="80" height="80" alt="potatoiscompiled" title="potatoiscompiled" /></a>
@@ -374,7 +378,6 @@ Thanks to everyone helping shape Alethe.
   <a href="https://github.com/rlevidev"><img src="https://github.com/rlevidev.png?size=100" width="80" height="80" alt="rlevidev" title="rlevidev" /></a>
   <a href="https://github.com/mapsiva"><img src="https://github.com/mapsiva.png?size=100" width="80" height="80" alt="mapsiva" title="mapsiva" /></a>
   <a href="https://github.com/moisesz10"><img src="https://github.com/moisesz10.png?size=100" width="80" height="80" alt="moisesz10" title="moisesz10" /></a>
-  <a href="https://github.com/HumbertoCG18"><img src="https://github.com/HumbertoCG18.png?size=100" width="80" height="80" alt="HumbertoCG18" title="HumbertoCG18" /></a>
   <a href="https://github.com/Bakurin0"><img src="https://github.com/Bakurin0.png?size=100" width="80" height="80" alt="Bakurin0" title="Bakurin0" /></a>
   <a href="https://github.com/SrAmaral"><img src="https://github.com/SrAmaral.png?size=100" width="80" height="80" alt="SrAmaral" title="SrAmaral" /></a>
   <a href="https://github.com/diegoliveiraa"><img src="https://github.com/diegoliveiraa.png?size=100" width="80" height="80" alt="diegoliveiraa" title="diegoliveiraa" /></a>
@@ -396,8 +399,10 @@ Thanks to everyone helping shape Alethe.
   <a href="https://github.com/GabrielKLopes"><img src="https://github.com/GabrielKLopes.png?size=100" width="80" height="80" alt="GabrielKLopes" title="GabrielKLopes" /></a>
   <a href="https://github.com/pinhaum"><img src="https://github.com/pinhaum.png?size=100" width="80" height="80" alt="pinhaum" title="pinhaum" /></a>
   <a href="https://github.com/floze-the-genius"><img src="https://github.com/floze-the-genius.png?size=100" width="80" height="80" alt="floze-the-genius" title="floze-the-genius" /></a>
+  <a href="https://github.com/claude"><img src="https://github.com/claude.png?size=100" width="80" height="80" alt="claude" title="claude" /></a>
   <a href="https://github.com/aryansk"><img src="https://github.com/aryansk.png?size=100" width="80" height="80" alt="aryansk" title="aryansk" /></a>
   <a href="https://github.com/sousaakira"><img src="https://github.com/sousaakira.png?size=100" width="80" height="80" alt="sousaakira" title="sousaakira" /></a>
+  <a href="https://github.com/AiurArtanis"><img src="https://github.com/AiurArtanis.png?size=100" width="80" height="80" alt="AiurArtanis" title="AiurArtanis" /></a>
   <!-- contributors:end -->
 </p>
 

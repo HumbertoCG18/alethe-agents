@@ -140,6 +140,11 @@ export function XTermView({
   const [bootPhase, setBootPhase] = useState<
     'preparing' | 'queued' | 'spawning' | 'attaching' | 'ready'
   >('preparing')
+  const [memoryWait, setMemoryWait] = useState<{
+    availableMb: number
+    waitedMs: number
+    thresholdMb: number
+  } | null>(null)
   const [linkActions, setLinkActions] = useState<LinkActionState | null>(null)
   const [dropActive, setDropActive] = useState(false)
   const sessionPersistenceKey = sessionKey ?? ptyId
@@ -149,30 +154,33 @@ export function XTermView({
   }, [])
 
   // estimativa conservadora do tamanho para nunca cortar o menu na viewport.
-  const showLinkActionsMenu = useCallback((event: MouseEvent, link: DetectedTerminalLink) => {
-    event.preventDefault()
-    event.stopPropagation()
+  const showLinkActionsMenu = useCallback(
+    (event: MouseEvent, link: DetectedTerminalLink) => {
+      event.preventDefault()
+      event.stopPropagation()
 
-    terminalRef.current?.clearSelection()
-    window.getSelection()?.removeAllRanges()
+      terminalRef.current?.clearSelection()
+      window.getSelection()?.removeAllRanges()
 
-    const maxLeft = window.innerWidth - LINK_MENU_WIDTH - LINK_MENU_MARGIN
-    const x = Math.max(LINK_MENU_MARGIN, Math.min(event.clientX + LINK_MENU_OFFSET, maxLeft))
-    const below = event.clientY + LINK_MENU_OFFSET
-    const y =
-      below + LINK_MENU_MAX_HEIGHT <= window.innerHeight - LINK_MENU_MARGIN
-        ? below
-        : Math.max(LINK_MENU_MARGIN, event.clientY - LINK_MENU_MAX_HEIGHT - LINK_MENU_OFFSET)
+      const maxLeft = window.innerWidth - LINK_MENU_WIDTH - LINK_MENU_MARGIN
+      const x = Math.max(LINK_MENU_MARGIN, Math.min(event.clientX + LINK_MENU_OFFSET, maxLeft))
+      const below = event.clientY + LINK_MENU_OFFSET
+      const y =
+        below + LINK_MENU_MAX_HEIGHT <= window.innerHeight - LINK_MENU_MARGIN
+          ? below
+          : Math.max(LINK_MENU_MARGIN, event.clientY - LINK_MENU_MAX_HEIGHT - LINK_MENU_OFFSET)
 
-    setLinkActions({
-      text: link.text,
-      target: link.kind === 'path' ? resolveTerminalFilePath(link.target, cwd) : link.target,
-      kind: link.kind,
-      fileKind: link.fileKind,
-      x,
-      y,
-    })
-  }, [cwd])
+      setLinkActions({
+        text: link.text,
+        target: link.kind === 'path' ? resolveTerminalFilePath(link.target, cwd) : link.target,
+        kind: link.kind,
+        fileKind: link.fileKind,
+        x,
+        y,
+      })
+    },
+    [cwd],
+  )
 
   useEffect(() => {
     linkActionsRef.current = linkActions
@@ -342,6 +350,7 @@ export function XTermView({
     onLaunchErrorRef,
     onAgentCompleteRef,
     setBootPhase,
+    setMemoryWait,
     setCommandNotFound,
     setLinkActions,
     setRetryKey,
@@ -386,8 +395,13 @@ export function XTermView({
     [setCliPath],
   )
 
-  const bootLabel =
-    bootPhase === 'preparing'
+  const bootLabel = memoryWait
+    ? t('term.bootMemoryWait', {
+        available: Math.round(memoryWait.availableMb),
+        threshold: Math.round(memoryWait.thresholdMb),
+        seconds: Math.floor(memoryWait.waitedMs / 1000),
+      })
+    : bootPhase === 'preparing'
       ? t('term.bootPreparing')
       : bootPhase === 'queued'
         ? t('term.bootQueued')

@@ -5,9 +5,12 @@ import {
   Cloud,
   Code2,
   Gift,
+  Moon,
   MousePointer2,
   Sparkles,
   Terminal,
+  Waves,
+  Zap,
   type LucideIcon,
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -32,6 +35,9 @@ const ICONS: Record<BuiltinAgentType, LucideIcon> = {
   freebuff: Gift,
   mimo: Bot,
   kiro: Cloud,
+  kimi: Moon,
+  grok: Zap,
+  codewhale: Waves,
 }
 
 type TerminalHit = {
@@ -70,7 +76,7 @@ export function FindJumpModal() {
     if (open) {
       setQuery('')
       setCursor(0)
-                                             
+
       setTimeout(() => inputRef.current?.focus(), 50)
     }
   }, [open])

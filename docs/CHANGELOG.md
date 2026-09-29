@@ -12,6 +12,11 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ### Added
 
+- **Delegated workers can run on a chosen model, effort and read-only sandbox.** A planner can now
+  pass `model`, `effort` and `readOnly` when it delegates, so work such as an independent review on
+  another model runs as a worker on the orchestration board instead of outside Alethe. The worker
+  card shows the model, the effort and a read-only mark, and a worker picked up again keeps them.
+  `effort` and `readOnly` apply to Codex workers; asking for them on a Claude worker is refused.
 - **Start orchestration on a Claude terminal that is already open.** A button in a Claude
   terminal's header puts an orchestration board next to it, so the conversation where the work
   was planned can become the planner. A conversation started before orchestration was on is

@@ -7,6 +7,7 @@ import {
   ChevronRight,
   CornerDownLeft,
   Cpu,
+  Eye,
   FilePen,
   GitBranch,
   Globe2,
@@ -254,6 +255,15 @@ function statusTitle(status: OrchestratorJob['status'], t: TFunction): string | 
   return undefined
 }
 
+/** What the planner chose to run a worker on; either part can be given without the other. */
+function modelTitle(job: OrchestratorJob, t: TFunction): string {
+  if (job.model && job.effort) {
+    return t('orchestrator.modelEffortTitle', { model: job.model, effort: job.effort })
+  }
+  if (job.model) return t('orchestrator.modelTitle', { model: job.model })
+  return t('orchestrator.effortTitle', { effort: job.effort ?? '' })
+}
+
 function laneTitle(lane: RunLane, t: TFunction): string | undefined {
   if (lane === 'interrupted') return t('orchestrator.interruptedTitle')
   if (lane === 'blocked') return t('orchestrator.blockedTitle')
@@ -463,6 +473,17 @@ function WorkerNode({
           <span className={styles.metaStatus} title={statusTitle(job.status, t)}>
             {t(`orchestrator.status.${job.status}`)}
           </span>
+          {(job.model || job.effort) && (
+            <span title={modelTitle(job, t)}>
+              {[job.model, job.effort].filter(Boolean).join(' · ')}
+            </span>
+          )}
+          {job.readOnly && (
+            <span className={styles.metaIcon} title={t('orchestrator.readOnlyTitle')}>
+              <Eye size={9} aria-hidden />
+              {t('orchestrator.readOnly')}
+            </span>
+          )}
           {share !== null && (
             <span title={t('orchestrator.contextTitle', { percent: share })}>
               {t('orchestrator.contextChip', { value: share })}

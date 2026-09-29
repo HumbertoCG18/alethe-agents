@@ -91,6 +91,12 @@ export type OrchestratorJob = {
   /** Why this worker ran on this agent; null when neither side was running out at the time. */
   routing: OrchestratorRouting | null
   worktree: string | null
+  /** The model the planner delegated this worker on; null when it runs on the CLI's default. */
+  model: string | null
+  /** Codex reasoning effort the planner asked for; null keeps the CLI's own setting. */
+  effort: string | null
+  /** Started in a read-only sandbox: it can read and run commands but not write. */
+  readOnly: boolean
   pendingApproval: OrchestratorPendingApproval | null
   hasDiff: boolean
   summary: string

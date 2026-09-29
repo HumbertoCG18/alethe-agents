@@ -2118,6 +2118,13 @@ export const ptBR: Record<MessageKey, string> = {
   'orchestrator.agentSpendTitle': '{agent}: {cost} · {tokens} tokens nesta sessão do planner',
   'orchestrator.isolated': 'worktree',
   'orchestrator.hasDiff': 'diff',
+  'orchestrator.modelTitle': 'Roda no {model}, como o planner pediu',
+  'orchestrator.effortTitle': 'Roda com esforço de raciocínio {effort}, como o planner pediu',
+  'orchestrator.modelEffortTitle':
+    'Roda no {model} com esforço de raciocínio {effort}, como o planner pediu',
+  'orchestrator.readOnly': 'somente leitura',
+  'orchestrator.readOnlyTitle':
+    'Iniciado em sandbox somente leitura: lê arquivos e roda comandos, mas não escreve',
   'orchestrator.status.queued': 'esperando vaga',
   'orchestrator.status.running': 'rodando',
   'orchestrator.status.done': 'concluído',

@@ -89,6 +89,8 @@ pub fn path_without_store_aliases(path: &str) -> String {
 
 const DEFAULT_JOB_TIMEOUT_MS: u64 = 900_000;
 
+const SANDBOX_READ_ONLY: &str = "read-only";
+
 /// Finished workers stay alive so the lead can follow up on what they just did, but each one holds
 /// a process, so only the most recent few are kept and older ones are let go.
 const PARKED_LIMIT: usize = 4;
@@ -228,6 +230,10 @@ struct Job {
     approval_policy: String,
     sandbox: String,
     web_search: bool,
+    /// The model the planner asked for; None runs the CLI's own default.
+    model: Option<String>,
+    /// Codex reasoning effort (`model_reasoning_effort`); None keeps the CLI's own setting.
+    effort: Option<String>,
     /// The request the worker is stopped on, kept with the rpc id it must be answered with.
     pending: Option<Value>,
     child: Option<Arc<Mutex<Child>>>,
@@ -267,6 +273,9 @@ impl Job {
             "quota": self.quota,
             "routing": self.routing,
             "worktree": self.worktree,
+            "model": self.model,
+            "effort": self.effort,
+            "readOnly": self.sandbox == SANDBOX_READ_ONLY,
             "pendingApproval": self.pending,
             "hasDiff": self.diff.is_some(),
             "summary": tail(if self.report.is_empty() { &self.reply } else { &self.report }, 1200),
@@ -292,6 +301,8 @@ impl Job {
             "approvalPolicy": self.approval_policy,
             "sandbox": self.sandbox,
             "webSearch": self.web_search,
+            "model": self.model,
+            "effort": self.effort,
             // 0 is "no limit", so a record that lacks the field can still mean the old default.
             "timeoutMs": self.timeout_ms.unwrap_or(0),
             "summary": self.report,
@@ -360,6 +371,8 @@ impl Job {
                 .get("webSearch")
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
+            model: text("model"),
+            effort: text("effort"),
             pending: None,
             child: None,
             stdin: None,
@@ -497,6 +510,65 @@ fn guard<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
         Ok(value) => value,
         Err(poisoned) => poisoned.into_inner(),
     }
+}
+
+/// What a new Codex thread starts with. Model and effort are sent only when the planner chose them,
+/// so a worker delegated without them runs on whatever the person's own Codex config says.
+fn thread_start_params(
+    cwd: &str,
+    approval_policy: &str,
+    sandbox: &str,
+    web_search: bool,
+    model: Option<&str>,
+    effort: Option<&str>,
+) -> Value {
+    let mut config = json!({
+        "tools": { "web_search": { "mode": if web_search { "live" } else { "disabled" } } }
+    });
+    if let Some(effort) = effort {
+        config["model_reasoning_effort"] = json!(effort);
+    }
+    let mut params = json!({
+        "cwd": cwd,
+        "approvalPolicy": serde_json::from_str::<Value>(approval_policy)
+            .unwrap_or(Value::String("never".into())),
+        "approvalsReviewer": "user",
+        "sandbox": sandbox,
+        "config": config
+    });
+    if let Some(model) = model {
+        params["model"] = json!(model);
+    }
+    params
+}
+
+/// Picking a thread up again takes the same settings it started with. Without them the resumed
+/// thread would fall back to the person's config, and a read-only worker could start writing.
+fn thread_resume_params(
+    thread_id: &str,
+    cwd: &str,
+    approval_policy: &str,
+    sandbox: &str,
+    web_search: bool,
+    model: Option<&str>,
+    effort: Option<&str>,
+) -> Value {
+    let mut params = thread_start_params(cwd, approval_policy, sandbox, web_search, model, effort);
+    params["threadId"] = json!(thread_id);
+    params
+}
+
+/// What a Claude worker's command line adds to its launcher: the session to resume, if any, and the
+/// model the planner chose.
+fn claude_worker_args(resume_thread: Option<&str>, model: Option<&str>) -> Vec<String> {
+    let mut args = Vec::new();
+    if let Some(thread_id) = resume_thread {
+        args.extend(["--resume".to_string(), thread_id.to_string()]);
+    }
+    if let Some(model) = model {
+        args.extend(["--model".to_string(), model.to_string()]);
+    }
+    args
 }
 
 fn send_rpc(stdin: &Arc<Mutex<ChildStdin>>, value: &Value) -> Result<(), String> {
@@ -771,7 +843,7 @@ impl Core {
     }
 
     fn spawn_worker(&self, job_id: &str) {
-        let (agent, cwd, spec, resume_thread, approval_policy, sandbox, web_search) = {
+        let (agent, cwd, spec, resume_thread, approval_policy, sandbox, web_search, model, effort) = {
             let mut inner = guard(&self.inner);
             let Some(job) = inner.jobs.get_mut(job_id) else {
                 return;
@@ -793,6 +865,8 @@ impl Core {
                 job.approval_policy.clone(),
                 job.sandbox.clone(),
                 job.web_search,
+                job.model.clone(),
+                job.effort.clone(),
             );
             inner.running += 1;
             started
@@ -819,9 +893,10 @@ impl Core {
         // Claude keeps its own session on disk under this id — no separate resume RPC like Codex's
         // `thread/resume`, the CLI just needs the id up front.
         if is_claude {
-            if let Some(thread_id) = &resume_thread {
-                command.args(["--resume", thread_id]);
-            }
+            command.args(claude_worker_args(
+                resume_thread.as_deref(),
+                model.as_deref(),
+            ));
         }
         for (key, value) in &launcher.env {
             command.env(key, value);
@@ -896,19 +971,27 @@ impl Core {
                 Some(thread_id) => json!({
                     "id": 2,
                     "method": "thread/resume",
-                    "params": { "threadId": thread_id, "cwd": cwd }
+                    "params": thread_resume_params(
+                        thread_id,
+                        &cwd,
+                        &approval_policy,
+                        &sandbox,
+                        web_search,
+                        model.as_deref(),
+                        effort.as_deref(),
+                    )
                 }),
                 None => json!({
                     "id": 2,
                     "method": "thread/start",
-                    "params": {
-                        "cwd": cwd,
-                        "approvalPolicy": serde_json::from_str::<Value>(&approval_policy)
-                            .unwrap_or(Value::String("never".into())),
-                        "approvalsReviewer": "user",
-                        "sandbox": sandbox,
-                        "config": { "tools": { "web_search": { "mode": if web_search { "live" } else { "disabled" } } } }
-                    }
+                    "params": thread_start_params(
+                        &cwd,
+                        &approval_policy,
+                        &sandbox,
+                        web_search,
+                        model.as_deref(),
+                        effort.as_deref(),
+                    )
                 }),
             };
             let _ = send_rpc(&stdin, &opening);
@@ -1541,6 +1624,18 @@ pub fn tools() -> Value {
                         "type": "boolean",
                         "description": "Give each worker a live web search tool, on top of its shell and files. Use it for research: real cases, current facts, sources you can cite - not for work confined to a repository, where it adds nothing."
                     },
+                    "model": {
+                        "type": "string",
+                        "description": "The model each worker runs, as the chosen CLI names it (for example a Codex model for agent codex, a Claude model for agent claude). Omit it to use the CLI's own default. Pick a different model when the unit needs one - such as an independent review by another model than the one that wrote the code."
+                    },
+                    "effort": {
+                        "type": "string",
+                        "description": "Reasoning effort for Codex workers, one the model supports (commonly low, medium, high or xhigh). Omit it to keep the CLI's own setting. Not available for Claude workers."
+                    },
+                    "readOnly": {
+                        "type": "boolean",
+                        "description": "Start each Codex worker in a read-only sandbox: it can read files and run commands, but cannot write. Use it for reviews and audits that must not change anything. Cannot be combined with askForApproval, and not available for Claude workers."
+                    },
                     "timeoutSeconds": {
                         "type": "number",
                         "description": "Budget per worker before Alethe stops it, default 900. Pass 0 to let a worker run without a limit."
@@ -1650,6 +1745,24 @@ fn string_list(arguments: &Map<String, Value>, key: &str) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// An optional model or effort name. A Claude model becomes a command-line argument, so a value that
+/// is empty, contains whitespace or starts with `-` is refused rather than passed on.
+fn option_name(arguments: &Map<String, Value>, key: &str) -> Result<Option<String>, String> {
+    match arguments.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(value))
+            if !value.is_empty()
+                && !value.starts_with('-')
+                && !value.chars().any(|c| c.is_whitespace() || c.is_control()) =>
+        {
+            Ok(Some(value.clone()))
+        }
+        Some(other) => Err(format!(
+            "{key} must be a name without spaces that does not start with '-', got {other}"
+        )),
+    }
 }
 
 fn required_str(arguments: &Map<String, Value>, key: &str) -> Result<String, String> {
@@ -1790,6 +1903,14 @@ fn restart_arguments(job: &Job) -> Map<String, Value> {
         "timeoutSeconds".into(),
         json!(job.timeout_ms.map_or(0, |ms| ms / 1000)),
     );
+    // Without these a read-only reviewer on a chosen model would come back writable on the default.
+    if let Some(model) = &job.model {
+        arguments.insert("model".into(), json!(model));
+    }
+    if let Some(effort) = &job.effort {
+        arguments.insert("effort".into(), json!(effort));
+    }
+    arguments.insert("readOnly".into(), json!(job.sandbox == SANDBOX_READ_ONLY));
     arguments
 }
 
@@ -1893,6 +2014,29 @@ fn dispatch_tool(
                 .get("webSearch")
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
+            let read_only = arguments
+                .get("readOnly")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let model = option_name(arguments, "model")?;
+            let effort = option_name(arguments, "effort")?;
+            // Not validated here on purpose — an unconfigured agent fails cleanly later, in
+            // `spawn_worker`, through the normal delivery path.
+            let agent = arguments
+                .get("agent")
+                .and_then(Value::as_str)
+                .filter(|value| !value.is_empty())
+                .unwrap_or("codex")
+                .to_string();
+            // The headless Claude launch bypasses permissions and has no effort switch. Dropping
+            // these silently would hand a worker meant to only read the right to write.
+            if agent == "claude" && (read_only || effort.is_some()) {
+                return Err("readOnly and effort apply to Codex workers only".into());
+            }
+            // A read-only worker gives up on a write instead of asking, so it would never ask.
+            if read_only && ask {
+                return Err("readOnly and askForApproval cannot be combined".into());
+            }
             // The named policies decide for themselves what is worth asking about. The granular
             // form is the one that says plainly which callbacks this client will answer, which is
             // what makes a worker route the question here instead of giving up on it.
@@ -1912,6 +2056,8 @@ fn dispatch_tool(
                     // outside its own workspace - which is the moment worth a question.
                     "workspace-write".to_string(),
                 )
+            } else if read_only {
+                (Value::String("never".into()), SANDBOX_READ_ONLY.to_string())
             } else {
                 (Value::String("never".into()), "workspace-write".to_string())
             };
@@ -1934,14 +2080,6 @@ fn dispatch_tool(
             // One delegate call is one run: the batch the lead asked for at one moment. Grouping by
             // it is what lets several rounds of delegation stay apart instead of piling into one list.
             let planner_id = planner.map(ToOwned::to_owned);
-            // Not validated here on purpose — an unconfigured agent fails cleanly later, in
-            // `spawn_worker`, through the normal delivery path.
-            let agent = arguments
-                .get("agent")
-                .and_then(Value::as_str)
-                .filter(|value| !value.is_empty())
-                .unwrap_or("codex")
-                .to_string();
 
             let (run_id, ids): (String, Vec<String>) = {
                 let mut inner = guard(&core.inner);
@@ -2017,6 +2155,8 @@ fn dispatch_tool(
                             approval_policy: approval_policy.clone(),
                             sandbox: sandbox.clone(),
                             web_search,
+                            model: model.clone(),
+                            effort: effort.clone(),
                             pending: None,
                             child: None,
                             stdin: None,
@@ -2480,6 +2620,8 @@ mod tests {
             approval_policy: approval_policy.into(),
             sandbox: "workspace-write".into(),
             web_search: true,
+            model: None,
+            effort: None,
             pending: None,
             child: None,
             stdin: None,
@@ -2506,6 +2648,23 @@ mod tests {
         assert_eq!(arguments["askForApproval"], json!(false));
         assert_eq!(arguments["webSearch"], json!(true));
         assert_eq!(arguments["timeoutSeconds"], json!(900));
+    }
+
+    // A restarted worker runs on the model, effort and sandbox it was delegated with (#252).
+    #[test]
+    fn restart_keeps_the_model_effort_and_read_only() {
+        let job = Job {
+            agent: "codex".into(),
+            model: Some("gpt-6-astra".into()),
+            effort: Some("high".into()),
+            sandbox: SANDBOX_READ_ONLY.into(),
+            ..finished_job(None, "\"never\"", Some(900_000))
+        };
+        let arguments = restart_arguments(&job);
+
+        assert_eq!(arguments["model"], json!("gpt-6-astra"));
+        assert_eq!(arguments["effort"], json!("high"));
+        assert_eq!(arguments["readOnly"], json!(true));
     }
 
     #[test]
@@ -2597,5 +2756,62 @@ mod tests {
         assert_eq!(waiting.len(), 1);
         assert_ne!(waiting[0], "job-02");
         assert_eq!(inner.jobs[waiting[0].as_str()].status, STATUS_QUEUED);
+    }
+
+    // The model, effort and sandbox a worker was delegated with reach its Codex thread (#252).
+    #[test]
+    fn a_codex_thread_starts_on_the_delegated_model_effort_and_sandbox() {
+        let params = thread_start_params(
+            "/repo",
+            "\"never\"",
+            "read-only",
+            false,
+            Some("gpt-6-astra"),
+            Some("high"),
+        );
+        assert_eq!(params["model"], "gpt-6-astra");
+        assert_eq!(params["config"]["model_reasoning_effort"], "high");
+        assert_eq!(params["sandbox"], "read-only");
+        assert_eq!(params["approvalPolicy"], "never");
+        assert_eq!(params["config"]["tools"]["web_search"]["mode"], "disabled");
+    }
+
+    #[test]
+    fn a_codex_thread_without_options_keeps_the_cli_defaults() {
+        let params = thread_start_params("/repo", "\"never\"", "workspace-write", true, None, None);
+        assert!(params.get("model").is_none(), "{params}");
+        assert!(
+            params["config"].get("model_reasoning_effort").is_none(),
+            "{params}"
+        );
+        assert_eq!(params["sandbox"], "workspace-write");
+        assert_eq!(params["config"]["tools"]["web_search"]["mode"], "live");
+    }
+
+    // A worker picked up again after its process died must not lose its read-only sandbox.
+    #[test]
+    fn a_resumed_codex_thread_keeps_its_model_effort_and_sandbox() {
+        let params = thread_resume_params(
+            "thread-1",
+            "/repo",
+            "\"never\"",
+            "read-only",
+            false,
+            Some("gpt-6-astra"),
+            Some("high"),
+        );
+        assert_eq!(params["threadId"], "thread-1");
+        assert_eq!(params["model"], "gpt-6-astra");
+        assert_eq!(params["config"]["model_reasoning_effort"], "high");
+        assert_eq!(params["sandbox"], "read-only");
+    }
+
+    #[test]
+    fn a_claude_worker_is_launched_on_the_delegated_model() {
+        assert_eq!(
+            claude_worker_args(Some("session-1"), Some("claude-sonnet-5-5")),
+            ["--resume", "session-1", "--model", "claude-sonnet-5-5"]
+        );
+        assert!(claude_worker_args(None, None).is_empty());
     }
 }

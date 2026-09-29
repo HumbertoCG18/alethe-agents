@@ -1213,3 +1213,117 @@ fn the_delegate_schema_points_at_the_live_reading_instead_of_quoting_numbers() {
         "a percentage was baked into a description that cannot be refreshed: {description}"
     );
 }
+
+// A planner picks the model, the effort and a read-only sandbox for the workers it delegates (#252).
+#[test]
+fn a_worker_keeps_the_model_effort_and_read_only_it_was_delegated_with() {
+    let dir = workspace("model-options");
+    let store = dir.join("orchestrator-jobs.json");
+    let core = Core::default();
+    core.set_store(store.clone());
+
+    let delegated = call(
+        &core,
+        "alethe_delegate",
+        json!({
+            "tasks": ["review the diff"],
+            "cwd": dir.to_string_lossy(),
+            "model": "gpt-6-astra",
+            "effort": "high",
+            "readOnly": true
+        }),
+    );
+    assert_eq!(delegated["accepted"], json!(1), "{delegated}");
+    // No launcher is registered, so the worker settles at once; what matters is what it was given.
+    call(
+        &core,
+        "alethe_check",
+        json!({ "wait": true, "timeoutMs": 5000 }),
+    );
+
+    let snapshot = core.snapshot();
+    let job = &snapshot["jobs"][0];
+    assert_eq!(job["model"], "gpt-6-astra", "{job}");
+    assert_eq!(job["effort"], "high", "{job}");
+    assert_eq!(job["readOnly"], true, "{job}");
+
+    let restored = Core::default();
+    restored.set_store(store);
+    restored.restore();
+    let restored_snapshot = restored.snapshot();
+    let restored_job = &restored_snapshot["jobs"][0];
+    assert_eq!(restored_job["model"], "gpt-6-astra", "{restored_job}");
+    assert_eq!(restored_job["effort"], "high", "{restored_job}");
+    assert_eq!(restored_job["readOnly"], true, "{restored_job}");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_worker_delegated_without_model_options_runs_as_before() {
+    let dir = workspace("model-defaults");
+    let core = Core::default();
+
+    let delegated = call(
+        &core,
+        "alethe_delegate",
+        json!({ "tasks": ["anything"], "cwd": dir.to_string_lossy() }),
+    );
+    assert_eq!(delegated["accepted"], json!(1), "{delegated}");
+
+    let snapshot = core.snapshot();
+    let job = &snapshot["jobs"][0];
+    assert_eq!(job["model"], Value::Null, "{job}");
+    assert_eq!(job["effort"], Value::Null, "{job}");
+    assert_eq!(job["readOnly"], false, "{job}");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn model_options_that_cannot_hold_are_refused_without_creating_a_job() {
+    let dir = workspace("model-refused");
+    let core = Core::default();
+    let cwd = dir.to_string_lossy().into_owned();
+
+    let cases = [
+        // The headless Claude launch bypasses permissions: dropping readOnly would let it write.
+        (
+            "effort on a claude worker",
+            json!({ "agent": "claude", "effort": "high" }),
+        ),
+        (
+            "read-only claude worker",
+            json!({ "agent": "claude", "readOnly": true }),
+        ),
+        (
+            "read-only worker that asks",
+            json!({ "readOnly": true, "askForApproval": true }),
+        ),
+        ("effort with whitespace", json!({ "effort": "very high" })),
+        (
+            "model read as a flag",
+            json!({ "model": "--dangerously-skip-permissions" }),
+        ),
+        ("model with whitespace", json!({ "model": "gpt 6" })),
+        ("empty model", json!({ "model": "" })),
+    ];
+    for (case, options) in cases {
+        let mut arguments = json!({ "tasks": ["anything"], "cwd": cwd });
+        for (key, value) in options.as_object().expect("options") {
+            arguments[key] = value.clone();
+        }
+        let result = call(&core, "alethe_delegate", arguments);
+        assert!(
+            result.get("error").is_some(),
+            "{case} must be refused: {result}"
+        );
+    }
+    assert_eq!(
+        core.snapshot()["jobs"].as_array().map(Vec::len),
+        Some(0),
+        "a refused call creates no job"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

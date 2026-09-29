@@ -2092,6 +2092,13 @@ export const en = {
   'orchestrator.agentSpendTitle': '{agent}: {cost} · {tokens} tokens in this planner session',
   'orchestrator.isolated': 'worktree',
   'orchestrator.hasDiff': 'diff',
+  'orchestrator.modelTitle': 'Runs on {model}, as the planner asked',
+  'orchestrator.effortTitle': 'Runs with {effort} reasoning effort, as the planner asked',
+  'orchestrator.modelEffortTitle':
+    'Runs on {model} with {effort} reasoning effort, as the planner asked',
+  'orchestrator.readOnly': 'read-only',
+  'orchestrator.readOnlyTitle':
+    'Started in a read-only sandbox: it reads files and runs commands but cannot write',
   'orchestrator.status.queued': 'waiting for a slot',
   'orchestrator.status.running': 'running',
   'orchestrator.status.done': 'done',

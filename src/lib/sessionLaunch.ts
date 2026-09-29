@@ -43,29 +43,38 @@ function stripAntigravitySessionArgs(args: string[]): string[] {
   )
 }
 
+function stripGrokSessionArgs(args: string[]): string[] {
+  return stripFlagWithValue(args, new Set(['--resume', '-r', '--session-id', '-s'])).filter(
+    (arg) => arg !== '--continue' && arg !== '-c',
+  )
+}
+
+function stripCodewhaleSessionArgs(args: string[]): string[] {
+  // Prefer the `resume` subcommand (codex-style). Also drop flag forms.
+  if (args[0] === 'resume') {
+    const rest = args.slice(1)
+    if (rest[0] === '--last' || (rest[0] && !rest[0].startsWith('-'))) rest.shift()
+    return stripFlagWithValue(rest, new Set(['--resume', '-r'])).filter(
+      (arg) => arg !== '--continue' && arg !== '-c',
+    )
+  }
+  return stripFlagWithValue(args, new Set(['--resume', '-r'])).filter(
+    (arg) => arg !== '--continue' && arg !== '-c',
+  )
+}
+
 function stripCursorSessionArgs(args: string[]): string[] {
   return stripFlagWithValue(args, new Set(['--resume'])).filter(
     (arg) => arg !== '--continue' && !arg.startsWith('--resume='),
   )
 }
 
-   
-                                                                            
-                                                                             
-                                                               
-   
 export function buildAgentLaunch(
   agent: AgentType,
   baseArgs: readonly string[] = [],
   sessionId?: string,
   createUuid: () => string = () => crypto.randomUUID(),
-                                                                                 
-                                                                                
-                                                                               
-                                                                        
-                                                                              
-                                                                                  
-                                                                                   
+
   mcpConfigPaths?: readonly string[],
   hooksSettingsPath?: string,
 ): AgentLaunch {
@@ -103,10 +112,7 @@ export function buildAgentLaunch(
 
   if (agent === 'opencode') {
     const clean = stripOpenCodeSessionArgs([...baseArgs])
-                                                                        
-                                                                            
-                                                                         
-                                   
+
     return {
       args: sessionId ? ['--session', sessionId, ...clean] : clean,
       sessionId,
@@ -140,8 +146,25 @@ export function buildAgentLaunch(
     }
   }
 
-                                                                                  
-                                                                                 
-                                                                       
+  // Grok Build resumes by ID (`--resume`); interactive TUI does not mint IDs via --session-id.
+  if (agent === 'grok') {
+    const clean = stripGrokSessionArgs([...baseArgs])
+    return {
+      args: sessionId ? ['--resume', sessionId, ...clean] : clean,
+      sessionId,
+      createdSession: false,
+    }
+  }
+
+  // Codewhale uses the `resume` subcommand (same shape as Codex).
+  if (agent === 'codewhale') {
+    const clean = stripCodewhaleSessionArgs([...baseArgs])
+    return {
+      args: sessionId ? ['resume', sessionId, ...clean] : clean,
+      sessionId,
+      createdSession: false,
+    }
+  }
+
   return { args: [...baseArgs], sessionId: undefined, createdSession: false }
 }

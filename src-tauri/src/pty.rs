@@ -35,15 +35,31 @@ const SPAWN_MEMORY_WAIT_POLL_MS: u64 = 1_000;
 
 const SPAWN_MEMORY_WAIT_MAX_MS: u128 = 45_000;
 
-fn wait_for_spawnable_memory() {
+#[derive(Clone, Serialize)]
+pub struct PtySpawnMemoryWaitPayload {
+    pub available_mb: f64,
+    pub waited_ms: u128,
+    pub threshold_mb: f64,
+}
+
+fn wait_for_spawnable_memory(app: &AppHandle, id: &str) -> u128 {
     let started = Instant::now();
     loop {
         let available_mb = crate::stats::memory_stats_cached().system_available_mb;
         if available_mb >= SPAWN_MIN_AVAILABLE_MB {
-            return;
+            return started.elapsed().as_millis();
         }
-        if started.elapsed().as_millis() >= SPAWN_MEMORY_WAIT_MAX_MS {
-            return;
+        let waited_ms = started.elapsed().as_millis();
+        let _ = app.emit(
+            &format!("pty://spawn-wait/{id}"),
+            PtySpawnMemoryWaitPayload {
+                available_mb,
+                waited_ms,
+                threshold_mb: SPAWN_MIN_AVAILABLE_MB,
+            },
+        );
+        if waited_ms >= SPAWN_MEMORY_WAIT_MAX_MS {
+            return waited_ms;
         }
         thread::sleep(Duration::from_millis(SPAWN_MEMORY_WAIT_POLL_MS));
     }
@@ -51,8 +67,8 @@ fn wait_for_spawnable_memory() {
 
 // (~5.8 GB de folga) enquanto a RAM "livre" parecia OK. Comprometer de
 
-fn prepare_memory_for_boot() {
-    wait_for_spawnable_memory();
+fn prepare_memory_for_boot(app: &AppHandle, id: &str) -> u128 {
+    wait_for_spawnable_memory(app, id)
 }
 
 pub struct ScrollbackBuffer {
@@ -262,7 +278,7 @@ pub async fn spawn_pty(
                                                                         
                                                                             
         // `prepare_memory_for_boot`).
-        prepare_memory_for_boot();
+        let memory_wait_ms = prepare_memory_for_boot(&app, &id);
 
         let scrollback = Arc::new(Mutex::new(ScrollbackBuffer::new(load_scrollback(
             &app, &id,
@@ -696,7 +712,7 @@ pub async fn spawn_pty(
         let _ = append_spawn_log(
             &app,
             &format!(
-                "spawn id={id} command={:?} launcher={:?} resolve_ms={resolve_ms} builder_ms={builder_ms} shell_spawn_ms={shell_spawn_ms} total_ms={} path_preview={effective_path_preview:?}",
+                "spawn id={id} command={:?} launcher={:?} memory_wait_ms={memory_wait_ms} resolve_ms={resolve_ms} builder_ms={builder_ms} shell_spawn_ms={shell_spawn_ms} total_ms={} path_preview={effective_path_preview:?}",
                 requested_command,
                 resolved_launcher,
                 spawn_started.elapsed().as_millis()
@@ -756,24 +772,30 @@ pub(crate) fn kill_process_tree(pid: u32) {
     let _ = command.output();
 }
 
+/// The `kill(2)` target for the process group led by `pid`. 0 and 1 are refused: as
+/// group ids they mean "our own group" and "every process we may signal".
+#[cfg(not(windows))]
+fn process_group_target(pid: u32) -> Option<i32> {
+    i32::try_from(pid)
+        .ok()
+        .filter(|&pid| pid > 1)
+        .map(|pid| -pid)
+}
+
 #[cfg(not(windows))]
 pub(crate) fn kill_process_tree(pid: u32) {
     // portable-pty calls setsid() on Linux, so the shell owns its own process
     // group. Sending a signal to the negative PID targets the entire group.
-    let _ = std::process::Command::new("kill")
-        .args(["-TERM", &format!("-{pid}")])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .and_then(|mut child| child.wait());
+    // kill(2) directly, not the `kill` binary: procps reads `kill -TERM -<pid>` as an
+    // unknown option and keeps only its first digit, so a PID starting with 1 became
+    // `kill(-1)` and signalled every process of the user (#222).
+    let Some(group) = process_group_target(pid) else {
+        return;
+    };
+    unsafe { libc::kill(group, libc::SIGTERM) };
     // Give well-behaved processes a moment to exit cleanly, then escalate.
     std::thread::sleep(std::time::Duration::from_millis(200));
-    let _ = std::process::Command::new("kill")
-        .args(["-9", &format!("-{pid}")])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .and_then(|mut child| child.wait());
+    unsafe { libc::kill(group, libc::SIGKILL) };
 }
 
 #[tauri::command]
@@ -1713,6 +1735,29 @@ pub fn install_kill_on_close_guard() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(not(windows))]
+    #[test]
+    fn process_group_target_never_widens_to_every_process() {
+        assert_eq!(process_group_target(1234), Some(-1234));
+        assert_eq!(process_group_target(0), None);
+        assert_eq!(process_group_target(1), None);
+        assert_eq!(process_group_target(u32::MAX), None);
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn kill_process_tree_ends_the_whole_group() {
+        use std::os::unix::process::{CommandExt, ExitStatusExt};
+        // Its own group, like the setsid() portable-pty does for a real shell.
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .process_group(0)
+            .spawn()
+            .unwrap();
+        kill_process_tree(child.id());
+        assert_eq!(child.wait().unwrap().signal(), Some(libc::SIGTERM));
+    }
 
     /// Guards the invariant that made every terminal stop accepting keystrokes at once:
     /// `kill_process_tree` runs `taskkill` and waits for it, and holding the child lock across

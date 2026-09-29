@@ -5,7 +5,7 @@
   "identifier": "com.kc1t.alethe",
   "build": {
     "beforeDevCommand": "npm run dev",
-    "devUrl": "http://localhost:1422",
+    "devUrl": "http://127.0.0.1:1422",
     "beforeBuildCommand": "npm run build",
     "frontendDist": "../dist"
   },
@@ -29,7 +29,12 @@
         "form-action": ["'none'"],
         "frame-ancestors": ["'none'"],
         "script-src": ["'self'", "alethe-plugin:", "http://alethe-plugin.localhost"],
-        "style-src": ["'self'", "'unsafe-inline'", "alethe-plugin:", "http://alethe-plugin.localhost"],
+        "style-src": [
+          "'self'",
+          "'unsafe-inline'",
+          "alethe-plugin:",
+          "http://alethe-plugin.localhost"
+        ],
         "img-src": [
           "'self'",
           "data:",

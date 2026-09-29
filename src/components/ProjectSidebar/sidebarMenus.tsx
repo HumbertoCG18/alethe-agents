@@ -1,6 +1,8 @@
 import {
   Archive,
   Download,
+  Eye,
+  EyeOff,
   FileText,
   FolderOpen,
   Globe2,
@@ -40,7 +42,6 @@ import { collectDescendants } from './GroupNode'
 type ProjectsState = ReturnType<typeof useProjectsStore.getState>
 type UiState = ReturnType<typeof useUiStore.getState>
 
-                                                                                
 type MenuActions = Pick<
   ProjectsState,
   | 'openProjectWorkspace'
@@ -49,6 +50,7 @@ type MenuActions = Pick<
   | 'archiveProject'
   | 'moveProjectToGroup'
   | 'setProjectDisabled'
+  | 'setProjectHidden'
   | 'deleteProject'
   | 'createGraphifyPane'
   | 'createOrchestratorPane'
@@ -89,12 +91,10 @@ export type SidebarMenuDeps = {
   openMarkdownSidebar: UiState['openMarkdownSidebar']
 }
 
-                                                                                        
 function visibleProjectTerminals(project: Project): Terminal[] {
   return project.terminals.filter((term) => !term.gsdSyncViewer)
 }
 
-                                                                         
 export function createSidebarMenus(deps: SidebarMenuDeps) {
   const {
     t,
@@ -113,10 +113,15 @@ export function createSidebarMenus(deps: SidebarMenuDeps) {
   } = deps
 
   const projectMenu = (project: Project): MenuItem[] => [
-    ...(project.mode !== 'agentSandbox' ? [{
-      kind: 'item' as const, label: t('projectGrid.create'),
-      onClick: () => openModal('projectGrid', { projectId: project.id, action: 'create' }),
-    }] : []),
+    ...(project.mode !== 'agentSandbox'
+      ? [
+          {
+            kind: 'item' as const,
+            label: t('projectGrid.create'),
+            onClick: () => openModal('projectGrid', { projectId: project.id, action: 'create' }),
+          },
+        ]
+      : []),
     {
       kind: 'item',
       label: t('ui.workspace.openIndividually'),
@@ -281,6 +286,12 @@ export function createSidebarMenus(deps: SidebarMenuDeps) {
       label: t('ui.sidebar.archiveProject'),
       icon: <Archive size={14} />,
       onClick: () => actions.archiveProject(project.id),
+    },
+    {
+      kind: 'item',
+      label: project.hidden ? t('ui.sidebar.unhideProject') : t('ui.sidebar.hideProject'),
+      icon: project.hidden ? <Eye size={14} /> : <EyeOff size={14} />,
+      onClick: () => actions.setProjectHidden(project.id, !project.hidden),
     },
     {
       kind: 'item',
@@ -503,10 +514,16 @@ export function createSidebarMenus(deps: SidebarMenuDeps) {
     const isTerminalPane = !term.kind || term.kind === 'terminal'
     const effectiveLaneVisible = term.tabs.length > 1 ? true : term.laneVisible === true
     return [
-      ...(project?.mode !== 'agentSandbox' && (project?.grids?.length ?? 0) > 0 ? [{
-        kind: 'item' as const, label: t('projectGrid.move'),
-        onClick: () => openModal('projectGrid', { projectId, terminalId: term.id, action: 'move' }),
-      }] : []),
+      ...(project?.mode !== 'agentSandbox' && (project?.grids?.length ?? 0) > 0
+        ? [
+            {
+              kind: 'item' as const,
+              label: t('projectGrid.move'),
+              onClick: () =>
+                openModal('projectGrid', { projectId, terminalId: term.id, action: 'move' }),
+            },
+          ]
+        : []),
       {
         kind: 'item',
         label: t('terminalInspector.reveal'),
@@ -649,5 +666,37 @@ export function createSidebarMenus(deps: SidebarMenuDeps) {
     ]
   }
 
-  return { projectMenu, groupMenu, terminalMenu }
+  const backgroundMenu = (): MenuItem[] => {
+    const hiddenCount = useProjectsStore.getState().projects.filter((p) => p.hidden).length
+    const revealed = useUiStore.getState().revealHiddenProjects
+    return [
+      {
+        kind: 'item',
+        label: t('ui.sidebar.newProject'),
+        icon: <Plus size={14} />,
+        onClick: () => openModal('newProject'),
+      },
+      {
+        kind: 'item',
+        label: t('ui.sidebar.newGroup'),
+        icon: <Plus size={14} />,
+        onClick: () => openModal('newGroup'),
+      },
+      ...(hiddenCount > 0 || revealed
+        ? [
+            { kind: 'separator' as const },
+            {
+              kind: 'item' as const,
+              label: revealed
+                ? t('ui.sidebar.hideHiddenProjects')
+                : t('ui.sidebar.revealHiddenProjects', { count: hiddenCount }),
+              icon: revealed ? <EyeOff size={14} /> : <Eye size={14} />,
+              onClick: () => useUiStore.getState().setRevealHiddenProjects(!revealed),
+            },
+          ]
+        : []),
+    ]
+  }
+
+  return { projectMenu, groupMenu, terminalMenu, backgroundMenu }
 }

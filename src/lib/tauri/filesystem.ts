@@ -31,6 +31,11 @@ export async function browseDirectory(path: string): Promise<DirectoryListing> {
   return invoke<DirectoryListing>('browse_directory', { path })
 }
 
+/** The home folder, or `null` when the platform reports none. */
+export async function homeDirectory(): Promise<string | null> {
+  return invoke<string | null>('home_directory')
+}
+
 export async function readTextFile(path: string): Promise<string> {
   return invoke<string>('read_text_file', { path })
 }
@@ -67,7 +72,6 @@ export async function unwatchFile(path: string): Promise<void> {
   await invoke('unwatch_file', { path })
 }
 
-                                                                        
 export function listenFileChanged(handler: (path: string) => void): Promise<UnlistenFn> {
   return listen<{ path: string }>('md://changed', (event) => handler(event.payload.path))
 }

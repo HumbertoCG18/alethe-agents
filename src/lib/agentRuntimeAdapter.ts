@@ -10,11 +10,6 @@ export type AgentRuntimeAdapter = {
   agents: AgentType[]
 }
 
-   
-                                                                             
-                                                                           
-                                                          
-   
 export const AGENT_RUNTIME_ADAPTERS: AgentRuntimeAdapter[] = [
   {
     id: 'pty',
@@ -31,6 +26,9 @@ export const AGENT_RUNTIME_ADAPTERS: AgentRuntimeAdapter[] = [
       'freebuff',
       'mimo',
       'kiro',
+      'kimi',
+      'grok',
+      'codewhale',
     ],
   },
   {
@@ -79,8 +77,6 @@ export function preparePtyRuntimeLaunch(
   }
 
   if (agent === 'codex') {
-                                                                              
-                                                                        
     addArg(args, '--no-alt-screen')
   }
 

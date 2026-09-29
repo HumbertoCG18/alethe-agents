@@ -62,6 +62,9 @@ const AGENTS: { id: CodingAgent; label: string }[] = [
   { id: 'freebuff', label: 'Freebuff' },
   { id: 'mimo', label: 'Mimo' },
   { id: 'kiro', label: 'Kiro CLI' },
+  { id: 'kimi', label: 'Kimi Code' },
+  { id: 'grok', label: 'Grok Build' },
+  { id: 'codewhale', label: 'Codewhale' },
 ]
 
 export function OnboardingModal() {
@@ -386,7 +389,9 @@ export function OnboardingModal() {
                       disabled={cloudBusy}
                       onClick={() => void signInWithGithub()}
                     >
-                      {cloudBusy ? <Loader2 size={16} className={styles.spin} /> : (
+                      {cloudBusy ? (
+                        <Loader2 size={16} className={styles.spin} />
+                      ) : (
                         <Github size={16} />
                       )}
                       {t('onboarding.githubSignIn')}
@@ -424,9 +429,7 @@ export function OnboardingModal() {
                     {t('onboarding.githubImport')}
                   </button>
                 )}
-                {cloudFailed ? (
-                  <p className={styles.note}>{t('onboarding.githubFailed')}</p>
-                ) : null}
+                {cloudFailed ? <p className={styles.note}>{t('onboarding.githubFailed')}</p> : null}
 
                 {cloudLogin ? (
                   <p className={styles.note}>

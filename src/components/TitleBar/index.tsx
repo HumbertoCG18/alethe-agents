@@ -27,13 +27,13 @@ import { useEffect, useRef, useState } from 'react'
 import { requestAppClose } from '../../hooks/useCloseConfirmation'
 import { useRouter9Runtime } from '../../hooks/useRouter9Runtime'
 import { getCachedAntigravityUsage } from '../../lib/antigravityUsageCache'
-import { getCachedClaudeUsage } from '../../lib/claudeUsageCache'
+import { loadClaudeUsage } from '../../lib/claudeUsageCache'
 import { getCachedCodexUsage } from '../../lib/codexUsageCache'
 import { useT } from '../../lib/i18n'
 import { useSidebarViews } from '../../lib/viewPlacement'
 import { observeClaudeReset, observeCodexReset } from '../../lib/limitResetWatch'
 import { formatShortcut } from '../../lib/platform'
-import { killPty, remoteControlInfo } from '../../lib/tauri'
+import { codexHeadlineWindow, hasCodexWindow, killPty, remoteControlInfo } from '../../lib/tauri'
 import { usePomodoroStore } from '../../stores/pomodoroStore'
 import { useProjectsStore } from '../../stores/projectsStore'
 import { useUiStore } from '../../stores/uiStore'
@@ -258,10 +258,10 @@ export function TitleBar() {
   const setActiveView = useUiStore((s) => s.setActiveView)
   const ramMb = useUiStore((s) => s.ramMb)
   const claudeUsage = useUiStore((s) => s.claudeUsage)
+  const claudeUsageStale = useUiStore((s) => s.claudeUsageError !== null)
   const codexUsage = useUiStore((s) => s.codexUsage)
   const antigravityUsage = useUiStore((s) => s.antigravityUsage)
   const updateInfo = useUiStore((s) => s.updateInfo)
-  const setClaudeUsage = useUiStore((s) => s.setClaudeUsage)
   const setCodexUsage = useUiStore((s) => s.setCodexUsage)
   const setAntigravityUsage = useUiStore((s) => s.setAntigravityUsage)
   const openModal = useUiStore((s) => s.openModal_)
@@ -340,22 +340,10 @@ export function TitleBar() {
   useEffect(() => {
     let cancelled = false
     let interval: number | null = null
-    let consecutiveFailures = 0
     const tick = async () => {
       if (!activeRef.current) return
-      try {
-        const usage = await getCachedClaudeUsage()
-        if (!cancelled) {
-          setClaudeUsage(usage)
-          observeClaudeReset(usage)
-          consecutiveFailures = 0
-        }
-      } catch {
-        consecutiveFailures += 1
-        if (consecutiveFailures >= 3 && !cancelled) {
-          setClaudeUsage(null)
-        }
-      }
+      const usage = await loadClaudeUsage()
+      if (usage && !cancelled) observeClaudeReset(usage)
     }
     const startupDelay = window.setTimeout(() => {
       void tick()
@@ -366,7 +354,7 @@ export function TitleBar() {
       window.clearTimeout(startupDelay)
       if (interval !== null) window.clearInterval(interval)
     }
-  }, [setClaudeUsage])
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -733,6 +721,8 @@ export function TitleBar() {
                 <button
                   type="button"
                   className={`${styles.usagePill} ${styles.claudeUsage}`}
+                  // Kept from before a refresh the usage service refused, so not current.
+                  data-stale={claudeUsageStale ? 'true' : undefined}
                   style={
                     {
                       '--pill-color': usagePillColor(claudeUsage.five_hour.utilization),
@@ -763,6 +753,12 @@ export function TitleBar() {
                     <span>{t('ws.usageOpusLabel')}</span>
                     <strong>{formatPct(claudeUsage.seven_day_opus.utilization)}</strong>
                   </div>
+                  {(claudeUsage.model_limits ?? []).map((limit) => (
+                    <div key={limit.model} className={styles.usagePopoverLine}>
+                      <span>{t('ws.usageModelLabel', { model: limit.model.toLowerCase() })}</span>
+                      <strong>{formatPct(limit.utilization)}</strong>
+                    </div>
+                  ))}
                   <div className={styles.usagePopoverFooter}>
                     {t('widget.resetLabel', { w: '5h' })} ·{' '}
                     {formatResetTime(claudeUsage.five_hour.resets_at)}
@@ -777,7 +773,7 @@ export function TitleBar() {
                   className={`${styles.usagePill} ${styles.codexUsage}`}
                   style={
                     {
-                      '--pill-color': usagePillColor(codexUsage.primary.used_percent),
+                      '--pill-color': usagePillColor(codexHeadlineWindow(codexUsage).used_percent),
                     } as React.CSSProperties
                   }
                   onClick={() => openModal('aiUsage')}
@@ -785,7 +781,7 @@ export function TitleBar() {
                   aria-label={t('ui.titlebar.openUsageDetails')}
                 >
                   <CodexIcon size={13} />
-                  <span>{codexUsage.primary.used_percent.toFixed(0)}%</span>
+                  <span>{codexHeadlineWindow(codexUsage).used_percent.toFixed(0)}%</span>
                 </button>
                 <div
                   className={styles.usagePopover}
@@ -793,14 +789,23 @@ export function TitleBar() {
                   aria-label={t('ui.titlebar.itemCodex')}
                 >
                   <div className={styles.usagePopoverTitle}>{t('ui.titlebar.itemCodex')}</div>
-                  <div className={styles.usagePopoverMain}>
-                    <span>{t('widget.usage5h')}</span>
-                    <strong>{formatPct(codexUsage.primary.used_percent)}</strong>
-                  </div>
-                  <div className={styles.usagePopoverLine}>
-                    <span>{t('widget.week')}</span>
-                    <strong>{formatPct(codexUsage.secondary.used_percent)}</strong>
-                  </div>
+                  {hasCodexWindow(codexUsage.primary) ? (
+                    <>
+                      <div className={styles.usagePopoverMain}>
+                        <span>{t('widget.usage5h')}</span>
+                        <strong>{formatPct(codexUsage.primary.used_percent)}</strong>
+                      </div>
+                      <div className={styles.usagePopoverLine}>
+                        <span>{t('widget.week')}</span>
+                        <strong>{formatPct(codexUsage.secondary.used_percent)}</strong>
+                      </div>
+                    </>
+                  ) : (
+                    <div className={styles.usagePopoverMain}>
+                      <span>{t('widget.week')}</span>
+                      <strong>{formatPct(codexUsage.secondary.used_percent)}</strong>
+                    </div>
+                  )}
                   <div className={styles.usagePopoverLine}>
                     <span>{t('widget.statusLabel')}</span>
                     <strong>

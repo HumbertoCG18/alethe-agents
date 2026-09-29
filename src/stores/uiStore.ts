@@ -59,7 +59,7 @@ type ModalKind =
 
 export type ActiveView = 'home' | 'workspace' | 'agentCanvas' | 'agentSandbox'
 /** Open on purpose: plugins contribute right-sidebar tabs at runtime. */
-export type RightSidebarMode = 'markdown' | 'gsdSync' | 'mcp' | 'prs' | (string & {})
+export type RightSidebarMode = 'markdown' | 'gsdSync' | 'mcp' | 'prs' | 'plugins' | (string & {})
 export type MarkdownSidebarTab = { path: string; title: string }
 
 export type MemorySample = MemoryStats & {
@@ -95,6 +95,8 @@ type UiState = {
   runtimeSnapshot: RuntimeSnapshot | null
   memoryHistory: MemorySample[]
   claudeUsage: ClaudeUsage | null
+  /** Why the last Claude usage read failed; null after a successful one. */
+  claudeUsageError: 'no_token' | 'unavailable' | null
   codexUsage: CodexUsage | null
   antigravityUsage: AntigravityUsage | null
 
@@ -119,6 +121,8 @@ type UiState = {
   rightSidebarMode: RightSidebarMode
   /** Active left-sidebar tab. Shared so both shells and commands address the same one. */
   leftSidebarTab: string
+  /** Reveals projects marked as hidden; resets on every app start. */
+  revealHiddenProjects: boolean
   rightSidebarMarkdown: { path: string; title: string } | null
   rightSidebarMarkdownTabs: MarkdownSidebarTab[]
 
@@ -148,6 +152,7 @@ type UiState = {
   setRuntimeSnapshot: (value: RuntimeSnapshot | null) => void
   clearMemoryHistory: () => void
   setClaudeUsage: (value: ClaudeUsage | null) => void
+  setClaudeUsageError: (value: 'no_token' | 'unavailable' | null) => void
   setCodexUsage: (value: CodexUsage | null) => void
   setAntigravityUsage: (value: AntigravityUsage | null) => void
   setFocusedTerminal: (id: string | null) => void
@@ -164,6 +169,7 @@ type UiState = {
   showTodoSidebar: () => void
   setRightSidebarMode: (mode: RightSidebarMode) => void
   setLeftSidebarTab: (tab: string) => void
+  setRevealHiddenProjects: (reveal: boolean) => void
   showGsdSyncSidebar: () => void
   showMcpSidebar: () => void
   showPrsSidebar: () => void
@@ -196,6 +202,7 @@ export const useUiStore = create<UiState>((set) => ({
   runtimeSnapshot: null,
   memoryHistory: [],
   claudeUsage: null,
+  claudeUsageError: null,
   codexUsage: null,
   antigravityUsage: null,
   focusedTerminalId: null,
@@ -207,6 +214,7 @@ export const useUiStore = create<UiState>((set) => ({
   activeView: 'workspace',
   rightSidebarMode: TODOS_VIEW_ID,
   leftSidebarTab: 'projects',
+  revealHiddenProjects: false,
   rightSidebarMarkdown: null,
   rightSidebarMarkdownTabs: [],
   agentCanvasSession: null,
@@ -246,6 +254,7 @@ export const useUiStore = create<UiState>((set) => ({
   setRuntimeSnapshot: (value) => set({ runtimeSnapshot: value }),
   clearMemoryHistory: () => set({ memoryHistory: [] }),
   setClaudeUsage: (value) => set({ claudeUsage: value }),
+  setClaudeUsageError: (value) => set({ claudeUsageError: value }),
   setCodexUsage: (value) => set({ codexUsage: value }),
   setAntigravityUsage: (value) => set({ antigravityUsage: value }),
   setFocusedTerminal: (id) => set({ focusedTerminalId: id }),
@@ -309,6 +318,7 @@ export const useUiStore = create<UiState>((set) => ({
   showTodoSidebar: () => set({ rightSidebarMode: TODOS_VIEW_ID }),
   setRightSidebarMode: (mode) => set({ rightSidebarMode: mode }),
   setLeftSidebarTab: (tab) => set({ leftSidebarTab: tab }),
+  setRevealHiddenProjects: (reveal) => set({ revealHiddenProjects: reveal }),
   showGsdSyncSidebar: () => set({ rightSidebarMode: 'gsdSync' }),
   showMcpSidebar: () => set({ rightSidebarMode: 'mcp' }),
   showPrsSidebar: () => set({ rightSidebarMode: 'prs' }),

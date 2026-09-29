@@ -20,7 +20,7 @@ import {
 import { costClassFor } from '../../lib/agentCanvasUtils'
 import { fmtTokens, fmtUsd } from '../../lib/costFormat'
 import { useT } from '../../lib/i18n'
-import type { ClaudeUsage, CodexUsage } from '../../lib/tauri'
+import { type ClaudeUsage, type CodexUsage, hasCodexWindow } from '../../lib/tauri'
 import { CodexIcon } from '../icons/AgentIcons'
 import styles from './AgentCanvasPOC.module.css'
 import { UsageDropdown, type UsageTab } from './UsageDropdown'
@@ -41,7 +41,7 @@ type CanvasTopBarProps = {
   onUsageTab: (tab: UsageTab) => void
   usageAnchorRef: MutableRefObject<HTMLDivElement | null>
   onForceFallback: () => void
-                      
+
   hasCost: boolean
   sessionTokens: number
   sessionCostUsd: number
@@ -53,7 +53,7 @@ type CanvasTopBarProps = {
   done: number
   lastEventAt: number | null
   hooksEndpoint: string | null
-          
+
   onOpenCodexWorker: () => void
   onClear: () => void
   clearDisabled: boolean
@@ -141,7 +141,9 @@ export function CanvasTopBar({
             >
               {usage
                 ? t('ws.claude5h', { pct: Math.round(usage.five_hour.utilization) })
-                : t('ws.codex5h', { pct: Math.round(codexUsage!.primary.used_percent) })}
+                : hasCodexWindow(codexUsage!.primary)
+                  ? t('ws.codex5h', { pct: Math.round(codexUsage!.primary.used_percent) })
+                  : t('ws.codexWeek', { pct: Math.round(codexUsage!.secondary.used_percent) })}
             </button>
             {usageOpen ? (
               <UsageDropdown

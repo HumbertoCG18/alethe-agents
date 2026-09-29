@@ -169,8 +169,6 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
   planner, now closes it. It did nothing, because the group kept drawing the pane. Closing the
   first pane of a group also no longer hides the other panes in it.
 
-### Fixed
-
 - On Linux, closing a terminal could end every process of your user session instead of only that
   terminal's processes, depending on the process ID it got. Terminals are now stopped directly
   through the system call, so only their own processes are affected.
@@ -194,8 +192,6 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 - **Codex weekly quota shown in the right place.** On plans whose only limit is weekly, such as
   ChatGPT Pro Lite, the weekly usage appeared as the 5-hour quota and the week read 0%. Windows are
   now placed by their length, and plans without a 5-hour limit show only the weekly one ([#187](https://github.com/Kc1t/alethe-agents/issues/187)).
-
-### Fixed
 
 - Agent and 9router install and uninstall dialogs can now be cancelled while an installer runs, so
   one stuck on a prompt no longer locks the dialog and every other install until Alethe restarts.

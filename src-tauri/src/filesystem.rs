@@ -95,6 +95,13 @@ pub struct DirectoryListing {
     pub entries: Vec<BrowseDirectoryEntry>,
 }
 
+/// The home folder, so the terminal can resolve the `~` in paths it prints. `None` rather than a
+/// guess when the platform reports none.
+#[tauri::command]
+pub fn home_directory() -> Option<String> {
+    dirs_next::home_dir().map(|home| home.to_string_lossy().into_owned())
+}
+
 fn get_home_dir() -> PathBuf {
     if let Ok(v) = std::env::var("USERPROFILE") {
         PathBuf::from(v)

@@ -1,6 +1,6 @@
 import { Newspaper } from 'lucide-react'
 
-import { CHANGELOG_RELEASES, CURRENT_VERSION } from '../../lib/changelogData'
+import { CHANGELOG_RELEASES, CURRENT_VERSION, formatReleaseDate } from '../../lib/changelogData'
 import { intlLocale, useT } from '../../lib/i18n'
 import { useProjectsStore } from '../../stores/projectsStore'
 import { useUiStore } from '../../stores/uiStore'
@@ -67,7 +67,7 @@ export function WhatsNewModal() {
               <h3 className={styles.releaseHeading}>
                 {t('whatsNew.releaseHeading', {
                   version: release.version,
-                  date: new Date(release.date).toLocaleDateString(intlLocale(locale)),
+                  date: formatReleaseDate(release.date, intlLocale(locale)),
                 })}
               </h3>
               <ul className={styles.list}>

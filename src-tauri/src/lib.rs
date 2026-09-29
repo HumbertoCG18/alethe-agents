@@ -266,6 +266,8 @@ pub fn run() {
             orchestrator::orchestrator_set_concurrency,
             orchestrator::orchestrator_set_agent_fitness,
             orchestrator::orchestrator_message,
+            orchestrator::orchestrator_cancel,
+            orchestrator::orchestrator_restart,
             orchestrator::orchestrator_answer,
             orchestrator::orchestrator_job_diff,
             browser_session::browser_session_start,

@@ -12,6 +12,11 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ### Added
 
+- **Right-click a worker to open, stop or restart it.** On the orchestration board and in the
+  Executions list, a worker's context menu opens its details, stops it while it is queued,
+  running or waiting on you, or runs the same request again as a new worker under the same
+  planner. Claude's own subagents and background shells run inside the planner, so they can only
+  be opened.
 - **Grok Build and Codewhale are now native agents.** Grok Build (xAI, `grok` CLI) and
   Codewhale (`codewhale` CLI) appear in every agent picker with their own icons and accent
   colors. Install entries cover the official Grok PowerShell/npm installers and
@@ -128,6 +133,10 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 - Opening a pull request now uses the system browser instead of creating an unexpected app surface.
 - The Features preferences page now matches the grouped, searchable feature selector used during
   onboarding, with consistent Browser and Playwright controls.
+- Cancelling a worker that was still waiting in the orchestration queue no longer starts it. It
+  also freed a slot it never held, letting one more worker run than the concurrency limit allows.
+- A worker restored after a restart keeps the time budget it was delegated with, instead of
+  falling back to 15 minutes.
 - The Claude Code usage card no longer claims "no token configured" when the usage service is
   only rate limiting. A refresh it refuses keeps the last reading on screen, without the live
   marker and dimmed in the title bar, and a card with no reading yet says usage is unavailable.

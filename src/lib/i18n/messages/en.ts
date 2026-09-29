@@ -2165,6 +2165,11 @@ export const en = {
   'orchestrator.applyConflictBody':
     "Worker {id}'s branch conflicts with the current one. Resolve it by hand, same as any other worktree.",
   'orchestrator.applyFailed': "Could not apply the worker's changes",
+  'orchestrator.menuOpen': 'Open',
+  'orchestrator.menuStop': 'Stop',
+  'orchestrator.menuRestart': 'Restart',
+  'orchestrator.stopFailed': 'Could not stop the worker',
+  'orchestrator.restartFailed': 'Could not restart the worker',
   'orchestrator.applySuccess': 'Applied',
   'orchestrator.applySuccessBody': 'Merged into {branch} and the worktree was removed.',
   'orchestrator.composeTo': 'to {id}',

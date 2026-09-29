@@ -167,3 +167,23 @@ pub fn orchestrator_message(
     let tool = if steer { "alethe_steer" } else { "alethe_send" };
     crate::orchestrator_core::call_tool(&state.core, tool, &arguments, None)
 }
+
+/// The board's Stop: the same teardown the lead gets from `alethe_cancel`.
+#[tauri::command]
+pub fn orchestrator_cancel(
+    state: tauri::State<'_, OrchestratorState>,
+    job_id: String,
+) -> Result<Value, String> {
+    let mut arguments = serde_json::Map::new();
+    arguments.insert("jobIds".into(), Value::Array(vec![Value::String(job_id)]));
+    crate::orchestrator_core::call_tool(&state.core, "alethe_cancel", &arguments, None)
+}
+
+/// The board's Restart: the same request again as a new worker under the same planner.
+#[tauri::command]
+pub fn orchestrator_restart(
+    state: tauri::State<'_, OrchestratorState>,
+    job_id: String,
+) -> Result<Value, String> {
+    crate::orchestrator_core::restart_job(&state.core, &job_id)
+}

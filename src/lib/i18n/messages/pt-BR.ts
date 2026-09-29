@@ -2191,6 +2191,11 @@ export const ptBR: Record<MessageKey, string> = {
   'orchestrator.applyConflictBody':
     'A branch do worker {id} conflita com a atual. Resolva na mão, igual qualquer outra worktree.',
   'orchestrator.applyFailed': 'Não foi possível aplicar as mudanças do worker',
+  'orchestrator.menuOpen': 'Abrir',
+  'orchestrator.menuStop': 'Parar',
+  'orchestrator.menuRestart': 'Reiniciar',
+  'orchestrator.stopFailed': 'Não foi possível parar o worker',
+  'orchestrator.restartFailed': 'Não foi possível reiniciar o worker',
   'orchestrator.applySuccess': 'Aplicado',
   'orchestrator.applySuccessBody': 'Mesclado em {branch} e a worktree foi removida.',
   'orchestrator.composeTo': 'para {id}',

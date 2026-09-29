@@ -459,6 +459,10 @@
   background: var(--panel-hover);
 }
 
+.usagePill[data-stale='true'] {
+  opacity: 0.55;
+}
+
 .usagePill img {
   object-fit: contain;
 }

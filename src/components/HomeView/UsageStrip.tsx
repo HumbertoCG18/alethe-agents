@@ -1,6 +1,6 @@
 import { Clock, RefreshCw } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
-import { getCachedClaudeUsage } from '../../lib/claudeUsageCache'
+import { loadClaudeUsage } from '../../lib/claudeUsageCache'
 import { getCachedCodexUsage } from '../../lib/codexUsageCache'
 import { getCachedAntigravityUsage } from '../../lib/antigravityUsageCache'
 import { translate, getLocale, useT } from '../../lib/i18n'
@@ -191,15 +191,11 @@ function StatCell({ label, value, crit }: { label: string; value: string; crit?:
 
 function ClaudeCard({ usage }: { usage: ClaudeUsage | null }) {
   const t = useT()
-  const setClaudeUsage = useUiStore((s) => s.setClaudeUsage)
+  const usageError = useUiStore((s) => s.claudeUsageError)
   const accent = 'var(--agent-claude)'
 
   const refresh = async () => {
-    try {
-      setClaudeUsage(await getCachedClaudeUsage(true))
-    } catch {
-      setClaudeUsage(null)
-    }
+    await loadClaudeUsage(true)
   }
 
   const head = (
@@ -209,18 +205,24 @@ function ClaudeCard({ usage }: { usage: ClaudeUsage | null }) {
       name="claude code"
       plan={usage ? 'max · 5x' : undefined}
       accent={accent}
-      hasData={!!usage}
+      // A reading kept from before a failed refresh is not live.
+      hasData={!!usage && !usageError}
       onRefresh={refresh}
     />
   )
 
   if (!usage) {
+    const unavailable = usageError === 'unavailable'
     return (
       <div className={styles.usageCard}>
         {head}
         <div className={styles.usageEmpty}>
-          <span className={styles.usageEmptyTitle}>{t('widget.noTokenConfigured')}</span>
-          <span className={styles.usageEmptyHint}>{t('widget.connectToSeeUsage')}</span>
+          <span className={styles.usageEmptyTitle}>
+            {unavailable ? t('widget.usageUnavailable') : t('widget.noTokenConfigured')}
+          </span>
+          <span className={styles.usageEmptyHint}>
+            {unavailable ? t('widget.usageUnavailableHint') : t('widget.connectToSeeUsage')}
+          </span>
         </div>
       </div>
     )

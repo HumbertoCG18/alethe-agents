@@ -27,7 +27,7 @@ import { useEffect, useRef, useState } from 'react'
 import { requestAppClose } from '../../hooks/useCloseConfirmation'
 import { useRouter9Runtime } from '../../hooks/useRouter9Runtime'
 import { getCachedAntigravityUsage } from '../../lib/antigravityUsageCache'
-import { getCachedClaudeUsage } from '../../lib/claudeUsageCache'
+import { loadClaudeUsage } from '../../lib/claudeUsageCache'
 import { getCachedCodexUsage } from '../../lib/codexUsageCache'
 import { useT } from '../../lib/i18n'
 import { useSidebarViews } from '../../lib/viewPlacement'
@@ -258,10 +258,10 @@ export function TitleBar() {
   const setActiveView = useUiStore((s) => s.setActiveView)
   const ramMb = useUiStore((s) => s.ramMb)
   const claudeUsage = useUiStore((s) => s.claudeUsage)
+  const claudeUsageStale = useUiStore((s) => s.claudeUsageError !== null)
   const codexUsage = useUiStore((s) => s.codexUsage)
   const antigravityUsage = useUiStore((s) => s.antigravityUsage)
   const updateInfo = useUiStore((s) => s.updateInfo)
-  const setClaudeUsage = useUiStore((s) => s.setClaudeUsage)
   const setCodexUsage = useUiStore((s) => s.setCodexUsage)
   const setAntigravityUsage = useUiStore((s) => s.setAntigravityUsage)
   const openModal = useUiStore((s) => s.openModal_)
@@ -340,22 +340,10 @@ export function TitleBar() {
   useEffect(() => {
     let cancelled = false
     let interval: number | null = null
-    let consecutiveFailures = 0
     const tick = async () => {
       if (!activeRef.current) return
-      try {
-        const usage = await getCachedClaudeUsage()
-        if (!cancelled) {
-          setClaudeUsage(usage)
-          observeClaudeReset(usage)
-          consecutiveFailures = 0
-        }
-      } catch {
-        consecutiveFailures += 1
-        if (consecutiveFailures >= 3 && !cancelled) {
-          setClaudeUsage(null)
-        }
-      }
+      const usage = await loadClaudeUsage()
+      if (usage && !cancelled) observeClaudeReset(usage)
     }
     const startupDelay = window.setTimeout(() => {
       void tick()
@@ -366,7 +354,7 @@ export function TitleBar() {
       window.clearTimeout(startupDelay)
       if (interval !== null) window.clearInterval(interval)
     }
-  }, [setClaudeUsage])
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -733,6 +721,8 @@ export function TitleBar() {
                 <button
                   type="button"
                   className={`${styles.usagePill} ${styles.claudeUsage}`}
+                  // Kept from before a refresh the usage service refused, so not current.
+                  data-stale={claudeUsageStale ? 'true' : undefined}
                   style={
                     {
                       '--pill-color': usagePillColor(claudeUsage.five_hour.utilization),

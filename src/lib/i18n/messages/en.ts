@@ -1259,6 +1259,7 @@ export const en = {
   'widget.tryAgain': 'try again',
   'widget.noTokenConfigured': 'no token configured',
   'widget.connectToSeeUsage': 'connect to see usage',
+  'widget.usageUnavailableHint': 'the usage service refused the request; try again shortly',
   'widget.usage5h': 'usage 5h',
   'widget.resetIn': 'reset in {time}',
   'widget.resetsIn': 'resets in {time}',

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Check, Settings2 } from 'lucide-react'
 import { UsageStrip } from '../HomeView/UsageStrip'
 import { getCachedAntigravityUsage } from '../../lib/antigravityUsageCache'
-import { getCachedClaudeUsage } from '../../lib/claudeUsageCache'
+import { loadClaudeUsage } from '../../lib/claudeUsageCache'
 import { getCachedCodexUsage } from '../../lib/codexUsageCache'
 import { useT } from '../../lib/i18n'
 import { AGENT_TYPE_LABELS } from '../../lib/types'
@@ -68,7 +68,6 @@ export function AiUsageModal() {
   const t = useT()
   const open = useUiStore((state) => state.openModal === 'aiUsage')
   const closeModal = useUiStore((state) => state.closeModal)
-  const setClaudeUsage = useUiStore((state) => state.setClaudeUsage)
   const setCodexUsage = useUiStore((state) => state.setCodexUsage)
   const setAntigravityUsage = useUiStore((state) => state.setAntigravityUsage)
   const [editing, setEditing] = useState(false)
@@ -76,20 +75,19 @@ export function AiUsageModal() {
   useEffect(() => {
     if (!open) return
     let cancelled = false
-    void Promise.allSettled([
-      getCachedClaudeUsage(true),
-      getCachedCodexUsage(true),
-      getCachedAntigravityUsage(true),
-    ]).then(([claude, codex, antigravity]) => {
-      if (cancelled) return
-      setClaudeUsage(claude.status === 'fulfilled' ? claude.value : null)
-      setCodexUsage(codex.status === 'fulfilled' ? codex.value : null)
-      setAntigravityUsage(antigravity.status === 'fulfilled' ? antigravity.value : null)
-    })
+    // Claude writes its own result: a refused refresh keeps the last reading instead of blanking it.
+    void loadClaudeUsage(true)
+    void Promise.allSettled([getCachedCodexUsage(true), getCachedAntigravityUsage(true)]).then(
+      ([codex, antigravity]) => {
+        if (cancelled) return
+        setCodexUsage(codex.status === 'fulfilled' ? codex.value : null)
+        setAntigravityUsage(antigravity.status === 'fulfilled' ? antigravity.value : null)
+      },
+    )
     return () => {
       cancelled = true
     }
-  }, [open, setAntigravityUsage, setClaudeUsage, setCodexUsage])
+  }, [open, setAntigravityUsage, setCodexUsage])
 
   return (
     <Modal

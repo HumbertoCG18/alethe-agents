@@ -128,6 +128,11 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 - Opening a pull request now uses the system browser instead of creating an unexpected app surface.
 - The Features preferences page now matches the grouped, searchable feature selector used during
   onboarding, with consistent Browser and Playwright controls.
+- The Claude Code usage card no longer claims "no token configured" when the usage service is
+  only rate limiting. A refresh it refuses keeps the last reading on screen, without the live
+  marker and dimmed in the title bar, and a card with no reading yet says usage is unavailable.
+  Such an old reading no longer suggests switching agents, and pressing refresh while a read is
+  already on its way no longer sends another request.
 - A background command started by a Claude planner no longer stays running on the orchestration
   board after it finishes. The board only noticed a background task when the agent stopped it,
   so one that ended on its own kept its timer counting indefinitely; it now ends when Claude

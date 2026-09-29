@@ -1279,6 +1279,7 @@ export const ptBR: Record<MessageKey, string> = {
   'widget.tryAgain': 'Tentar novamente',
   'widget.noTokenConfigured': 'sem token configurado',
   'widget.connectToSeeUsage': 'conecte para ver o uso',
+  'widget.usageUnavailableHint': 'o serviço de uso recusou a consulta; tente de novo em instantes',
   'widget.usage5h': 'uso 5h',
   'widget.resetIn': 'reset em {time}',
   'widget.resetsIn': 'reseta em {time}',

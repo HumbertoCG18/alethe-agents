@@ -25,13 +25,23 @@ export function makeTtlCache<T>(
     if (!force && cached && now - cached.at < ttlMs) {
       return Promise.resolve(cached.value)
     }
-    if (!force && inFlight) return inFlight
+    // A read already on its way is as fresh as a forced one would be, and a second request to a
+    // rate-limited endpoint only keeps the limit hit.
+    if (inFlight) return inFlight
 
     inFlight = fetcher()
-      .then((value) => {
-        cached = { value, at: Date.now() }
-        return value
-      })
+      .then(
+        (value) => {
+          cached = { value, at: Date.now() }
+          return value
+        },
+        (error: unknown) => {
+          // A read that failed says the value on hand can no longer be trusted: serving it on the
+          // next read would present it as fresh, and a missing token would bring it back.
+          cached = null
+          throw error
+        },
+      )
       .finally(() => {
         inFlight = null
       })

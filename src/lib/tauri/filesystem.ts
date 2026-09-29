@@ -31,6 +31,11 @@ export async function browseDirectory(path: string): Promise<DirectoryListing> {
   return invoke<DirectoryListing>('browse_directory', { path })
 }
 
+/** The home folder, or `null` when the platform reports none. */
+export async function homeDirectory(): Promise<string | null> {
+  return invoke<string | null>('home_directory')
+}
+
 export async function readTextFile(path: string): Promise<string> {
   return invoke<string>('read_text_file', { path })
 }

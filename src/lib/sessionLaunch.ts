@@ -69,6 +69,17 @@ function stripCursorSessionArgs(args: string[]): string[] {
   )
 }
 
+/** Claude's per-launch flags for its MCP servers and hooks settings. */
+export function claudeLaunchFlags(
+  mcpConfigPaths?: readonly string[],
+  hooksSettingsPath?: string,
+): string[] {
+  return [
+    ...(mcpConfigPaths ?? []).flatMap((path) => ['--mcp-config', path]),
+    ...(hooksSettingsPath ? ['--settings', hooksSettingsPath] : []),
+  ]
+}
+
 export function buildAgentLaunch(
   agent: AgentType,
   baseArgs: readonly string[] = [],
@@ -84,18 +95,17 @@ export function buildAgentLaunch(
 
   if (agent === 'claude') {
     const clean = stripClaudeSessionArgs([...baseArgs])
-    const mcp = (mcpConfigPaths ?? []).flatMap((path) => ['--mcp-config', path])
-    const settings = hooksSettingsPath ? ['--settings', hooksSettingsPath] : []
+    const flags = claudeLaunchFlags(mcpConfigPaths, hooksSettingsPath)
     if (sessionId) {
       return {
-        args: ['--resume', sessionId, ...mcp, ...settings, ...clean],
+        args: ['--resume', sessionId, ...flags, ...clean],
         sessionId,
         createdSession: false,
       }
     }
     const createdId = createUuid()
     return {
-      args: ['--session-id', createdId, ...mcp, ...settings, ...clean],
+      args: ['--session-id', createdId, ...flags, ...clean],
       sessionId: createdId,
       createdSession: true,
     }

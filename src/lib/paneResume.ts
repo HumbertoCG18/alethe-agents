@@ -1,10 +1,8 @@
 import { useProjectsStore } from '../stores/projectsStore'
-import { preparePtyRuntimeLaunch } from './agentRuntimeAdapter'
+import { relaunchAgentPty } from './agentRelaunch'
+import { graphifyRepoOf } from './claudeMcpConfigs'
 import { registerSessionClaim, releaseSessionClaim } from './sessionDiscovery'
-import { buildAgentLaunch } from './sessionLaunch'
 import { saveSession } from './sessionResume'
-import { agentHooksSettingsPath, restartPty } from './tauri'
-import { resolveAgentCliCommand } from './agentProviders'
 import type { AgentRuntimeProfile, AgentType } from './types'
 
 export type ResumeSessionInPaneParams = {
@@ -38,33 +36,16 @@ export async function resumeSessionInPane({
   releaseSessionClaim(tabId)
   releaseSessionClaim(ptyId)
 
-  const prepared = preparePtyRuntimeLaunch(agent, runtimeProfile, extraArgs ?? [])
-
-  let hooksSettingsPath: string | undefined
-  if (agent === 'claude') {
-    const orchestratorEnabled = useProjectsStore.getState().preferences.enabledFeatures.orchestrator
-    hooksSettingsPath = await agentHooksSettingsPath(ptyId, orchestratorEnabled).catch(
-      () => undefined,
-    )
-  }
-
-  const launch = buildAgentLaunch(
+  const project = useProjectsStore.getState().projects.find((entry) => entry.id === projectId)
+  const terminal = project?.terminals.find((entry) => entry.id === terminalId)
+  await relaunchAgentPty({
+    ptyId,
     agent,
-    prepared.args,
+    runtimeProfile,
+    extraArgs,
     sessionId,
-    undefined,
-    undefined,
-    hooksSettingsPath,
-  )
-
-  await restartPty({
-    id: ptyId,
-    cols: 80,
-    rows: 24,
-    command: resolveAgentCliCommand(agent),
-    cwd: cwd || undefined,
-    extraArgs: launch.args,
-    env: prepared.env,
+    cwd,
+    graphifyRepo: graphifyRepoOf(project, terminal?.cwd),
   })
 
   if (cwd) {

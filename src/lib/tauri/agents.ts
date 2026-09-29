@@ -44,6 +44,16 @@ export async function agentHooksSettingsPath(
   return invoke<string>('agent_hooks_settings_path', { plannerId, orchestrator })
 }
 
+/** Publishes the main window's subagent canvas for detached orchestration boards. */
+export async function setAgentCanvasMirror(snapshot: string): Promise<void> {
+  await invoke('set_agent_canvas_mirror', { snapshot })
+}
+
+/** The subagent canvas the main window last published, if it has published one. */
+export async function agentCanvasMirror(): Promise<string | null> {
+  return invoke<string | null>('agent_canvas_mirror')
+}
+
 /**
  * Writes the `[hooks]` block that reports this Codex terminal's own subagents back to Alethe,
  * tagged with `plannerId` (agent_events.rs). Codex has no http hook handler, so this points its

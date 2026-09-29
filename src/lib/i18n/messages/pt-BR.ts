@@ -1077,6 +1077,35 @@ export const ptBR: Record<MessageKey, string> = {
   'whatsNew.close': 'Entendi',
   'whatsNew.update': 'Ver atualização',
   'whatsNew.releaseHeading': 'v{version} — {date}',
+  'whatsNew.v170.note1':
+    'Recursos agora carregam como plugins: Git Control, Todo List e o Theme Pack viram plugins oficiais, e um plugin pode ser importado a partir da sua pasta.',
+  'whatsNew.v170.note2':
+    'Um catálogo de plugins nas Preferências instala e atualiza plugins com um clique, cada pacote fixado a um checksum SHA-256.',
+  'whatsNew.v170.note3':
+    'Orquestração v2: um agente líder delega para workers Claude e Codex num quadro, pede permissão antes de sair do sandbox e confere antes a quota restante de cada fornecedor.',
+  'whatsNew.v170.note4':
+    'O controle remoto virou um cliente mobile com terminal ao vivo, visualização de chat do agente e perguntas interativas.',
+  'whatsNew.v170.note5':
+    'Projetos podem ser divididos em grids nomeados opcionais, cada um com seus terminais e layout.',
+  'whatsNew.v170.note6': 'Novos agentes e terminais: Cursor CLI, Kiro CLI e terminais WSL simples.',
+  'whatsNew.v170.note7':
+    'Integração de roteamento com o 9router e sincronização na nuvem das preferências (plano gratuito).',
+  'whatsNew.v170.note8': 'O Ctrl+P agora encontra comandos, não só terminais.',
+  'whatsNew.v160.note1':
+    'Estilos de interface Normal e Clean para o app inteiro, escolhidos no onboarding com prévia ao vivo.',
+  'whatsNew.v160.note2':
+    'Conversas do Claude Code e do Codex podem ser continuadas no outro agente a partir do terminal.',
+  'whatsNew.v160.note3':
+    'Agentes podem ser instalados, atualizados e desinstalados de dentro do Alethe, e o GitHub Copilot CLI entra como novo agente.',
+  'whatsNew.v160.note4':
+    'Nova aba MCP na barra lateral direita com todos os servidores MCP configurados e as skills instaladas para cada agente.',
+  'whatsNew.v160.note5':
+    'Layouts de grid são editados direto no grid, com presets adaptativos e os oito layouts salvos mais recentes.',
+  'whatsNew.v160.note6':
+    'Painéis de navegador voltaram ao grid do workspace, e uma URL impressa no terminal pode abrir como um deles.',
+  'whatsNew.v160.note7':
+    'O controle remoto pareia por uma janela de pareamento de curta duração, começa em modo somente leitura e pode ocultar terminais específicos.',
+  'whatsNew.v160.note8': 'Novos temas Golden Premium e Ember.',
   'whatsNew.v150.note1':
     'O export de backup de perfil agora arquiva o perfil inteiro (todos, histórico, preferências, tokens, scrollback) em vez de uma lista curta fixa.',
   'whatsNew.v150.note2':
@@ -1250,6 +1279,7 @@ export const ptBR: Record<MessageKey, string> = {
   'widget.tryAgain': 'Tentar novamente',
   'widget.noTokenConfigured': 'sem token configurado',
   'widget.connectToSeeUsage': 'conecte para ver o uso',
+  'widget.usageUnavailableHint': 'o serviço de uso recusou a consulta; tente de novo em instantes',
   'widget.usage5h': 'uso 5h',
   'widget.resetIn': 'reset em {time}',
   'widget.resetsIn': 'reseta em {time}',
@@ -1996,10 +2026,12 @@ export const ptBR: Record<MessageKey, string> = {
   'ws.now': 'agora',
   'ws.claude5h': 'claude 5h {pct}%',
   'ws.codex5h': 'codex 5h {pct}%',
+  'ws.codexWeek': 'codex semana {pct}%',
   'ws.usagePanelOpen': 'Stats de uso (Claude / Codex)',
   'ws.usage5hLabel': '5h',
   'ws.usageWeekLabel': '7 dias',
   'ws.usageOpusLabel': 'opus 7d',
+  'ws.usageModelLabel': '{model} 7d',
   'ws.usageStatus': 'status',
   'ws.usageOk': 'ok',
   'ws.usageLimited': 'limite atingido',
@@ -2112,6 +2144,10 @@ export const ptBR: Record<MessageKey, string> = {
   'orchestrator.plannerEyebrow': 'planner',
   'orchestrator.plannerNodeTitle': 'Abrir o terminal em que este planner roda',
   'orchestrator.plannerGone': 'O terminal em que este planner rodava não está mais aberto',
+  'orchestrator.plannerInMainWindow': 'Abra o terminal deste planner pela janela principal',
+  'orchestrator.openInWindow': 'Abrir em nova janela',
+  'orchestrator.openInWindowFailed': 'Não foi possível abrir o board em uma nova janela',
+  'orchestrator.windowPaneGone': 'Este painel de orquestração não existe mais.',
   'orchestrator.noPlanner': 'sem planner',
   'orchestrator.noPlannerTitle': 'Trabalho delegado de fora de um terminal de agente',
   'orchestrator.plannerTitle': '{label} · {agent}',
@@ -2166,6 +2202,11 @@ export const ptBR: Record<MessageKey, string> = {
   'orchestrator.applyConflictBody':
     'A branch do worker {id} conflita com a atual. Resolva na mão, igual qualquer outra worktree.',
   'orchestrator.applyFailed': 'Não foi possível aplicar as mudanças do worker',
+  'orchestrator.menuOpen': 'Abrir',
+  'orchestrator.menuStop': 'Parar',
+  'orchestrator.menuRestart': 'Reiniciar',
+  'orchestrator.stopFailed': 'Não foi possível parar o worker',
+  'orchestrator.restartFailed': 'Não foi possível reiniciar o worker',
   'orchestrator.applySuccess': 'Aplicado',
   'orchestrator.applySuccessBody': 'Mesclado em {branch} e a worktree foi removida.',
   'orchestrator.composeTo': 'para {id}',
@@ -2230,6 +2271,13 @@ export const ptBR: Record<MessageKey, string> = {
   'mod.jobGuardInactive':
     'Proteção contra processos órfãos: indisponível nesta plataforma/sessão. Um crash pode deixar processos rodando; o próximo boot ainda tenta limpar automaticamente.',
   'ui.terminal.restartFailed': 'Falha ao reiniciar o terminal',
+  'ui.terminal.orchestrationStartFailed': 'Não foi possível iniciar a orquestração',
+  'ui.terminal.orchestrationStartFailedBody':
+    'O Claude não voltou com as ferramentas do orquestrador.',
+  'ui.terminal.openOrchestration': 'Abrir orquestração',
+  'ui.terminal.orchestrationRestartTitle': 'Reiniciar o Claude para a orquestração?',
+  'ui.terminal.orchestrationRestartBody':
+    'Esta conversa foi iniciada sem as ferramentas do orquestrador. O Claude reinicia na mesma conversa para recebê-las.',
   'git.initOffer.title': 'Ainda não é um repositório Git',
   'git.initOffer.body':
     'Isolamento de agentes, worktrees e merges precisam que esta pasta seja um repositório Git. Inicializar agora?',

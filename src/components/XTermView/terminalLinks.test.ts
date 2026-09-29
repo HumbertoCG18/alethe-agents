@@ -122,6 +122,39 @@ describe('terminal links', () => {
     expect(resolveTerminalFilePath('D:\\repo\\README.md', 'D:\\other')).toBe('D:\\repo\\README.md')
   })
 
+  // `~\` is how Windows shells and agents print home paths (#237).
+  it('resolves a home prefix from the home folder instead of the terminal folder', () => {
+    const [link] = detectTerminalLinks(
+      'em ~\\Desktop\\para-gpt\\validacao_externa_29-09.zip (sha256 e5de322d)',
+    )
+    expect(link.text).toBe('~\\Desktop\\para-gpt\\validacao_externa_29-09.zip')
+    expect(resolveTerminalFilePath(link.target, 'C:\\repo', 'C:\\Users\\me')).toBe(
+      'C:\\Users\\me\\Desktop\\para-gpt\\validacao_externa_29-09.zip',
+    )
+    expect(resolveTerminalFilePath('~/notes.md:3', '/work/repo', '/home/me/')).toBe(
+      '/home/me/notes.md',
+    )
+    expect(resolveTerminalFilePath('~', 'C:\\repo', 'C:\\Users\\me')).toBe('C:\\Users\\me')
+    // Until the home folder is known, the path is kept as printed rather than joined to the cwd.
+    expect(resolveTerminalFilePath('~\\notes.md', 'C:\\repo')).toBe('~\\notes.md')
+    expect(resolveTerminalFilePath('~other\\notes.md', 'C:\\repo', 'C:\\Users\\me')).toBe(
+      'C:\\repo\\~other\\notes.md',
+    )
+  })
+
+  it('ends a Windows home path where a `~/` path would end', () => {
+    expect(detectTerminalLinks('~\\projetos\\alethe roda em dev')[0].text).toBe(
+      '~\\projetos\\alethe',
+    )
+    expect(
+      detectTerminalLinks('~\\projects\\alethe ~\\Desktop\\notes.md').map((link) => link.text),
+    ).toEqual(['~\\projects\\alethe', '~\\Desktop\\notes.md'])
+    expect(detectTerminalLinks('~\\Desktop\\ see readme.md').map((link) => link.text)).toEqual([
+      '~\\Desktop\\',
+      'readme.md',
+    ])
+  })
+
   it('stops an extensionless path at the first space instead of eating the sentence', () => {
     const [link] = detectTerminalLinks(
       '/pt-br/vitrine-dupla/trajetoria — 5 variações de trajetória',

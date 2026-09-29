@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  AGENT_INSTALL_CATALOG,
   installMethodsFor,
   installShellLine,
   type InstallToolchain,
   needsNodeToolchain,
+  nodeInstallMethods,
   uninstallMethodsFor,
 } from './agentInstall'
 
@@ -43,7 +45,7 @@ describe('installMethodsFor', () => {
     expect(methods.map((method) => method.id)).toEqual(['npm', 'winget'])
     expect(methods.map((method) => method.command)).toEqual([
       'npm install -g @github/copilot',
-      'winget install GitHub.Copilot',
+      'winget install --accept-source-agreements --accept-package-agreements GitHub.Copilot',
     ])
   })
 
@@ -134,7 +136,46 @@ describe('uninstallMethodsFor', () => {
       'choco uninstall opencode -y',
     )
     expect(uninstallMethodsFor('claude', { ...BARE, winget: true })[0].command).toBe(
-      'winget uninstall Anthropic.ClaudeCode',
+      'winget uninstall --accept-source-agreements Anthropic.ClaudeCode',
+    )
+  })
+})
+
+describe('non-interactive installers', () => {
+  const FULL: InstallToolchain = {
+    ...BARE,
+    node: 'v22.3.0',
+    npm: true,
+    winget: true,
+    scoop: true,
+    choco: true,
+  }
+  const agents = Object.keys(AGENT_INSTALL_CATALOG) as Array<keyof typeof AGENT_INSTALL_CATALOG>
+  const installs = [
+    ...agents.flatMap((agent) => installMethodsFor(agent, FULL)),
+    ...nodeInstallMethods(FULL),
+  ]
+  const uninstalls = agents.flatMap((agent) => uninstallMethodsFor(agent, FULL))
+
+  // The install log is read-only: a prompt there can never be answered (#235).
+  it('never leaves winget or choco waiting on a confirmation prompt', () => {
+    const winget = installs.filter((method) => method.id === 'winget')
+    const choco = installs.filter((method) => method.id === 'choco')
+    expect(winget.length).toBeGreaterThan(0)
+    expect(choco.length).toBeGreaterThan(0)
+    for (const method of winget) {
+      expect(method.command).toContain('--accept-source-agreements')
+      expect(method.command).toContain('--accept-package-agreements')
+    }
+    for (const method of choco) expect(method.command).toMatch(/ -y( |$)/)
+  })
+
+  it('keeps the derived uninstall commands non-interactive and aimed at the package', () => {
+    expect(uninstalls.find((method) => method.id === 'winget')?.command).toBe(
+      'winget uninstall --accept-source-agreements Anthropic.ClaudeCode',
+    )
+    expect(uninstalls.find((method) => method.id === 'choco')?.command).toBe(
+      'choco uninstall opencode -y',
     )
   })
 })

@@ -65,24 +65,24 @@ export function Router9InstallModal({ action, open, onClose, onSettled, nested }
   const nodeLog = stripInstallLogAnsi(nodeInstall.log)
   const installing = action === 'install'
 
+  // Closing kills a running installer: one stuck on a prompt the read-only log cannot answer would
+  // otherwise hold this modal and the app-wide install lock until the app restarts.
+  const cancel = () => {
+    if (running) reset()
+    if (nodeRunning) nodeInstall.reset()
+    onClose()
+  }
+
   return (
     <Modal
       open={open}
-      onClose={() => {
-        if (running) return
-        onClose()
-      }}
+      onClose={cancel}
       title={installing ? t('router9.installTitle') : t('router9.uninstallTitle')}
       width={480}
       nested={nested}
       footer={
         <>
-          <button
-            type="button"
-            className={controls.btn}
-            disabled={running || nodeRunning}
-            onClick={onClose}
-          >
+          <button type="button" className={controls.btn} onClick={cancel}>
             {t('agentInstall.cancel')}
           </button>
           <button

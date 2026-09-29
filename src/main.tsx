@@ -3,13 +3,17 @@ import './styles/reset.css'
 import './styles/theme.css'
 import './styles/visual-clean.css'
 
+import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 
 import App from './App'
+import { orchestrationWindowPane } from './lib/orchestrationWindow'
 import { initPluginHost } from './lib/plugins'
 import { recordFrontendError } from './lib/tauri'
 import { watchPluginThemeStyles } from './lib/themeTokens'
+import { OrchestrationWindow } from './OrchestrationWindow'
+import { setProjectsReadOnly } from './stores/projectsStore'
 
 // Capture uncaught errors that React boundaries cannot handle, such as PTY callbacks.
 let lastErrorAt = 0
@@ -44,12 +48,28 @@ window.addEventListener('unhandledrejection', (event) => {
 
 watchPluginThemeStyles()
 
-// Contributions land in reactive registries, so the shell renders immediately
-// and picks plugin surfaces up as they activate.
-void initPluginHost()
+/** The orchestration pane this window was opened to show on its own (#247), if any. */
+function detachedBoardPane(): string | null {
+  try {
+    return orchestrationWindowPane(getCurrentWebviewWindow().label)
+  } catch {
+    // Outside Tauri (the plain Vite dev server) there is no window label.
+    return null
+  }
+}
+
+const boardPane = detachedBoardPane()
+if (boardPane) {
+  // The main window owns projects.json; this one only reads it.
+  setProjectsReadOnly(true)
+} else {
+  // Contributions land in reactive registries, so the shell renders immediately
+  // and picks plugin surfaces up as they activate. The main window hosts them once.
+  void initPluginHost()
+}
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <App />
+    {boardPane ? <OrchestrationWindow terminalId={boardPane} /> : <App />}
   </React.StrictMode>,
 )

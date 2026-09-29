@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   aggregateAgentSpend,
   attentionOf,
+  boardPlannerIds,
   countLanes,
   emptyCounts,
   groupPlanners,
@@ -11,6 +12,7 @@ import {
   worstState,
 } from './orchestratorRuns'
 import type { OrchestratorJob, OrchestratorPlanner } from './tauri'
+import type { Project } from './types'
 
 function job(
   partial: Partial<OrchestratorJob> & Pick<OrchestratorJob, 'id' | 'runId'>,
@@ -326,5 +328,33 @@ describe('groupPlanners', () => {
 
   it('has nothing to show without planners or jobs', () => {
     expect(groupPlanners([], [])).toEqual([])
+  })
+})
+
+// A board opened next to a terminal shows that terminal's planner first (#248).
+describe('boardPlannerIds', () => {
+  const tab = (id: string, ptyId: string) => ({ id, type: 'claude' as const, ptyId, cwd: '' })
+  const project = {
+    id: 'proj-1',
+    terminals: [
+      { id: 'alpha', name: 'Alpha', tabs: [tab('a1', 'pty-alpha')], activeTabId: 'a1' },
+      {
+        id: 'zulu',
+        name: 'Zulu',
+        tabs: [tab('z1', 'pty-zulu-1'), tab('z2', 'pty-zulu-2')],
+        activeTabId: 'z2',
+      },
+      { id: 'board', name: 'Orchestration', tabs: [], activeTabId: '', kind: 'orchestrator' },
+    ],
+    paneGroups: [{ id: 'g1', kind: 'orchestration', paneIds: ['zulu', 'board'] }],
+  } as unknown as Project
+
+  it("lists the grouped terminal's ptys, its active tab first", () => {
+    expect(boardPlannerIds(project, 'board')).toEqual(['pty-zulu-2', 'pty-zulu-1'])
+  })
+
+  it('has no preference for a board that is not grouped with a terminal', () => {
+    expect(boardPlannerIds({ ...project, paneGroups: [] } as Project, 'board')).toEqual([])
+    expect(boardPlannerIds(undefined, 'board')).toEqual([])
   })
 })

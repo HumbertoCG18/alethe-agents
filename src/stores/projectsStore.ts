@@ -339,6 +339,15 @@ export type ProjectsState = ProjectsFile & {
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 let pendingSave = false
 let lastSaveErrorLoggedAt = 0
+let readOnly = false
+
+/**
+ * Stops this window from ever writing projects.json. A detached orchestration board reads the
+ * state the main window owns; a second writer would overwrite the main window's saves.
+ */
+export function setProjectsReadOnly(value: boolean): void {
+  readOnly = value
+}
 
 let lastWriteSequence = Date.now()
 
@@ -362,7 +371,7 @@ function projectsPayload(state: ProjectsState): ProjectsFile {
 }
 
 function scheduleSave(getState: () => ProjectsState) {
-  if (!getState().hydrated) return
+  if (readOnly || !getState().hydrated) return
   pendingSave = true
   if (saveTimer) clearTimeout(saveTimer)
   saveTimer = setTimeout(() => {
@@ -780,7 +789,7 @@ export async function flushProjectsState(): Promise<void> {
   }
   pendingSave = false
   const state = useProjectsStore.getState()
-  if (!state.hydrated) return
+  if (readOnly || !state.hydrated) return
   await saveProjectsFile(JSON.stringify(projectsPayload(state), null, 2), nextWriteSequence())
 }
 

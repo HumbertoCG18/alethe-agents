@@ -89,24 +89,24 @@ export function AgentInstallModal({ agent, label, open, onClose, onInstalled, ne
   const cleanLog = stripInstallLogAnsi(log)
   const nodeLog = stripInstallLogAnsi(nodeInstall.log)
 
+  // Closing kills a running installer: one stuck on a prompt the read-only log cannot answer would
+  // otherwise hold this modal and the app-wide install lock until the app restarts.
+  const cancel = () => {
+    if (running) reset()
+    if (nodeRunning) nodeInstall.reset()
+    onClose()
+  }
+
   return (
     <Modal
       open={open}
-      onClose={() => {
-        if (running || nodeRunning) return
-        onClose()
-      }}
+      onClose={cancel}
       title={t('agentInstall.installTitle', { agent: label })}
       width={480}
       nested={nested}
       footer={
         <>
-          <button
-            type="button"
-            className={controls.btn}
-            disabled={running || nodeRunning}
-            onClick={onClose}
-          >
+          <button type="button" className={controls.btn} onClick={cancel}>
             {t('agentInstall.cancel')}
           </button>
           {chosen ? (

@@ -1,3 +1,5 @@
+import { claudeLaunchExtras, graphifyRepoOf, recordClaudeLaunch } from './claudeMcpConfigs'
+import { claudeLaunchFlags } from './sessionLaunch'
 import { conversationFields, getActiveSessions, saveSession } from './sessionResume'
 import { acquireSpawnSlot, releaseSpawnSlot } from './spawnQueue'
 import {
@@ -172,7 +174,22 @@ export async function resetLastSession(): Promise<ResetLastSessionResult> {
       }
       const savedOpenCodeId = target.agent === 'opencode' ? active?.opencodeSessionId : undefined
       const sessionId = await latestSessionId(target.agent, cwd, exclude, savedOpenCodeId)
-      const extraArgs = buildResumeArgs(target.agent, target.extraArgs, sessionId)
+      // Claude only reads its MCP servers and hooks at launch; resuming without them loses them.
+      const project = useProjectsStore
+        .getState()
+        .projects.find((entry) => entry.id === target.projectId)
+      const claudeExtras =
+        target.agent === 'claude'
+          ? await claudeLaunchExtras({
+              ptyId: target.ptyId,
+              cwd,
+              graphifyRepo: graphifyRepoOf(project, cwd),
+            })
+          : undefined
+      const extraArgs = [
+        ...buildResumeArgs(target.agent, target.extraArgs, sessionId),
+        ...claudeLaunchFlags(claudeExtras?.mcpConfigPaths, claudeExtras?.hooksSettingsPath),
+      ]
 
       useTerminalsStore.getState().beginRestart(target.ptyId)
       await restartPty({
@@ -183,6 +200,7 @@ export async function resetLastSession(): Promise<ResetLastSessionResult> {
         cwd: cwd || undefined,
         extraArgs,
       })
+      if (claudeExtras) recordClaudeLaunch(target.ptyId, claudeExtras.orchestrator)
       window.dispatchEvent(
         new CustomEvent('alethe:terminal-resize-request', { detail: { ptyId: target.ptyId } }),
       )

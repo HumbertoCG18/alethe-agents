@@ -3,9 +3,7 @@ import { normalizeProjectGrids } from '../lib/projectGrids'
 
 import { nanoid } from 'nanoid'
 
-import { preparePtyRuntimeLaunch } from '../lib/agentRuntimeAdapter'
 import { getLocale, translate } from '../lib/i18n'
-import { buildAgentLaunch } from '../lib/sessionLaunch'
 import {
   clearTerminalPtyIds,
   collectTerminalPtyIds,
@@ -13,13 +11,11 @@ import {
 } from '../lib/terminalFactory'
 import { cleanupPtys } from '../lib/terminalLifecycle'
 import type { Group, Project } from '../lib/types'
-import { resolveAgentCliCommand } from '../lib/agentProviders'
 import { GROUP_COLORS } from '../lib/types'
 import { sanitizeWorkspaceSnapshot } from '../lib/workspaceNavigation'
 import type { ProjectsState } from './projectsStore'
 import { collectGroupProjectIds } from './projectsStore.migrations'
 import type { SliceCtx } from './projectsStore.slices'
-import { useTerminalsStore } from './terminalsStore'
 import { useUiStore } from './uiStore'
 
 function t(key: Parameters<typeof translate>[1], params?: Record<string, string | number>) {
@@ -540,24 +536,22 @@ export function createProjectsSlice({ set, get, update, updateProject }: SliceCt
       if (!repo) return { ok: false, error: 'no_repo' }
 
       try {
-        const { worktreeProvision, restartPty } = await import('../lib/tauri')
+        const { worktreeProvision } = await import('../lib/tauri')
+        const { relaunchAgentPty } = await import('../lib/agentRelaunch')
+        const { graphifyRepoOf } = await import('../lib/claudeMcpConfigs')
         const agentId = `merge-${nanoid(6)}`
         const info = await worktreeProvision(repo, agentId, project.worktreeMode ?? 'gitWorktree')
 
         for (const tab of terminal.tabs) {
           if (!tab.ptyId) continue
-          const runtime = preparePtyRuntimeLaunch(tab.type, tab.runtimeProfile, tab.extraArgs ?? [])
-          const launch = buildAgentLaunch(tab.type, runtime.args)
-          useTerminalsStore.getState().beginRestart(tab.ptyId)
           try {
-            await restartPty({
-              id: tab.ptyId,
-              cols: 80,
-              rows: 24,
-              command: resolveAgentCliCommand(tab.type),
+            await relaunchAgentPty({
+              ptyId: tab.ptyId,
+              agent: tab.type,
+              runtimeProfile: tab.runtimeProfile,
+              extraArgs: tab.extraArgs,
               cwd: info.path,
-              extraArgs: launch.args,
-              env: runtime.env,
+              graphifyRepo: graphifyRepoOf(project, info.path),
             })
             window.dispatchEvent(
               new CustomEvent('alethe:terminal-resize-request', { detail: { ptyId: tab.ptyId } }),
@@ -604,8 +598,10 @@ export function createProjectsSlice({ set, get, update, updateProject }: SliceCt
 
       migratingWorktreeProjectIds.add(projectId)
       try {
-        const { worktreeProvision, restartPty, gitStatus, gsdOpenCodePluginWrite } =
+        const { worktreeProvision, gitStatus, gsdOpenCodePluginWrite } =
           await import('../lib/tauri')
+        const { relaunchAgentPty } = await import('../lib/agentRelaunch')
+        const { graphifyRepoOf } = await import('../lib/claudeMcpConfigs')
 
         // o erro cru not_a_git_repository vazando pro toast final).
         let status: Awaited<ReturnType<typeof gitStatus>> | null = null
@@ -665,22 +661,14 @@ export function createProjectsSlice({ set, get, update, updateProject }: SliceCt
 
             for (const tab of terminal.tabs) {
               if (!tab.ptyId) continue
-              const runtime = preparePtyRuntimeLaunch(
-                tab.type,
-                tab.runtimeProfile,
-                tab.extraArgs ?? [],
-              )
-              const launch = buildAgentLaunch(tab.type, runtime.args)
-              useTerminalsStore.getState().beginRestart(tab.ptyId)
               try {
-                await restartPty({
-                  id: tab.ptyId,
-                  cols: 80,
-                  rows: 24,
-                  command: resolveAgentCliCommand(tab.type),
+                await relaunchAgentPty({
+                  ptyId: tab.ptyId,
+                  agent: tab.type,
+                  runtimeProfile: tab.runtimeProfile,
+                  extraArgs: tab.extraArgs,
                   cwd: info.path,
-                  extraArgs: launch.args,
-                  env: runtime.env,
+                  graphifyRepo: graphifyRepoOf(project, info.path),
                 })
                 window.dispatchEvent(
                   new CustomEvent('alethe:terminal-resize-request', {

@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react'
 
 import { type AgentFitness, claudeFitness, codexFitness } from '../lib/agentFitness'
 import { USAGE_FALLBACK_THRESHOLD, USAGE_POLL_MS } from '../lib/agentCanvasConfig'
-import { getClaudeUsage, getCodexUsage, setAgentFitness } from '../lib/tauri'
+import { getCachedCodexUsage } from '../lib/codexUsageCache'
+import { getClaudeUsage, setAgentFitness } from '../lib/tauri'
 
 export type QuotaWarning = {
   agent: 'claude' | 'codex'
@@ -32,7 +33,7 @@ export function useOrchestratorQuotaWarnings(): QuotaWarning[] {
         // ignore
       }
       try {
-        const warning = await report('codex', codexFitness(await getCodexUsage()))
+        const warning = await report('codex', codexFitness(await getCachedCodexUsage()))
         if (warning) next.push(warning)
       } catch {
         // ignore

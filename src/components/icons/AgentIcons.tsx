@@ -162,11 +162,7 @@ export function GrokIcon({ size = 16 }: { size?: number }) {
       strokeWidth="1.5"
     >
       <rect x="2" y="2" width="12" height="12" rx="3" />
-      <path
-        d="M10.2 6.2A2.8 2.8 0 1 0 10.4 9.4H8.2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
+      <path d="M10.2 6.2A2.8 2.8 0 1 0 10.4 9.4H8.2" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   )
 }

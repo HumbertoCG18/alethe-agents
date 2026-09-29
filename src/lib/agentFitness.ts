@@ -31,6 +31,11 @@ export function claudeFitness(usage: ClaudeUsage): AgentFitness {
       used: usage.seven_day_opus.utilization,
       resetsAt: usage.seven_day_opus.resets_at || null,
     },
+    ...(usage.model_limits ?? []).map((limit) => ({
+      label: limit.model.toLowerCase(),
+      used: limit.utilization,
+      resetsAt: limit.resets_at || null,
+    })),
   ])
   return {
     worst: worst.label,

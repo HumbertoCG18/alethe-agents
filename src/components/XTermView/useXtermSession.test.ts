@@ -1,6 +1,7 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { plannerLabelFor } from '../../lib/claudeMcpConfigs'
 import { resetSessionClaimsForTests } from '../../lib/sessionDiscovery'
 import { peekSession, saveSession } from '../../lib/sessionResume'
 import * as tauri from '../../lib/tauri'
@@ -132,6 +133,30 @@ beforeEach(() => {
   )
 })
 afterEach(() => vi.unstubAllGlobals())
+
+describe('plannerLabelFor', () => {
+  // Only what the lookup reads: a project's terminals, their names and their tabs' ids.
+  function withTerminal(name: string, tab: { id: string; ptyId: string | null }) {
+    useProjectsStore.setState({ projects: [{ terminals: [{ name, tabs: [tab] }] }] } as never)
+  }
+
+  it('names a planner by its terminal before the first spawn has given the tab a pty (#264)', () => {
+    // The pane spawns under `tab.ptyId ?? tab.id`; the tab only gets its ptyId after the spawn.
+    withTerminal('Night planner', { id: 'tab-1', ptyId: null })
+    expect(plannerLabelFor('tab-1')).toBe('Night planner')
+  })
+
+  it('still finds a terminal by the pty its tab already has', () => {
+    withTerminal('Night planner', { id: 'tab-1', ptyId: 'pty-9' })
+    expect(plannerLabelFor('pty-9')).toBe('Night planner')
+  })
+
+  it('falls back to the id when no terminal has it', () => {
+    withTerminal('Night planner', { id: 'tab-1', ptyId: 'pty-9' })
+    expect(plannerLabelFor('tab-1')).toBe('tab-1')
+    expect(plannerLabelFor('elsewhere')).toBe('elsewhere')
+  })
+})
 
 describe('Claude terminal session lifecycle', () => {
   it.each(['frontend', 'backend'])(

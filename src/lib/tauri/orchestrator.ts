@@ -101,6 +101,8 @@ export type OrchestratorJob = {
   /** Started in a read-only sandbox: it can read and run commands but not write. */
   readOnly: boolean
   pendingApproval: OrchestratorPendingApproval | null
+  /** The worker that took this one's task over after it ended without finishing it. */
+  supersededBy?: string | null
   hasDiff: boolean
   summary: string
   /** Set only on the frontend, for a Claude/Codex native subagent reshaped into this type — it never

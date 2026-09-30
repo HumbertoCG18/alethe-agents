@@ -208,6 +208,172 @@ fn a_new_id_never_collides_with_a_restored_one() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Delegates one task as the given planner, waits for its worker to settle and returns its id.
+fn delegate_as(core: &Core, planner: &str, arguments: Value) -> String {
+    let body = json!({
+        "jsonrpc": "2.0",
+        "id": 10,
+        "method": "tools/call",
+        "params": { "name": "alethe_delegate", "arguments": arguments }
+    });
+    let raw = handle_mcp_body(core, &body.to_string(), Some(planner)).expect("a response");
+    let response: Value = serde_json::from_str(&raw).expect("valid json");
+    let text = response["result"]["content"][0]["text"]
+        .as_str()
+        .expect("tool text");
+    let created: Value = serde_json::from_str(text).expect("a delegation");
+    let id = created["jobs"][0]["id"]
+        .as_str()
+        .expect("a job id")
+        .to_string();
+    call(
+        core,
+        "alethe_check",
+        json!({ "wait": true, "timeoutMs": 5000 }),
+    );
+    id
+}
+
+fn job_field(core: &Core, job_id: &str, key: &str) -> Value {
+    let snapshot = core.snapshot();
+    let jobs = snapshot["jobs"].as_array().expect("jobs");
+    let job = jobs
+        .iter()
+        .find(|job| job["id"] == job_id)
+        .unwrap_or_else(|| panic!("no {job_id} in {snapshot}"));
+    job[key].clone()
+}
+
+#[test]
+fn sending_a_task_again_supersedes_the_worker_that_did_not_finish() {
+    let dir = workspace("superseded");
+    let store = dir.join("orchestrator-jobs.json");
+    let core = Core::default();
+    core.set_store(store.clone());
+    let task = json!({ "tasks": ["fix the parser"], "cwd": dir.to_string_lossy() });
+
+    // No launcher is registered, so each worker fails as it starts.
+    let first = delegate_as(&core, "planner-a", task.clone());
+    assert_eq!(job_field(&core, &first, "status"), "failed");
+    let second = delegate_as(&core, "planner-a", task);
+
+    assert_eq!(job_field(&core, &first, "supersededBy"), json!(second));
+    assert_eq!(
+        job_field(&core, &second, "supersededBy"),
+        Value::Null,
+        "the replacement is the current worker"
+    );
+
+    let restored = Core::default();
+    restored.set_store(store);
+    restored.restore();
+    assert_eq!(
+        job_field(&restored, &first, "supersededBy"),
+        json!(second),
+        "the mark survives a restart"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_finished_worker_another_planner_and_another_task_are_not_superseded() {
+    let dir = workspace("superseded-others");
+    let core = Core::default();
+    let cwd = dir.to_string_lossy().into_owned();
+
+    let failed = delegate_as(
+        &core,
+        "planner-a",
+        json!({ "tasks": ["task one"], "cwd": cwd }),
+    );
+    let other_planner = delegate_as(
+        &core,
+        "planner-b",
+        json!({ "tasks": ["task one"], "cwd": cwd }),
+    );
+    delegate_as(
+        &core,
+        "planner-a",
+        json!({ "tasks": ["task two"], "cwd": cwd }),
+    );
+    assert_eq!(job_field(&core, &failed, "supersededBy"), Value::Null);
+    assert_eq!(
+        job_field(&core, &other_planner, "supersededBy"),
+        Value::Null
+    );
+
+    let transcript = concat!(
+        r#"{"type":"system","subtype":"init","session_id":"finished-session"}"#,
+        "\n",
+        r#"{"type":"result","is_error":false,"result":"CLAUDE_DONE_OK"}"#,
+        "\n",
+    );
+    core.set_launcher(fake_claude_launcher(&dir, transcript));
+    let task = json!({ "tasks": ["task three"], "cwd": cwd, "agent": "claude" });
+    let finished = delegate_as(&core, "planner-a", task.clone());
+    assert_eq!(job_field(&core, &finished, "status"), "done");
+    delegate_as(&core, "planner-a", task);
+    assert_eq!(
+        job_field(&core, &finished, "supersededBy"),
+        Value::Null,
+        "a worker that finished its task stays on the board"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_superseded_worker_that_gets_more_work_is_current_again() {
+    let dir = workspace("superseded-revived");
+    let store = dir.join("orchestrator-jobs.json");
+    let core = Core::default();
+    core.set_store(store.clone());
+    let transcript = concat!(
+        r#"{"type":"system","subtype":"init","session_id":"revived-session"}"#,
+        "\n",
+        r#"{"type":"assistant","message":{"content":[{"type":"text","text":"on my way"}]}}"#,
+        "\n",
+    );
+    core.set_launcher(fake_claude_holding_launcher(&dir, transcript));
+    let task =
+        json!({ "tasks": ["go somewhere"], "cwd": dir.to_string_lossy(), "agent": "claude" });
+
+    call(&core, "alethe_delegate", task.clone());
+    std::thread::sleep(std::time::Duration::from_millis(600));
+    call(&core, "alethe_cancel", json!({ "jobIds": ["job-01"] }));
+    assert_eq!(job_field(&core, "job-01", "status"), "cancelled");
+    call(&core, "alethe_delegate", task);
+    assert_eq!(job_field(&core, "job-01", "supersededBy"), json!("job-02"));
+
+    let sent = call(
+        &core,
+        "alethe_send",
+        json!({ "jobId": "job-01", "message": "pick it up again" }),
+    );
+    assert_eq!(sent["revived"], json!("job-01"), "{sent}");
+    assert_eq!(
+        job_field(&core, "job-01", "supersededBy"),
+        Value::Null,
+        "a worker that is running again has to show"
+    );
+    let restored = Core::default();
+    restored.set_store(store);
+    restored.restore();
+    assert_eq!(
+        job_field(&restored, "job-01", "supersededBy"),
+        Value::Null,
+        "and it still shows after a restart"
+    );
+
+    let _ = call(
+        &core,
+        "alethe_cancel",
+        json!({ "jobIds": ["job-01", "job-02"] }),
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn a_settled_worker_reports_its_own_outcome() {
     let dir = workspace("report");

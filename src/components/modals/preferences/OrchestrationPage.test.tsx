@@ -71,6 +71,26 @@ describe('OrchestrationPage', () => {
     expect(orchestration().roles[0]).toMatchObject({ effort: 'medium' })
   })
 
+  it('offers the efforts Claude Code takes for a Claude role', () => {
+    withRoles([
+      {
+        name: 'executor',
+        agent: 'claude',
+        model: 'claude-opus-5-5',
+        effort: null,
+        readOnly: false,
+        timeoutSeconds: null,
+      },
+    ])
+    render(<OrchestrationPage />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Effort for executor' }))
+    expect(screen.getByRole('option', { name: 'max' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('option', { name: 'high' }))
+
+    expect(orchestration().roles[0]).toMatchObject({ agent: 'claude', effort: 'high' })
+  })
+
   it('drops what only Codex has when a role moves to Claude', () => {
     withRoles([reviewer])
     render(<OrchestrationPage />)

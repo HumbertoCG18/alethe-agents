@@ -73,9 +73,10 @@ describe('preference normalization', () => {
         roles: [
           reviewer,
           writer,
-          // Repairing these would change what they mean: a read-only Claude role made writable.
-          { ...writer, name: 'reader', readOnly: true },
+          // Claude takes an effort (`claude --effort`), so this one is kept.
           { ...writer, name: 'thinker', effort: 'high' },
+          // Repairing this would change what it means: a read-only Claude role made writable.
+          { ...writer, name: 'reader', readOnly: true },
           { ...reviewer, model: null },
           { ...reviewer, name: '-flag' },
           { ...reviewer, name: 'odd', agent: 'grok' as 'codex' },
@@ -89,7 +90,7 @@ describe('preference normalization', () => {
     expect(preferences.orchestration).toEqual({
       maxConcurrent: 16,
       defaultTimeoutSeconds: 900,
-      roles: [reviewer, writer],
+      roles: [reviewer, writer, { ...writer, name: 'thinker', effort: 'high' }],
     })
   })
 

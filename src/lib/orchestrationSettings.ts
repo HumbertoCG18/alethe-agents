@@ -4,6 +4,9 @@ const DEFAULTS = DEFAULT_PREFERENCES.orchestration
 
 export const MAX_CONCURRENT_LIMITS = { min: 1, max: 16 } as const
 
+/** What `claude --effort` takes (Claude Code 2.1.285). */
+export const CLAUDE_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
+
 /** A week. Past what any worker budget needs, and far below what the orchestrator can hold. */
 export const MAX_TIMEOUT_SECONDS = 7 * 24 * 60 * 60
 
@@ -29,8 +32,8 @@ export function isValidRole(role: unknown): role is OrchestrationRole {
   if (agent !== 'codex' && agent !== 'claude') return false
   if (!optionalName(model) || !optionalName(effort) || typeof readOnly !== 'boolean') return false
   if (timeoutSeconds !== null && !wholeSeconds(timeoutSeconds)) return false
-  // The headless Claude launch has no effort switch and no read-only sandbox.
-  return agent === 'codex' || (effort === null && !readOnly)
+  // The headless Claude launch bypasses permissions and has no read-only mode.
+  return agent === 'codex' || !readOnly
 }
 
 /**

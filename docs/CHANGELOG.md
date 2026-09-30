@@ -14,7 +14,8 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 - **Orchestration settings with named worker roles.** A new Orchestration category in Preferences
   holds roles such as a reviewer: each sets the agent, model, effort, read-only mode and time
-  budget, with the models and efforts listed from the installed Codex. A planner delegates with
+  budget, with the models and efforts listed from the installed Codex (and Codex's common efforts
+  when it cannot be asked). A planner delegates with
   `role` and gets exactly that, so switching the model that does a kind of work is one change in
   Preferences. The same page sets how many workers run at the same time and the default budget
   per worker, which were fixed at 4 and 900 seconds.

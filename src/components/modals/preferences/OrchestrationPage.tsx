@@ -5,6 +5,7 @@ import { agentLabel } from '../../../lib/agentProviders'
 import { useT } from '../../../lib/i18n'
 import {
   CLAUDE_EFFORTS,
+  CODEX_EFFORTS,
   isOrchestrationName,
   MAX_CONCURRENT_LIMITS,
   MAX_TIMEOUT_SECONDS,
@@ -61,6 +62,8 @@ export function OrchestrationPage() {
 
   const effortsOf = (model: string | null): string[] => {
     const listed = models ?? []
+    // Codex has not answered, or could not: its common efforts, instead of none at all.
+    if (listed.length === 0) return [...CODEX_EFFORTS]
     const match = listed.find((option) => option.model === model)
     if (match) return match.efforts
     // The CLI's default model, or one Codex did not list: offer every effort Codex knows.

@@ -9,7 +9,7 @@ use std::collections::{HashMap, VecDeque};
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::mpsc::{channel, Sender};
+use std::sync::mpsc::{channel, RecvTimeoutError, Sender};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -737,6 +737,76 @@ fn thread_resume_params(
     params
 }
 
+/// Whether the process ended within `limit`. Never waits past it, even when the OS cannot say.
+fn exited_within(child: &mut Child, limit: Duration) -> bool {
+    let deadline = Instant::now() + limit;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return true,
+            Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(50)),
+            _ => return false,
+        }
+    }
+}
+
+/// Kills a process and what it started. On Windows the child is often the `cmd.exe` running
+/// `codex.cmd`, and killing only that would leave Codex running. `taskkill` is started, not waited
+/// on, so a slow one cannot hold the caller.
+fn kill_tree(child: &mut Child) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let _ = Command::new("taskkill")
+            .args(["/T", "/F", "/PID", &child.id().to_string()])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn();
+    }
+    let _ = child.kill();
+}
+
+#[cfg(test)]
+mod process_tests {
+    use super::{exited_within, kill_tree};
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+
+    fn long_running() -> std::process::Child {
+        #[cfg(windows)]
+        let mut command = {
+            let mut command = Command::new("cmd");
+            command.args(["/c", "ping -n 30 127.0.0.1 >NUL"]);
+            command
+        };
+        #[cfg(not(windows))]
+        let mut command = {
+            let mut command = Command::new("sh");
+            command.args(["-c", "sleep 30"]);
+            command
+        };
+        command
+            .stdout(Stdio::null())
+            .spawn()
+            .expect("a long-running process")
+    }
+
+    #[test]
+    fn a_process_that_does_not_end_is_waited_on_only_as_long_as_allowed() {
+        let mut child = long_running();
+        let started = Instant::now();
+        assert!(!exited_within(&mut child, Duration::from_millis(300)));
+        assert!(started.elapsed() < Duration::from_secs(3));
+
+        kill_tree(&mut child);
+        assert!(
+            exited_within(&mut child, Duration::from_secs(10)),
+            "the process survived the kill"
+        );
+    }
+}
+
 /// The models Codex offers, reduced to what the Orchestration settings need: the value to pass
 /// as `model`, a name to show and the efforts that model accepts. Hidden models are left out.
 fn codex_models(result: &Value) -> Value {
@@ -1130,7 +1200,10 @@ impl Core {
             .spawn()
             .map_err(|error| format!("codex did not start: {error}"))?;
         let stdout = child.stdout.take();
-        let written = child.stdin.take().map(|mut stdin| {
+        // Codex shuts down at the end of its input, before a pending model/list is answered, so
+        // stdin stays open until the answer is in.
+        let mut stdin = child.stdin.take();
+        let written = stdin.as_mut().map(|stdin| {
             [
                 json!({ "id": 1, "method": "initialize", "params": {
                     "clientInfo": { "name": "alethe-orchestrator", "title": "Alethe", "version": "1" }
@@ -1157,12 +1230,23 @@ impl Core {
             });
         }
         let reply = receiver.recv_timeout(Duration::from_secs(15));
-        let _ = child.kill();
-        let _ = child.wait();
+        // Closing the input lets Codex exit on its own. Killing it mid-call is tied to lsass
+        // crashes on Windows (#202), so that is only the fallback. Both waits are bounded, so the
+        // settings page never hangs on a Codex that will not go.
+        drop(stdin);
+        if !exited_within(&mut child, Duration::from_secs(5)) {
+            kill_tree(&mut child);
+            let _ = exited_within(&mut child, Duration::from_secs(5));
+        }
         if !matches!(written, Some(Ok(()))) {
             return Err("codex did not take the request".into());
         }
-        let reply = reply.map_err(|_| "codex did not list its models in time".to_string())?;
+        let reply = reply.map_err(|error| match error {
+            RecvTimeoutError::Timeout => "codex did not list its models in time".to_string(),
+            RecvTimeoutError::Disconnected => {
+                "codex exited before it listed its models".to_string()
+            }
+        })?;
         if let Some(error) = reply.get("error") {
             return Err(format!("codex could not list its models: {error}"));
         }

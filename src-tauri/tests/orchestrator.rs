@@ -544,6 +544,22 @@ fn the_observer_sees_every_state_change() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+// The Orchestration settings list the models Codex offers. Codex shuts down on end of input, so
+// asking and closing at once never got an answer ("codex did not list its models in time").
+#[test]
+#[ignore = "spawns the real codex app-server"]
+fn the_installed_codex_lists_its_models() {
+    let core = Core::default();
+    core.set_launcher(codex_launcher());
+    let models = core.list_codex_models().expect("a model list");
+    let listed = models.as_array().expect("a list");
+    assert!(!listed.is_empty(), "{models}");
+    assert!(
+        listed.iter().all(|model| model["efforts"].is_array()),
+        "{models}"
+    );
+}
+
 #[test]
 #[ignore = "spawns real codex workers"]
 fn two_workers_overlap_and_check_waits_for_both() {

@@ -7,6 +7,12 @@ export const MAX_CONCURRENT_LIMITS = { min: 1, max: 16 } as const
 /** What `claude --effort` takes (Claude Code 2.1.285). */
 export const CLAUDE_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
 
+/**
+ * The efforts every model Codex 0.159 lists accepts, offered when Codex could not be asked for
+ * its models. Without them a role could only run on the model's default effort.
+ */
+export const CODEX_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
+
 /** A week. Past what any worker budget needs, and far below what the orchestrator can hold. */
 export const MAX_TIMEOUT_SECONDS = 7 * 24 * 60 * 60
 

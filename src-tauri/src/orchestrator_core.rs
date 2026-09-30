@@ -682,14 +682,21 @@ fn resolve_role(
 }
 
 /// What a Claude worker's command line adds to its launcher: the session to resume, if any, and the
-/// model the planner chose.
-fn claude_worker_args(resume_thread: Option<&str>, model: Option<&str>) -> Vec<String> {
+/// model and effort the planner chose.
+fn claude_worker_args(
+    resume_thread: Option<&str>,
+    model: Option<&str>,
+    effort: Option<&str>,
+) -> Vec<String> {
     let mut args = Vec::new();
     if let Some(thread_id) = resume_thread {
         args.extend(["--resume".to_string(), thread_id.to_string()]);
     }
     if let Some(model) = model {
         args.extend(["--model".to_string(), model.to_string()]);
+    }
+    if let Some(effort) = effort {
+        args.extend(["--effort".to_string(), effort.to_string()]);
     }
     args
 }
@@ -1100,6 +1107,7 @@ impl Core {
             command.args(claude_worker_args(
                 resume_thread.as_deref(),
                 model.as_deref(),
+                effort.as_deref(),
             ));
         }
         for (key, value) in &launcher.env {
@@ -1834,7 +1842,7 @@ pub fn tools() -> Value {
                     },
                     "effort": {
                         "type": "string",
-                        "description": "Reasoning effort for Codex workers, one the model supports (commonly low, medium, high or xhigh). Omit it to keep the CLI's own setting. Not available for Claude workers."
+                        "description": "Reasoning effort. For Codex, one the model supports (commonly low, medium, high or xhigh); for Claude, low, medium, high, xhigh or max. Omit it to keep the CLI's own setting."
                     },
                     "readOnly": {
                         "type": "boolean",
@@ -2255,10 +2263,10 @@ fn dispatch_tool(
                 .filter(|value| !value.is_empty())
                 .unwrap_or("codex")
                 .to_string();
-            // The headless Claude launch bypasses permissions and has no effort switch. Dropping
-            // these silently would hand a worker meant to only read the right to write.
-            if agent == "claude" && (read_only || effort.is_some()) {
-                return Err("readOnly and effort apply to Codex workers only".into());
+            // The headless Claude launch bypasses permissions. Dropping readOnly silently would
+            // hand a worker meant to only read the right to write.
+            if agent == "claude" && read_only {
+                return Err("readOnly applies to Codex workers only".into());
             }
             // A read-only worker gives up on a write instead of asking, so it would never ask.
             if read_only && ask {
@@ -3098,9 +3106,16 @@ mod tests {
     #[test]
     fn a_claude_worker_is_launched_on_the_delegated_model() {
         assert_eq!(
-            claude_worker_args(Some("session-1"), Some("claude-sonnet-5-5")),
-            ["--resume", "session-1", "--model", "claude-sonnet-5-5"]
+            claude_worker_args(Some("session-1"), Some("claude-sonnet-5-5"), Some("high")),
+            [
+                "--resume",
+                "session-1",
+                "--model",
+                "claude-sonnet-5-5",
+                "--effort",
+                "high"
+            ]
         );
-        assert!(claude_worker_args(None, None).is_empty());
+        assert!(claude_worker_args(None, None, None).is_empty());
     }
 }

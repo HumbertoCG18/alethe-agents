@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { agentLabel } from '../../../lib/agentProviders'
 import { useT } from '../../../lib/i18n'
 import {
+  CLAUDE_EFFORTS,
   isOrchestrationName,
   MAX_CONCURRENT_LIMITS,
   MAX_TIMEOUT_SECONDS,
@@ -80,13 +81,14 @@ export function OrchestrationPage() {
   }
 
   const setAgent = (index: number, agent: OrchestrationRole['agent']) =>
-    // A model belongs to one CLI, and Claude has no effort switch nor read-only launch.
+    // A model and its efforts belong to one CLI, and Claude has no read-only launch.
     saveRole(index, { agent, model: null, effort: null, readOnly: false })
 
   const setModel = (index: number, role: OrchestrationRole, value: string) => {
     if (value !== '' && !isOrchestrationName(value)) return
     const model = value || null
-    const effort = role.effort && effortsOf(model).includes(role.effort) ? role.effort : null
+    const efforts: readonly string[] = role.agent === 'codex' ? effortsOf(model) : CLAUDE_EFFORTS
+    const effort = role.effort && efforts.includes(role.effort) ? role.effort : null
     saveRole(index, { model, effort })
   }
 
@@ -222,11 +224,9 @@ export function OrchestrationPage() {
                     <Dropdown
                       value={role.effort ?? ''}
                       ariaLabel={t('prefs.orchestrationEffortFor', { name: label })}
-                      disabled={!codex}
-                      title={codex ? undefined : t('prefs.orchestrationCodexOnly')}
                       options={[
                         { value: '', label: t('prefs.orchestrationModelDefault') },
-                        ...effortsOf(role.model).map((effort) => ({
+                        ...(codex ? effortsOf(role.model) : CLAUDE_EFFORTS).map((effort) => ({
                           value: effort,
                           label: effort,
                         })),

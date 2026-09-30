@@ -107,10 +107,10 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ### Changed
 
-- **A worker that runs out of time no longer loses its work.** Four fifths into its time budget, a
-  delegated worker is told how much time is left and to write down what it has. If it is still
-  stopped at the end, the planner and the board get what it had written by then along with the
-  timeout, instead of only the message that the budget ran out.
+- **A worker that runs out of time no longer loses its work.** A delegated worker is told its time
+  budget when it starts, and by when to write its answer. If it is still stopped at the end, the
+  planner and the board get what it had written by then along with the timeout, instead of only
+  the message that the budget ran out.
 - The startup loading screen now opens in your selected theme and visual style instead of the
   default dark theme, and its card, backdrop and progress indicator follow the design system
   tokens used across the rest of the app.

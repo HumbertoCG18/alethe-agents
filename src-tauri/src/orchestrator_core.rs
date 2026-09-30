@@ -312,6 +312,48 @@ fn trimmed_job(mut job: Value) -> Value {
     job
 }
 
+/// The worker's time budget, stated at the start of its first turn. A warning sent mid-turn does
+/// not help: Codex only reads it once the text it is writing is done, which is often the answer
+/// itself, and then spends another round replying to it.
+fn with_budget(text: String, timeout_ms: Option<u64>) -> String {
+    let Some(seconds) = timeout_ms
+        .map(|ms| ms / 1000)
+        .filter(|seconds| *seconds > 0)
+    else {
+        return text;
+    };
+    format!(
+        "[Alethe] Time budget: {seconds} s from now. Write your answer by {} s; anything not \
+         written when the budget ends is lost.\n\n{text}",
+        seconds * 7 / 10
+    )
+}
+
+#[cfg(test)]
+mod budget_tests {
+    use super::with_budget;
+
+    #[test]
+    fn the_first_turn_states_the_budget_and_when_to_answer() {
+        let text = with_budget("Review the diff.".into(), Some(600_000));
+        assert!(text.starts_with("[Alethe] Time budget: 600 s"), "{text}");
+        assert!(text.contains("by 420 s"), "{text}");
+        assert!(text.ends_with("\n\nReview the diff."), "{text}");
+    }
+
+    #[test]
+    fn a_worker_without_a_budget_gets_its_task_as_is() {
+        assert_eq!(
+            with_budget("Review the diff.".into(), None),
+            "Review the diff."
+        );
+        assert_eq!(
+            with_budget("Review the diff.".into(), Some(500)),
+            "Review the diff."
+        );
+    }
+}
+
 fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -410,8 +452,6 @@ struct Job {
     /// The worker that took this one's task over after it ended without finishing. The board
     /// leaves a superseded worker out, so a task shows only the worker that currently has it.
     superseded_by: Option<String>,
-    /// Live only: the worker was told its budget is nearly over and to write down what it has.
-    asked_to_wrap_up: bool,
 }
 
 impl Job {
@@ -445,7 +485,6 @@ impl Job {
             "readOnly": self.sandbox == SANDBOX_READ_ONLY,
             "pendingApproval": self.pending,
             "supersededBy": self.superseded_by,
-            "askedToWrapUp": self.asked_to_wrap_up,
             "hasDiff": self.diff.is_some(),
             "summary": tail(if self.report.is_empty() { &self.reply } else { &self.report }, 1200),
         })
@@ -553,7 +592,6 @@ impl Job {
             awaiting_steer: false,
             next_request_id: 10,
             superseded_by: text("supersededBy"),
-            asked_to_wrap_up: false,
         })
     }
 
@@ -1286,11 +1324,13 @@ impl Core {
             job.status = STATUS_RUNNING.to_string();
             // A worker that runs again is current again, whatever replaced it meanwhile.
             job.superseded_by = None;
-            job.asked_to_wrap_up = false;
             job.started_at = Some(now_ms());
             job.ended_at = None;
             // Work that arrived while the worker was down leads; otherwise this is its first turn.
-            let first_turn = job.inbox.pop_front().unwrap_or_else(|| job.spec.clone());
+            let first_turn = with_budget(
+                job.inbox.pop_front().unwrap_or_else(|| job.spec.clone()),
+                job.timeout_ms,
+            );
             let started = (
                 job.agent.clone(),
                 job.cwd.clone(),
@@ -1482,16 +1522,7 @@ impl Core {
             .get(&job_id)
             .and_then(|job| job.started_at);
         thread::spawn(move || {
-            // Four fifths in, the worker is told to write down what it has: a worker that spends
-            // the whole budget reading is stopped with nothing to show for it.
-            let warn_ms = timeout_ms / 5 * 4;
-            thread::sleep(Duration::from_millis(warn_ms));
-            // On a thread of its own: a worker that stopped reading its input can hold the write,
-            // and the stop below still has to happen on time.
-            let warner = core.clone();
-            let warned = job_id.clone();
-            thread::spawn(move || warner.wrap_up(&warned, run, timeout_ms, timeout_ms - warn_ms));
-            thread::sleep(Duration::from_millis(timeout_ms - warn_ms));
+            thread::sleep(Duration::from_millis(timeout_ms));
             let (payload, written) = {
                 let inner = guard(&core.inner);
                 let Some(job) = inner.jobs.get(&job_id) else {
@@ -1525,8 +1556,8 @@ impl Core {
                     stage_rpc(&mut inner, &job_id, "turn/interrupt", payload)
                 };
                 if let Ok((stdin, request)) = staged {
-                    // Detached for the same reason as the warning; the teardown below closes the
-                    // pipe either way.
+                    // Detached: a worker that stopped reading its input can hold the write, and
+                    // the stop below still has to happen on time. The teardown closes the pipe.
                     thread::spawn(move || {
                         let _ = send_rpc(&stdin, &request);
                     });
@@ -1548,38 +1579,6 @@ impl Core {
                 true,
             );
         });
-    }
-
-    /// Tells a worker that is still mid-turn how little of its budget is left. Steering is the
-    /// same path the lead uses, so a worker with no turn to steer yet is simply left alone.
-    fn wrap_up(&self, job_id: &str, run: Option<u64>, budget_ms: u64, left_ms: u64) {
-        let running = guard(&self.inner)
-            .jobs
-            .get(job_id)
-            .is_some_and(|job| job.status == STATUS_RUNNING && job.started_at == run);
-        if !running {
-            return;
-        }
-        let mut arguments = Map::new();
-        arguments.insert("jobId".into(), json!(job_id));
-        arguments.insert(
-            "message".into(),
-            json!(format!(
-                "Time check from the orchestrator: about {}s of your {}s budget are left, and \
-                 anything you have not written when it ends is lost. Stop gathering now and write \
-                 your answer with what you have. Say plainly what is left undone.",
-                left_ms / 1000,
-                budget_ms / 1000
-            )),
-        );
-        if dispatch_tool(self, "alethe_steer", &arguments, None).is_err() {
-            return;
-        }
-        let mut inner = guard(&self.inner);
-        if let Some(job) = inner.jobs.get_mut(job_id) {
-            job.asked_to_wrap_up = true;
-        }
-        self.notify(&inner);
     }
 
     fn settle(&self, job_id: &str, status: &str, outcome: &str, text: &str) {
@@ -2142,7 +2141,7 @@ pub fn tools() -> Value {
                     },
                     "timeoutSeconds": {
                         "type": "number",
-                        "description": "Budget per worker before Alethe stops it, default 900 unless the person changed it in the Orchestration settings. Four fifths in, the worker is told to write down what it has, and a worker that is stopped still delivers what it had written. Pass 0 to let a worker run without a limit."
+                        "description": "Budget per worker before Alethe stops it, default 900 unless the person changed it in the Orchestration settings. The worker is told its budget when it starts, and a worker that is stopped still delivers what it had written. Pass 0 to let a worker run without a limit."
                     },
                     "role": {
                         "type": "string",
@@ -2715,7 +2714,6 @@ fn dispatch_tool(
                             awaiting_steer: false,
                             next_request_id: 10,
                             superseded_by: None,
-                            asked_to_wrap_up: false,
                         },
                     );
                     inner.order.push(id.clone());
@@ -3194,7 +3192,6 @@ mod tests {
             awaiting_steer: false,
             next_request_id: 10,
             superseded_by: None,
-            asked_to_wrap_up: false,
         }
     }
 

@@ -911,43 +911,6 @@ fn a_worker_stopped_by_its_budget_hands_over_what_it_had_written() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-#[test]
-fn a_worker_is_told_to_wrap_up_before_its_budget_ends() {
-    let dir = workspace("timeout-wrap-up");
-    let core = Core::default();
-    let transcript = concat!(
-        r#"{"type":"system","subtype":"init","session_id":"wrap-up-session"}"#,
-        "\n",
-        r#"{"type":"assistant","message":{"content":[{"type":"text","text":"still reading"}]}}"#,
-        "\n",
-    );
-    core.set_launcher(fake_claude_holding_launcher(&dir, transcript));
-
-    call(
-        &core,
-        "alethe_delegate",
-        json!({
-            "cwd": dir.to_string_lossy(),
-            "tasks": ["read everything"],
-            "agent": "claude",
-            "timeoutSeconds": 5
-        }),
-    );
-    // The warning goes out four fifths into the budget: not at 1.5 s, and by 4.5 s it has.
-    std::thread::sleep(std::time::Duration::from_millis(1500));
-    let early = core.snapshot();
-    assert_eq!(early["jobs"][0]["status"], "running", "{early}");
-    assert_eq!(early["jobs"][0]["askedToWrapUp"], json!(false), "{early}");
-
-    std::thread::sleep(std::time::Duration::from_millis(3000));
-    let late = core.snapshot();
-    assert_eq!(late["jobs"][0]["status"], "running", "{late}");
-    assert_eq!(late["jobs"][0]["askedToWrapUp"], json!(true), "{late}");
-
-    let _ = call(&core, "alethe_cancel", json!({ "jobIds": ["job-01"] }));
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
 /// Plays `first`, waits about `pause_secs`, plays `then`, and holds the process open.
 fn fake_claude_two_part_launcher(
     dir: &std::path::Path,
@@ -1004,12 +967,12 @@ ping -n 60 127.0.0.1 >NUL
 }
 
 #[test]
-fn a_claude_worker_keeps_what_it_wrote_when_the_warning_interrupts_it() {
-    let dir = workspace("timeout-claude-wrap-up");
+fn a_claude_worker_keeps_what_it_wrote_when_a_steer_interrupts_it() {
+    let dir = workspace("timeout-claude-steered");
     let core = Core::default();
-    // Claude takes the warning as an interrupt: the turn in flight ends (the `result` below, nine
-    // seconds in, after the warning at eight) and a new turn starts with the warning. The worker
-    // then writes nothing more before the budget ends at ten.
+    // Claude takes a steer as an interrupt: the turn in flight ends (the `result` below, three
+    // seconds in, after the steer at one and a half) and a new turn starts with the steer. The
+    // worker then writes nothing more before the budget ends at six.
     let first = concat!(
         r#"{"type":"system","subtype":"init","session_id":"claude-wrap-up"}"#,
         "\n",
@@ -1020,7 +983,7 @@ fn a_claude_worker_keeps_what_it_wrote_when_the_warning_interrupts_it() {
         r#"{"type":"result","subtype":"error_during_execution","is_error":true,"result":""}"#,
         "\n",
     );
-    core.set_launcher(fake_claude_two_part_launcher(&dir, first, 9, then));
+    core.set_launcher(fake_claude_two_part_launcher(&dir, first, 3, then));
 
     call(
         &core,
@@ -1029,9 +992,16 @@ fn a_claude_worker_keeps_what_it_wrote_when_the_warning_interrupts_it() {
             "cwd": dir.to_string_lossy(),
             "tasks": ["write section B1"],
             "agent": "claude",
-            "timeoutSeconds": 10
+            "timeoutSeconds": 6
         }),
     );
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    let steered = call(
+        &core,
+        "alethe_steer",
+        json!({ "jobId": "job-01", "message": "cover section B2 too" }),
+    );
+    assert_eq!(steered["steered"], json!("job-01"), "{steered}");
     let checked = call(
         &core,
         "alethe_check",
@@ -1045,7 +1015,7 @@ fn a_claude_worker_keeps_what_it_wrote_when_the_warning_interrupts_it() {
             .as_str()
             .unwrap_or_default()
             .contains("draft of section B1"),
-        "the draft written before the warning is lost: {checked}"
+        "the draft written before the steer is lost: {checked}"
     );
 
     let _ = std::fs::remove_dir_all(&dir);
@@ -1080,17 +1050,8 @@ fn a_revived_worker_gets_its_own_budget_not_the_one_before() {
     );
     assert_eq!(sent["revived"], json!("job-01"), "{sent}");
 
-    // The first run would have warned at 4 s and stopped at 5 s; this run warns near 4.8 s and
-    // stops near 5.8 s.
-    std::thread::sleep(std::time::Duration::from_millis(3500));
-    let at_four = core.snapshot();
-    assert_eq!(at_four["jobs"][0]["status"], "running", "{at_four}");
-    assert_eq!(
-        at_four["jobs"][0]["askedToWrapUp"],
-        json!(false),
-        "warned on the budget of the run before: {at_four}"
-    );
-    std::thread::sleep(std::time::Duration::from_millis(1000));
+    // The first run would have been stopped at 5 s; this run is stopped near 5.8 s.
+    std::thread::sleep(std::time::Duration::from_millis(4500));
     let at_five = core.snapshot();
     assert_eq!(
         at_five["jobs"][0]["status"], "running",

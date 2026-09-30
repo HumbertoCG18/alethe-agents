@@ -10,11 +10,15 @@ import {
 } from './tauri'
 import type { Project } from './types'
 
-/** The terminal a pty belongs to, which is how the orchestration board names its planner. */
+/**
+ * The terminal a pty belongs to, which is how the orchestration board names its planner. The label
+ * is taken before the first spawn, when the tab has no ptyId yet and the pane spawns under its tab
+ * id, so a tab is matched by the same `ptyId ?? id` the pane uses (#264).
+ */
 export function plannerLabelFor(ptyId: string): string {
   for (const project of useProjectsStore.getState().projects) {
     for (const terminal of project.terminals) {
-      if (terminal.tabs.some((tab) => tab.ptyId === ptyId)) return terminal.name
+      if (terminal.tabs.some((tab) => (tab.ptyId ?? tab.id) === ptyId)) return terminal.name
     }
   }
   return ptyId

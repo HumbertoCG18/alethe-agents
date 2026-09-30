@@ -119,7 +119,6 @@ function isBrowserInputPending(): boolean {
 
 let aiMemoryMissingWarned = false
 
-/** The terminal's own name is what the person recognises a planner by, not its pty id. */
 /** Warns once per session that AI memory is on but its CLI is not installed. */
 function warnAiMemoryMissing(): void {
   if (aiMemoryMissingWarned) return

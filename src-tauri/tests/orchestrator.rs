@@ -1300,6 +1300,8 @@ fn model_options_that_cannot_hold_are_refused_without_creating_a_job() {
             "read-only worker that asks",
             json!({ "readOnly": true, "askForApproval": true }),
         ),
+        // Read as false it would start a writable worker the caller meant to only read.
+        ("read-only given as text", json!({ "readOnly": "true" })),
         ("effort with whitespace", json!({ "effort": "very high" })),
         (
             "model read as a flag",

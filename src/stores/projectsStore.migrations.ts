@@ -6,6 +6,7 @@ import {
   legacyTodosFeatureFlag,
   normalizeEnabledFeatures,
 } from '../lib/features'
+import { normalizeOrchestrationSettings } from '../lib/orchestrationSettings'
 import { recordLegacyGitFlag, recordLegacyTodosFlag } from '../lib/plugins/legacyMigration'
 import { normalizePort } from '../lib/router9'
 import { normalizeAppIconTheme } from '../lib/themeIcons'
@@ -123,6 +124,7 @@ export function normalizePreferences(raw: LegacyPreferences | undefined): Prefer
     enabledAgents: { ...DEFAULT_PREFERENCES.enabledAgents, ...preferences.enabledAgents },
 
     enabledFeatures: normalizeEnabledFeatures(raw),
+    orchestration: normalizeOrchestrationSettings(preferences.orchestration),
     leftSidebarVisible: raw?.leftSidebarVisible ?? true,
     rightSidebarVisible: raw?.rightSidebarVisible ?? true,
     leftSidebarWidth: Math.min(380, Math.max(220, Math.round(raw?.leftSidebarWidth ?? 286))),

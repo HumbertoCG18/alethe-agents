@@ -13,6 +13,7 @@ import {
   ShieldCheck,
   TerminalSquare,
   UserRound,
+  Workflow,
   X,
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -28,6 +29,7 @@ import { AppearancePage } from './preferences/AppearancePage'
 import { FeaturesPage } from './preferences/FeaturesPage'
 import { IntegrationsPage } from './preferences/IntegrationsPage'
 import { MultiagentPage } from './preferences/MultiagentPage'
+import { OrchestrationPage } from './preferences/OrchestrationPage'
 import { OrganizationPage } from './preferences/OrganizationPage'
 import { PluginsPage } from './preferences/PluginsPage'
 import { Avatar } from './preferences/primitives'
@@ -43,6 +45,7 @@ type CategoryId =
   | 'terminal'
   | 'integrations'
   | 'multiagent'
+  | 'orchestration'
   | 'organization'
   | 'about'
   | 'remoteControl'
@@ -125,6 +128,12 @@ export function PreferencesModal() {
         label: t('prefs.categoryIntegrations'),
         description: t('prefs.categoryIntegrationsDesc'),
         Icon: Plug,
+      },
+      {
+        id: 'orchestration',
+        label: t('prefs.categoryOrchestration'),
+        description: t('prefs.categoryOrchestrationDesc'),
+        Icon: Workflow,
       },
       {
         id: 'multiagent',
@@ -250,6 +259,22 @@ export function PreferencesModal() {
         label: t('prefs.resourcePolicy'),
         description: t('prefs.resourcePolicyDesc'),
         keywords: 'memory ram performance budget limit lru suspend memória desempenho limite',
+      },
+      {
+        category: 'orchestration',
+        target: 'orchestration-roles',
+        label: t('prefs.orchestrationRoles'),
+        description: t('prefs.orchestrationRolesDesc'),
+        keywords:
+          'orchestration orquestração role papel model modelo effort esforço reviewer revisor read-only',
+      },
+      {
+        category: 'orchestration',
+        target: 'orchestration-limits',
+        label: t('prefs.orchestrationLimits'),
+        description: t('prefs.orchestrationLimitsDesc'),
+        keywords:
+          'orchestration orquestração workers concurrency paralelo timeout budget orçamento',
       },
       {
         category: 'terminal',
@@ -525,6 +550,7 @@ export function PreferencesModal() {
                   {category === 'terminal' ? <TerminalPage enabledCount={enabledCount} /> : null}
                   {category === 'integrations' ? <IntegrationsPage /> : null}
                   {category === 'multiagent' ? <MultiagentPage /> : null}
+                  {category === 'orchestration' ? <OrchestrationPage /> : null}
                   {category === 'organization' ? <OrganizationPage /> : null}
                   {category === 'about' ? <AboutPage /> : null}
                   {category === 'remoteControl' ? <RemoteControlPage /> : null}

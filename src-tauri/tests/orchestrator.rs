@@ -17,7 +17,7 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 
-use orchestrator_core::{handle_mcp_body, Core, Launcher};
+use orchestrator_core::{handle_mcp_body, Core, Launcher, OrchestrationSettings};
 
 fn rpc(core: &Core, id: u32, method: &str, params: Value) -> Value {
     let body = json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params });
@@ -1326,6 +1326,155 @@ fn model_options_that_cannot_hold_are_refused_without_creating_a_job() {
         Some(0),
         "a refused call creates no job"
     );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// Roles configured in Preferences decide what a delegated worker runs on (#254).
+fn settings(value: Value) -> OrchestrationSettings {
+    serde_json::from_value(value).expect("settings in the shape the app sends")
+}
+
+fn reviewer_on(model: &str) -> OrchestrationSettings {
+    settings(json!({
+        "roles": [{
+            "name": "reviewer",
+            "agent": "codex",
+            "model": model,
+            "effort": "high",
+            "readOnly": true,
+            "timeoutSeconds": 600
+        }],
+        "maxConcurrent": 4,
+        "defaultTimeoutSeconds": 900
+    }))
+}
+
+#[test]
+fn a_role_decides_what_its_workers_run_on() {
+    let dir = workspace("role-applied");
+    let core = Core::default();
+    core.apply_settings(reviewer_on("gpt-6.1-sol"));
+
+    let delegated = call(
+        &core,
+        "alethe_delegate",
+        json!({ "tasks": ["review the diff"], "cwd": dir.to_string_lossy(), "role": "reviewer" }),
+    );
+    assert_eq!(delegated["accepted"], json!(1), "{delegated}");
+    assert_eq!(delegated["timeoutSeconds"], json!(600), "{delegated}");
+
+    let snapshot = core.snapshot();
+    let job = &snapshot["jobs"][0];
+    assert_eq!(job["role"], "reviewer", "{job}");
+    assert_eq!(job["agent"], "codex", "{job}");
+    assert_eq!(job["model"], "gpt-6.1-sol", "{job}");
+    assert_eq!(job["effort"], "high", "{job}");
+    assert_eq!(job["readOnly"], true, "{job}");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_role_is_the_only_source_for_what_it_sets() {
+    let dir = workspace("role-refused");
+    let core = Core::default();
+    core.apply_settings(reviewer_on("gpt-6.1-sol"));
+    let cwd = dir.to_string_lossy().into_owned();
+
+    let cases = [
+        ("another model", json!({ "role": "reviewer", "model": "gpt-6-astra" })),
+        ("another effort", json!({ "role": "reviewer", "effort": "low" })),
+        // A planner must not be able to run a read-only role as a writable worker.
+        ("writable", json!({ "role": "reviewer", "readOnly": false })),
+        ("another agent", json!({ "role": "reviewer", "agent": "claude" })),
+        ("another budget", json!({ "role": "reviewer", "timeoutSeconds": 60 })),
+        ("unknown role", json!({ "role": "auditor" })),
+        ("a field left null", json!({ "role": "reviewer", "model": null })),
+        ("role that is not a name", json!({ "role": true })),
+    ];
+    for (case, options) in cases {
+        let mut arguments = json!({ "tasks": ["anything"], "cwd": cwd });
+        for (key, value) in options.as_object().expect("options") {
+            arguments[key] = value.clone();
+        }
+        let result = call(&core, "alethe_delegate", arguments);
+        assert!(result.get("error").is_some(), "{case} must be refused: {result}");
+    }
+    let unknown = call(
+        &core,
+        "alethe_delegate",
+        json!({ "tasks": ["anything"], "cwd": cwd, "role": "auditor" }),
+    );
+    assert!(
+        unknown["error"].as_str().unwrap_or_default().contains("reviewer"),
+        "an unknown role names the ones that exist: {unknown}"
+    );
+    assert_eq!(
+        core.snapshot()["jobs"].as_array().map(Vec::len),
+        Some(0),
+        "a refused call creates no job"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn editing_a_role_changes_the_next_delegation_but_not_one_already_made() {
+    let dir = workspace("role-edited");
+    let core = Core::default();
+    let cwd = dir.to_string_lossy().into_owned();
+
+    core.apply_settings(reviewer_on("gpt-6-astra"));
+    call(
+        &core,
+        "alethe_delegate",
+        json!({ "tasks": ["first"], "cwd": cwd, "role": "reviewer" }),
+    );
+    core.apply_settings(reviewer_on("gpt-6.1-sol"));
+    call(
+        &core,
+        "alethe_delegate",
+        json!({ "tasks": ["second"], "cwd": cwd, "role": "reviewer" }),
+    );
+
+    let snapshot = core.snapshot();
+    assert_eq!(snapshot["jobs"][0]["model"], "gpt-6-astra", "{snapshot}");
+    assert_eq!(snapshot["jobs"][1]["model"], "gpt-6.1-sol", "{snapshot}");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn the_status_lists_the_roles_a_planner_can_ask_for() {
+    let core = Core::default();
+    core.apply_settings(reviewer_on("gpt-6.1-sol"));
+
+    let status = call(&core, "alethe_status", json!({}));
+    let roles = status["roles"].as_array().expect("roles in the status");
+    assert_eq!(roles.len(), 1, "{status}");
+    assert_eq!(roles[0]["name"], "reviewer");
+    assert_eq!(roles[0]["model"], "gpt-6.1-sol");
+    assert_eq!(roles[0]["readOnly"], true);
+}
+
+#[test]
+fn the_limits_from_preferences_reach_the_orchestrator() {
+    let dir = workspace("role-limits");
+    let core = Core::default();
+    core.apply_settings(settings(json!({
+        "roles": [],
+        "maxConcurrent": 2,
+        "defaultTimeoutSeconds": 300
+    })));
+
+    let delegated = call(
+        &core,
+        "alethe_delegate",
+        json!({ "tasks": ["anything"], "cwd": dir.to_string_lossy() }),
+    );
+    assert_eq!(delegated["concurrencyLimit"], json!(2), "{delegated}");
+    assert_eq!(delegated["timeoutSeconds"], json!(300), "{delegated}");
 
     let _ = std::fs::remove_dir_all(&dir);
 }

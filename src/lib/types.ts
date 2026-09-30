@@ -550,6 +550,28 @@ export const DEFAULT_ROUTER9_PREFERENCES: Router9Preferences = {
   defaultForNewAgents: false,
 }
 
+/** A named preset for delegated workers. A delegate call that names it gets exactly these values. */
+export type OrchestrationRole = {
+  name: string
+  agent: 'codex' | 'claude'
+  /** null runs the CLI's default model. */
+  model: string | null
+  /** Codex reasoning effort; null keeps the CLI's setting. Always null for Claude. */
+  effort: string | null
+  /** Codex read-only sandbox. Always false for Claude. */
+  readOnly: boolean
+  /** null uses the default budget; 0 lets the worker run without a limit. */
+  timeoutSeconds: number | null
+}
+
+export type OrchestrationSettings = {
+  roles: OrchestrationRole[]
+  /** Workers running at the same time. */
+  maxConcurrent: number
+  /** Budget per worker when a call names none; 0 means no limit. */
+  defaultTimeoutSeconds: number
+}
+
 export type Preferences = {
   /** Idioma da UI. Default 'en'. */
   language: Locale
@@ -627,6 +649,8 @@ export type Preferences = {
   remoteUseTailscale: boolean
 
   enabledFeatures: Record<FeatureId, boolean>
+  /** Roles and limits for delegated workers, sent to the orchestrator. */
+  orchestration: OrchestrationSettings
   /** Playwright MCP: attach to the shared/pane browser, or launch its own. */
   playwrightBrowserMode: 'shared' | 'dedicated'
   /** Only used when playwrightBrowserMode is 'dedicated'. */
@@ -804,6 +828,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
     orchestrator: false,
     prs: true,
   },
+  orchestration: { roles: [], maxConcurrent: 4, defaultTimeoutSeconds: 900 },
   playwrightBrowserMode: 'shared',
   playwrightDedicatedHeadless: false,
   todoStoragePath: '',

@@ -52,6 +52,7 @@ export function nativeSubagentJobs(
       costUsd: cost?.cost_usd ?? null,
       quota: null,
       worktree: null,
+      role: null,
       model: null,
       effort: null,
       readOnly: false,

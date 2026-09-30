@@ -758,6 +758,45 @@ export const en = {
   /* ---- PreferencesModal — Multi-Agent & Telemetry tab ---- */
   'prefs.categoryMultiagent': 'Multi-Agent & Telemetry',
   'prefs.categoryMultiagentDesc': 'Real-time metrics, event traces, and structured logs.',
+  'prefs.categoryOrchestration': 'Orchestration',
+  'prefs.categoryOrchestrationDesc': 'Roles and limits for delegated workers.',
+  'prefs.orchestrationLimits': 'Worker limits',
+  'prefs.orchestrationLimitsDesc': 'Apply to every delegation, from any planner.',
+  'prefs.orchestrationConcurrency': 'Workers at the same time',
+  'prefs.orchestrationConcurrencyDecrease': 'Fewer workers at the same time',
+  'prefs.orchestrationConcurrencyIncrease': 'More workers at the same time',
+  'prefs.orchestrationDefaultTimeout': 'Default budget per worker (seconds)',
+  'prefs.orchestrationTimeoutHint':
+    'Used when a planner names no budget. 0 lets a worker run without a limit.',
+  'prefs.orchestrationRoles': 'Roles',
+  'prefs.orchestrationRolesDesc':
+    'A planner that delegates with a role gets exactly what the role sets: agent, model, effort, read-only and budget. It cannot change them in the call.',
+  'prefs.orchestrationRolesEmpty':
+    'No roles yet. Until you add one, planners pick the model and effort themselves.',
+  'prefs.orchestrationAddRole': 'Add role',
+  'prefs.orchestrationRemoveRole': 'Remove {name}',
+  'prefs.orchestrationRoleName': 'Name',
+  'prefs.orchestrationRoleNameFor': 'Name of role {name}',
+  'prefs.orchestrationRoleNameInvalid':
+    'Use a unique name without spaces that does not start with "-". Until then planners cannot use this role, and it is dropped when Alethe restarts.',
+  'prefs.orchestrationAgent': 'Agent',
+  'prefs.orchestrationModel': 'Model',
+  'prefs.orchestrationEffort': 'Effort',
+  'prefs.orchestrationReadOnly': 'Read-only',
+  'prefs.orchestrationBudget': 'Budget (s)',
+  'prefs.orchestrationAgentFor': 'Agent for {name}',
+  'prefs.orchestrationModelFor': 'Model for {name}',
+  'prefs.orchestrationEffortFor': 'Effort for {name}',
+  'prefs.orchestrationReadOnlyFor': 'Read-only for {name}',
+  'prefs.orchestrationTimeoutFor': 'Budget for {name} in seconds',
+  'prefs.orchestrationCliDefault': 'CLI default',
+  'prefs.orchestrationModelDefault': "Model's default",
+  'prefs.orchestrationBudgetDefault': 'Default',
+  'prefs.orchestrationModelsLoading': 'Reading the models Codex offers…',
+  'prefs.orchestrationModelsFailed':
+    'Could not list the Codex models ({error}). You can still type a model name.',
+  'prefs.orchestrationCustomModel': 'Use "{value}"',
+  'prefs.orchestrationCodexOnly': 'Codex workers only',
   'prefs.multiagentSchedulerTitle': 'Scheduler & task queue',
   'prefs.multiagentSchedulerDesc':
     'Manages execution waves from the real `.planning/task.md` backlog per project.',
@@ -2092,6 +2131,10 @@ export const en = {
   'orchestrator.agentSpendTitle': '{agent}: {cost} · {tokens} tokens in this planner session',
   'orchestrator.isolated': 'worktree',
   'orchestrator.hasDiff': 'diff',
+  'orchestrator.roleTitle': 'Delegated with the {role} role',
+  'orchestrator.settingsNotApplied': 'Orchestration settings were not applied',
+  'orchestrator.settingsNotAppliedBody':
+    'Planners keep the previous roles and limits until this is fixed: {error}',
   'orchestrator.modelTitle': 'Runs on {model}, as the planner asked',
   'orchestrator.effortTitle': 'Runs with {effort} reasoning effort, as the planner asked',
   'orchestrator.modelEffortTitle':

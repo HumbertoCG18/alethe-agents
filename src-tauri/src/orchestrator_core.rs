@@ -14,6 +14,7 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
 const DEFAULT_MAX_CONCURRENT: usize = 4;
@@ -90,6 +91,38 @@ pub fn path_without_store_aliases(path: &str) -> String {
 const DEFAULT_JOB_TIMEOUT_MS: u64 = 900_000;
 
 const SANDBOX_READ_ONLY: &str = "read-only";
+
+/// A named preset from the Orchestration settings. A delegate call that names it gets exactly
+/// these values: the role is the only source for what it sets.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Role {
+    pub name: String,
+    pub agent: String,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub effort: Option<String>,
+    #[serde(default)]
+    pub read_only: bool,
+    /// None uses the default budget; 0 lets the worker run without a limit.
+    #[serde(default)]
+    pub timeout_seconds: Option<u64>,
+}
+
+/// What the Orchestration settings in Preferences hand to the orchestrator.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrchestrationSettings {
+    #[serde(default)]
+    pub roles: Vec<Role>,
+    pub max_concurrent: usize,
+    /// 0 lets a worker run without a limit.
+    pub default_timeout_seconds: u64,
+}
+
+/// What a role decides. Passing any of these next to a role is refused.
+const ROLE_FIELDS: [&str; 5] = ["agent", "model", "effort", "readOnly", "timeoutSeconds"];
 
 /// Finished workers stay alive so the lead can follow up on what they just did, but each one holds
 /// a process, so only the most recent few are kept and older ones are let go.
@@ -230,6 +263,8 @@ struct Job {
     approval_policy: String,
     sandbox: String,
     web_search: bool,
+    /// The role it was delegated under, if any; what the role set is in the fields below.
+    role: Option<String>,
     /// The model the planner asked for; None runs the CLI's own default.
     model: Option<String>,
     /// Codex reasoning effort (`model_reasoning_effort`); None keeps the CLI's own setting.
@@ -267,6 +302,7 @@ impl Job {
             "threadId": self.thread_id,
             "outcome": self.outcome,
             "seconds": elapsed,
+            "role": self.role,
             "plan": self.plan,
             "tokens": self.tokens,
             "costUsd": self.cost_usd,
@@ -301,6 +337,7 @@ impl Job {
             "approvalPolicy": self.approval_policy,
             "sandbox": self.sandbox,
             "webSearch": self.web_search,
+            "role": self.role,
             "model": self.model,
             "effort": self.effort,
             // 0 is "no limit", so a record that lacks the field can still mean the old default.
@@ -371,6 +408,7 @@ impl Job {
                 .get("webSearch")
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
+            role: text("role"),
             model: text("model"),
             effort: text("effort"),
             pending: None,
@@ -431,6 +469,9 @@ struct Inner {
     seq: u64,
     running: usize,
     max_concurrent: usize,
+    /// The budget a worker gets when the call names none; None lets it run without a limit.
+    default_timeout_ms: Option<u64>,
+    roles: Vec<Role>,
     job_counter: u64,
     run_counter: u64,
     planners: HashMap<String, Planner>,
@@ -456,7 +497,8 @@ impl Inner {
             "planners": planners,
             "running": self.running,
             "queued": self.queue.len(),
-            "concurrencyLimit": self.max_concurrent
+            "concurrencyLimit": self.max_concurrent,
+            "roles": self.roles
         })
     }
 
@@ -493,6 +535,7 @@ impl Default for Core {
         Self {
             inner: Arc::new(Mutex::new(Inner {
                 max_concurrent: DEFAULT_MAX_CONCURRENT,
+                default_timeout_ms: Some(DEFAULT_JOB_TIMEOUT_MS),
                 ..Inner::default()
             })),
             signal: Arc::new(Condvar::new()),
@@ -556,6 +599,86 @@ fn thread_resume_params(
     let mut params = thread_start_params(cwd, approval_policy, sandbox, web_search, model, effort);
     params["threadId"] = json!(thread_id);
     params
+}
+
+/// The models Codex offers, reduced to what the Orchestration settings need: the value to pass
+/// as `model`, a name to show and the efforts that model accepts. Hidden models are left out.
+fn codex_models(result: &Value) -> Value {
+    let models: Vec<Value> = result
+        .get("data")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|entry| {
+            !entry
+                .get("hidden")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+        })
+        .filter_map(|entry| {
+            let model = entry.get("model").and_then(Value::as_str)?;
+            let efforts: Vec<&str> = entry
+                .get("supportedReasoningEfforts")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|option| option.get("reasoningEffort").and_then(Value::as_str))
+                .collect();
+            Some(json!({
+                "model": model,
+                "name": entry.get("displayName").and_then(Value::as_str).unwrap_or(model),
+                "defaultEffort": entry.get("defaultReasoningEffort"),
+                "efforts": efforts
+            }))
+        })
+        .collect();
+    Value::Array(models)
+}
+
+/// A delegate call that names a role gets that role's settings and nothing else, so a planner can
+/// neither run a read-only role writable nor switch its model. Unknown roles are refused.
+fn resolve_role(
+    core: &Core,
+    arguments: &Map<String, Value>,
+) -> Result<Option<Map<String, Value>>, String> {
+    let name = match arguments.get("role") {
+        None | Some(Value::Null) => return Ok(None),
+        Some(Value::String(name)) => name,
+        Some(other) => return Err(format!("role must be a role name, got {other}")),
+    };
+    if let Some(field) = ROLE_FIELDS
+        .iter()
+        .find(|field| arguments.contains_key(**field))
+    {
+        return Err(format!(
+            "role {name} already sets {field}; pass the role or {field}, not both"
+        ));
+    }
+    let inner = guard(&core.inner);
+    let Some(role) = inner.roles.iter().find(|role| &role.name == name) else {
+        let known: Vec<&str> = inner.roles.iter().map(|role| role.name.as_str()).collect();
+        return Err(format!(
+            "unknown role {name}; configured roles: {}",
+            if known.is_empty() {
+                "none".to_string()
+            } else {
+                known.join(", ")
+            }
+        ));
+    };
+    let mut resolved = arguments.clone();
+    resolved.insert("agent".into(), json!(role.agent));
+    if let Some(model) = &role.model {
+        resolved.insert("model".into(), json!(model));
+    }
+    if let Some(effort) = &role.effort {
+        resolved.insert("effort".into(), json!(effort));
+    }
+    resolved.insert("readOnly".into(), json!(role.read_only));
+    if let Some(seconds) = role.timeout_seconds {
+        resolved.insert("timeoutSeconds".into(), json!(seconds));
+    }
+    Ok(Some(resolved))
 }
 
 /// What a Claude worker's command line adds to its launcher: the session to resume, if any, and the
@@ -820,6 +943,87 @@ impl Core {
 
     pub fn set_concurrency_limit(&self, limit: usize) {
         guard(&self.inner).max_concurrent = limit.clamp(1, 16);
+    }
+
+    /// Takes the Orchestration settings from Preferences. Workers already delegated keep what they
+    /// were given; the next call and a Restart see the new values.
+    pub fn apply_settings(&self, settings: OrchestrationSettings) {
+        {
+            let mut inner = guard(&self.inner);
+            inner.max_concurrent = settings.max_concurrent.clamp(1, 16);
+            inner.default_timeout_ms = match settings.default_timeout_seconds {
+                0 => None,
+                seconds => Some(seconds.saturating_mul(1000)),
+            };
+            inner.roles = settings.roles;
+            self.notify(&inner);
+        }
+        // A higher limit lets queued work start now instead of after the next worker finishes.
+        self.drain_queue();
+    }
+
+    /// The models the installed Codex offers, asked from a short-lived `app-server`.
+    pub fn list_codex_models(&self) -> Result<Value, String> {
+        let launcher = guard(&self.launchers)
+            .get("codex")
+            .cloned()
+            .ok_or_else(|| "codex is not installed".to_string())?;
+        let mut command = Command::new(&launcher.program);
+        command
+            .args(&launcher.args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        for (key, value) in &launcher.env {
+            command.env(key, value);
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            command.creation_flags(CREATE_NO_WINDOW);
+        }
+        let mut child = command
+            .spawn()
+            .map_err(|error| format!("codex did not start: {error}"))?;
+        let stdout = child.stdout.take();
+        let written = child.stdin.take().map(|mut stdin| {
+            [
+                json!({ "id": 1, "method": "initialize", "params": {
+                    "clientInfo": { "name": "alethe-orchestrator", "title": "Alethe", "version": "1" }
+                } }),
+                json!({ "method": "initialized" }),
+                // ponytail: one page of 100; follow nextCursor if Codex ever lists more.
+                json!({ "id": 2, "method": "model/list", "params": { "limit": 100 } }),
+            ]
+            .iter()
+            .try_for_each(|request| writeln!(stdin, "{request}"))
+        });
+        let (sender, receiver) = channel();
+        if let Some(stdout) = stdout {
+            thread::spawn(move || {
+                for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+                    let Ok(message) = serde_json::from_str::<Value>(&line) else {
+                        continue;
+                    };
+                    if message.get("id") == Some(&json!(2)) {
+                        let _ = sender.send(message);
+                        break;
+                    }
+                }
+            });
+        }
+        let reply = receiver.recv_timeout(Duration::from_secs(15));
+        let _ = child.kill();
+        let _ = child.wait();
+        if !matches!(written, Some(Ok(()))) {
+            return Err("codex did not take the request".into());
+        }
+        let reply = reply.map_err(|_| "codex did not list its models in time".to_string())?;
+        if let Some(error) = reply.get("error") {
+            return Err(format!("codex could not list its models: {error}"));
+        }
+        Ok(codex_models(reply.get("result").unwrap_or(&Value::Null)))
     }
 
     pub fn snapshot(&self) -> Value {
@@ -1638,7 +1842,11 @@ pub fn tools() -> Value {
                     },
                     "timeoutSeconds": {
                         "type": "number",
-                        "description": "Budget per worker before Alethe stops it, default 900. Pass 0 to let a worker run without a limit."
+                        "description": "Budget per worker before Alethe stops it, default 900 unless the person changed it in the Orchestration settings. Pass 0 to let a worker run without a limit."
+                    },
+                    "role": {
+                        "type": "string",
+                        "description": "A role the person configured in Alethe's Orchestration settings, such as a reviewer. alethe_status lists the roles and what each one runs on. The role sets agent, model, effort, readOnly and the time budget, so do not pass any of those with it. Prefer a role over spelling those out when one fits the work."
                     }
                 },
                 "required": ["tasks"]
@@ -1911,6 +2119,14 @@ fn restart_arguments(job: &Job) -> Map<String, Value> {
         arguments.insert("effort".into(), json!(effort));
     }
     arguments.insert("readOnly".into(), json!(job.sandbox == SANDBOX_READ_ONLY));
+    // A role worker restarts under its role as the settings define it now; the role owns those
+    // fields, and the delegate refuses them next to it.
+    if let Some(role) = &job.role {
+        for field in ROLE_FIELDS {
+            arguments.remove(field);
+        }
+        arguments.insert("role".into(), json!(role));
+    }
     arguments
 }
 
@@ -1983,6 +2199,14 @@ fn dispatch_tool(
 ) -> Result<Value, String> {
     match name {
         "alethe_delegate" => {
+            // A role becomes ordinary arguments, so it goes through the same checks as a call
+            // that spells them out.
+            let resolved = resolve_role(core, arguments)?;
+            let arguments = resolved.as_ref().unwrap_or(arguments);
+            let role = arguments
+                .get("role")
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned);
             let tasks = string_list(arguments, "tasks");
             if tasks.is_empty() {
                 return Err("tasks must contain at least one instruction".into());
@@ -2068,7 +2292,7 @@ fn dispatch_tool(
             let timeout_ms = match arguments.get("timeoutSeconds").and_then(Value::as_u64) {
                 Some(0) => None,
                 Some(seconds) => Some(seconds.saturating_mul(1000)),
-                None => Some(DEFAULT_JOB_TIMEOUT_MS),
+                None => guard(&core.inner).default_timeout_ms,
             };
 
             // Ids are reserved under the lock, but the worktrees are not built under it: each one
@@ -2158,6 +2382,7 @@ fn dispatch_tool(
                             approval_policy: approval_policy.clone(),
                             sandbox: sandbox.clone(),
                             web_search,
+                            role: role.clone(),
                             model: model.clone(),
                             effort: effort.clone(),
                             pending: None,
@@ -2623,6 +2848,7 @@ mod tests {
             approval_policy: approval_policy.into(),
             sandbox: "workspace-write".into(),
             web_search: true,
+            role: None,
             model: None,
             effort: None,
             pending: None,
@@ -2668,6 +2894,28 @@ mod tests {
         assert_eq!(arguments["model"], json!("gpt-6-astra"));
         assert_eq!(arguments["effort"], json!("high"));
         assert_eq!(arguments["readOnly"], json!(true));
+    }
+
+    // A worker delegated under a role restarts under that role, as the settings now define it (#254).
+    #[test]
+    fn restart_of_a_role_worker_asks_for_the_role_again() {
+        let job = Job {
+            agent: "codex".into(),
+            role: Some("reviewer".into()),
+            model: Some("gpt-6-astra".into()),
+            effort: Some("high".into()),
+            sandbox: SANDBOX_READ_ONLY.into(),
+            ..finished_job(None, "\"never\"", Some(600_000))
+        };
+        let arguments = restart_arguments(&job);
+
+        assert_eq!(arguments["role"], json!("reviewer"));
+        for field in ROLE_FIELDS {
+            assert!(
+                !arguments.contains_key(field),
+                "{field} belongs to the role"
+            );
+        }
     }
 
     #[test]
@@ -2807,6 +3055,44 @@ mod tests {
         assert_eq!(params["model"], "gpt-6-astra");
         assert_eq!(params["config"]["model_reasoning_effort"], "high");
         assert_eq!(params["sandbox"], "read-only");
+    }
+
+    // Preferences list the models Codex reports, with the efforts each one accepts (#254).
+    #[test]
+    fn the_codex_model_list_keeps_visible_models_and_their_efforts() {
+        let result = json!({
+            "data": [
+                {
+                    "id": "gpt-6.1-sol",
+                    "model": "gpt-6.1-sol",
+                    "displayName": "GPT-6.1 Sol",
+                    "defaultReasoningEffort": "low",
+                    "supportedReasoningEfforts": [
+                        { "reasoningEffort": "low", "description": "fast" },
+                        { "reasoningEffort": "high", "description": "deep" }
+                    ],
+                    "hidden": false
+                },
+                {
+                    "id": "internal",
+                    "model": "internal",
+                    "displayName": "Internal",
+                    "defaultReasoningEffort": "medium",
+                    "supportedReasoningEfforts": [],
+                    "hidden": true
+                }
+            ],
+            "nextCursor": null
+        });
+        assert_eq!(
+            codex_models(&result),
+            json!([{
+                "model": "gpt-6.1-sol",
+                "name": "GPT-6.1 Sol",
+                "defaultEffort": "low",
+                "efforts": ["low", "high"]
+            }])
+        );
     }
 
     #[test]

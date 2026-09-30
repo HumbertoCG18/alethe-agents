@@ -770,6 +770,45 @@ export const ptBR: Record<MessageKey, string> = {
   /* ---- PreferencesModal — aba Multi-Agent & Telemetry ---- */
   'prefs.categoryMultiagent': 'Multiagente e Telemetria',
   'prefs.categoryMultiagentDesc': 'Métricas em tempo real, rastros de eventos e logs estruturados.',
+  'prefs.categoryOrchestration': 'Orquestração',
+  'prefs.categoryOrchestrationDesc': 'Papéis e limites dos workers delegados.',
+  'prefs.orchestrationLimits': 'Limites dos workers',
+  'prefs.orchestrationLimitsDesc': 'Valem para toda delegação, de qualquer planner.',
+  'prefs.orchestrationConcurrency': 'Workers ao mesmo tempo',
+  'prefs.orchestrationConcurrencyDecrease': 'Menos workers ao mesmo tempo',
+  'prefs.orchestrationConcurrencyIncrease': 'Mais workers ao mesmo tempo',
+  'prefs.orchestrationDefaultTimeout': 'Orçamento padrão por worker (segundos)',
+  'prefs.orchestrationTimeoutHint':
+    'Vale quando o planner não informa um orçamento. 0 deixa o worker rodar sem limite.',
+  'prefs.orchestrationRoles': 'Papéis',
+  'prefs.orchestrationRolesDesc':
+    'Um planner que delega com um papel recebe exatamente o que o papel define: agente, modelo, esforço, somente leitura e orçamento. Ele não pode mudar isso na chamada.',
+  'prefs.orchestrationRolesEmpty':
+    'Nenhum papel ainda. Até você criar um, o planner escolhe o modelo e o esforço por conta própria.',
+  'prefs.orchestrationAddRole': 'Adicionar papel',
+  'prefs.orchestrationRemoveRole': 'Remover {name}',
+  'prefs.orchestrationRoleName': 'Nome',
+  'prefs.orchestrationRoleNameFor': 'Nome do papel {name}',
+  'prefs.orchestrationRoleNameInvalid':
+    'Use um nome único, sem espaços e que não comece com "-". Até lá o planner não consegue usar este papel, e ele é descartado quando o Alethe reinicia.',
+  'prefs.orchestrationAgent': 'Agente',
+  'prefs.orchestrationModel': 'Modelo',
+  'prefs.orchestrationEffort': 'Esforço',
+  'prefs.orchestrationReadOnly': 'Somente leitura',
+  'prefs.orchestrationBudget': 'Orçamento (s)',
+  'prefs.orchestrationAgentFor': 'Agente de {name}',
+  'prefs.orchestrationModelFor': 'Modelo de {name}',
+  'prefs.orchestrationEffortFor': 'Esforço de {name}',
+  'prefs.orchestrationReadOnlyFor': 'Somente leitura para {name}',
+  'prefs.orchestrationTimeoutFor': 'Orçamento de {name} em segundos',
+  'prefs.orchestrationCliDefault': 'Padrão da CLI',
+  'prefs.orchestrationModelDefault': 'Padrão do modelo',
+  'prefs.orchestrationBudgetDefault': 'Padrão',
+  'prefs.orchestrationModelsLoading': 'Lendo os modelos que o Codex oferece…',
+  'prefs.orchestrationModelsFailed':
+    'Não foi possível listar os modelos do Codex ({error}). Você ainda pode digitar o nome de um modelo.',
+  'prefs.orchestrationCustomModel': 'Usar "{value}"',
+  'prefs.orchestrationCodexOnly': 'Só para workers Codex',
   'prefs.multiagentSchedulerTitle': 'Agendador e fila de tarefas',
   'prefs.multiagentSchedulerDesc':
     'Gerencia ondas de execução a partir do backlog real de `.planning/task.md` por projeto.',
@@ -2118,6 +2157,10 @@ export const ptBR: Record<MessageKey, string> = {
   'orchestrator.agentSpendTitle': '{agent}: {cost} · {tokens} tokens nesta sessão do planner',
   'orchestrator.isolated': 'worktree',
   'orchestrator.hasDiff': 'diff',
+  'orchestrator.roleTitle': 'Delegado com o papel {role}',
+  'orchestrator.settingsNotApplied': 'As configurações de orquestração não foram aplicadas',
+  'orchestrator.settingsNotAppliedBody':
+    'O planner continua com os papéis e limites anteriores até isso ser corrigido: {error}',
   'orchestrator.modelTitle': 'Roda no {model}, como o planner pediu',
   'orchestrator.effortTitle': 'Roda com esforço de raciocínio {effort}, como o planner pediu',
   'orchestrator.modelEffortTitle':

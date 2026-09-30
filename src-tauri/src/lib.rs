@@ -266,6 +266,8 @@ pub fn run() {
             orchestrator::orchestrator_mcp_config_path,
             orchestrator::orchestrator_jobs,
             orchestrator::orchestrator_set_concurrency,
+            orchestrator::orchestrator_apply_settings,
+            orchestrator::orchestrator_codex_models,
             orchestrator::orchestrator_set_agent_fitness,
             orchestrator::orchestrator_message,
             orchestrator::open_orchestration_window,

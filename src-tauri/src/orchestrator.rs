@@ -11,7 +11,7 @@ use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::cli_resolver;
-use crate::orchestrator_core::{Core, Launcher, Planner};
+use crate::orchestrator_core::{Core, Launcher, OrchestrationSettings, Planner};
 
 const JOBS_EVENT: &str = "orchestrator://jobs";
 
@@ -49,9 +49,10 @@ fn prepare(app: &AppHandle, state: &OrchestratorState) {
     if let Some(program) = cli_resolver::find_windows_cli_launcher("codex") {
         let mut launcher = Launcher::codex_app_server(PathBuf::from(program));
         #[cfg(windows)]
-        launcher
-            .env
-            .push(("Path".to_string(), crate::orchestrator_core::path_without_store_aliases(&cli_resolver::rebuilt_path())));
+        launcher.env.push((
+            "Path".to_string(),
+            crate::orchestrator_core::path_without_store_aliases(&cli_resolver::rebuilt_path()),
+        ));
         core.set_launcher(launcher);
     }
     if let Some(program) = cli_resolver::find_windows_cli_launcher("claude") {
@@ -121,6 +122,28 @@ pub fn orchestrator_jobs(state: tauri::State<'_, OrchestratorState>) -> Value {
 #[tauri::command]
 pub fn orchestrator_set_concurrency(state: tauri::State<'_, OrchestratorState>, limit: usize) {
     state.core.set_concurrency_limit(limit);
+}
+
+/// The Orchestration settings from Preferences, sent when the app loads and whenever they change.
+#[tauri::command]
+pub fn orchestrator_apply_settings(
+    state: tauri::State<'_, OrchestratorState>,
+    settings: OrchestrationSettings,
+) {
+    state.core.apply_settings(settings);
+}
+
+/// The Codex models and efforts the Orchestration settings offer for a role.
+#[tauri::command]
+pub async fn orchestrator_codex_models(
+    app: AppHandle,
+    state: tauri::State<'_, OrchestratorState>,
+) -> Result<Value, String> {
+    prepare(&app, &state);
+    let core = state.core.clone();
+    tauri::async_runtime::spawn_blocking(move || core.list_codex_models())
+        .await
+        .map_err(|error| error.to_string())?
 }
 
 /// Fed by the same usage poll that drives the warning chip, so the planner and the person read the

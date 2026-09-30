@@ -37,6 +37,62 @@ describe('preference normalization', () => {
     })
   })
 
+  // Orchestration settings (#254).
+  it('gives a file saved before orchestration settings the defaults', () => {
+    const { orchestration: _older, ...saved } = DEFAULT_PREFERENCES
+
+    expect(normalizePreferences(saved as typeof DEFAULT_PREFERENCES).orchestration).toEqual({
+      roles: [],
+      maxConcurrent: 4,
+      defaultTimeoutSeconds: 900,
+    })
+  })
+
+  it('keeps valid roles and drops the ones the orchestrator would refuse', () => {
+    const reviewer = {
+      name: 'reviewer',
+      agent: 'codex' as const,
+      model: 'gpt-6.1-sol',
+      effort: 'medium',
+      readOnly: true,
+      timeoutSeconds: 600,
+    }
+    const writer = {
+      name: 'writer',
+      agent: 'claude' as const,
+      model: 'opus',
+      effort: null,
+      readOnly: false,
+      timeoutSeconds: null,
+    }
+    const preferences = normalizePreferences({
+      ...DEFAULT_PREFERENCES,
+      orchestration: {
+        maxConcurrent: 40,
+        defaultTimeoutSeconds: 1e20,
+        roles: [
+          reviewer,
+          writer,
+          // Repairing these would change what they mean: a read-only Claude role made writable.
+          { ...writer, name: 'reader', readOnly: true },
+          { ...writer, name: 'thinker', effort: 'high' },
+          { ...reviewer, model: null },
+          { ...reviewer, name: '-flag' },
+          { ...reviewer, name: 'odd', agent: 'grok' as 'codex' },
+          { ...reviewer, name: 'spaced', model: 'gpt 6' },
+          // Past what the orchestrator can hold, so the whole settings would be refused.
+          { ...reviewer, name: 'endless', timeoutSeconds: 1e20 },
+        ],
+      },
+    })
+
+    expect(preferences.orchestration).toEqual({
+      maxConcurrent: 16,
+      defaultTimeoutSeconds: 900,
+      roles: [reviewer, writer],
+    })
+  })
+
   it('keeps Discord Rich Presence opt-in while preserving an existing choice', () => {
     expect(normalizePreferences(undefined).discordRichPresenceEnabled).toBe(false)
     expect(

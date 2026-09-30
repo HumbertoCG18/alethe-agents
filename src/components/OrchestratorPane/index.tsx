@@ -1097,7 +1097,10 @@ export const OrchestratorPane = memo(function OrchestratorPane({
     groups[0] ??
     null
   const groupJobs = useMemo(() => activeGroup?.jobs ?? [], [activeGroup])
-  const spendByAgent = useMemo(() => aggregateAgentSpend(groupJobs), [groupJobs])
+  const spendByAgent = useMemo(
+    () => aggregateAgentSpend([...groupJobs, ...(activeGroup?.superseded ?? [])]),
+    [groupJobs, activeGroup],
+  )
   const runs = useMemo(() => activeGroup?.runs ?? [], [activeGroup])
   const plannerId = activeGroup?.id ?? null
   // Only the first image a worker's report mentions gets promoted to its own canvas card — enough
@@ -1245,7 +1248,8 @@ export const OrchestratorPane = memo(function OrchestratorPane({
     }
     return rows.sort(attentionFirst)
   }, [groups, activeKey])
-  const interruptedAll = jobs.filter((job) => job.status === 'interrupted').length
+  // Counted from the groups so an interrupted worker whose task was sent again is not announced.
+  const interruptedAll = groups.reduce((sum, group) => sum + group.counts.interrupted, 0)
   const blockedAll = jobs.filter((job) => job.status === 'blocked').length
 
   const openPlanner = (key: string) => {

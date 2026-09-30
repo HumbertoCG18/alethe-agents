@@ -307,6 +307,28 @@ describe('groupPlanners', () => {
     expect(group.counts).toEqual({ ...emptyCounts(), failed: 1, finished: 1 })
   })
 
+  it('leaves a superseded worker off the board and keeps it for the spend', () => {
+    const [group] = groupPlanners(
+      [
+        job({
+          id: 'job-01',
+          runId: 'run-a',
+          plannerId: 'pty-1',
+          status: 'failed',
+          supersededBy: 'job-02',
+        }),
+        job({ id: 'job-02', runId: 'run-b', plannerId: 'pty-1', status: 'done' }),
+      ],
+      [planner('pty-1', 'refactor pty')],
+    )
+
+    expect(group.jobs.map((entry) => entry.id)).toEqual(['job-02'])
+    expect(group.runs.map((run) => run.id)).toEqual(['run-b'])
+    expect(group.state).toBe('finished')
+    expect(group.counts).toEqual({ ...emptyCounts(), finished: 1 })
+    expect(group.superseded.map((entry) => entry.id)).toEqual(['job-01'])
+  })
+
   it('reads as blocked when any of its runs is waiting on the user', () => {
     const [group] = groupPlanners(
       [

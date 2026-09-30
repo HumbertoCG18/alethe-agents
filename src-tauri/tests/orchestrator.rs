@@ -848,6 +848,244 @@ fn a_worker_that_never_finishes_is_stopped_by_its_budget() {
 }
 
 #[test]
+fn a_worker_stopped_by_its_budget_hands_over_what_it_had_written() {
+    let dir = workspace("timeout-partial");
+    let core = Core::default();
+    let transcript = concat!(
+        r#"{"type":"system","subtype":"init","session_id":"partial-session"}"#,
+        "\n",
+        r#"{"type":"assistant","message":{"content":[{"type":"text","text":"three of the five sources read so far"}]}}"#,
+        "\n",
+    );
+    core.set_launcher(fake_claude_holding_launcher(&dir, transcript));
+
+    call(
+        &core,
+        "alethe_delegate",
+        json!({
+            "cwd": dir.to_string_lossy(),
+            "tasks": ["read five sources"],
+            "agent": "claude",
+            "timeoutSeconds": 2
+        }),
+    );
+    let checked = call(
+        &core,
+        "alethe_check",
+        json!({ "wait": true, "timeoutMs": 30000 }),
+    );
+    let deliveries = checked["deliveries"].as_array().expect("deliveries");
+    assert_eq!(deliveries.len(), 1, "{checked}");
+    assert_eq!(deliveries[0]["outcome"], json!("timeout"), "{checked}");
+    let text = deliveries[0]["text"].as_str().unwrap_or_default();
+    assert!(text.contains("2s budget"), "{checked}");
+    assert!(
+        text.contains("three of the five sources read so far"),
+        "what the worker wrote before the budget ended is lost: {checked}"
+    );
+    let snapshot = core.snapshot();
+    assert!(
+        snapshot["jobs"][0]["summary"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("three of the five sources read so far"),
+        "the board shows only the budget message: {snapshot}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_worker_is_told_to_wrap_up_before_its_budget_ends() {
+    let dir = workspace("timeout-wrap-up");
+    let core = Core::default();
+    let transcript = concat!(
+        r#"{"type":"system","subtype":"init","session_id":"wrap-up-session"}"#,
+        "\n",
+        r#"{"type":"assistant","message":{"content":[{"type":"text","text":"still reading"}]}}"#,
+        "\n",
+    );
+    core.set_launcher(fake_claude_holding_launcher(&dir, transcript));
+
+    call(
+        &core,
+        "alethe_delegate",
+        json!({
+            "cwd": dir.to_string_lossy(),
+            "tasks": ["read everything"],
+            "agent": "claude",
+            "timeoutSeconds": 5
+        }),
+    );
+    // The warning goes out four fifths into the budget: not at 1.5 s, and by 4.5 s it has.
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    let early = core.snapshot();
+    assert_eq!(early["jobs"][0]["status"], "running", "{early}");
+    assert_eq!(early["jobs"][0]["askedToWrapUp"], json!(false), "{early}");
+
+    std::thread::sleep(std::time::Duration::from_millis(3000));
+    let late = core.snapshot();
+    assert_eq!(late["jobs"][0]["status"], "running", "{late}");
+    assert_eq!(late["jobs"][0]["askedToWrapUp"], json!(true), "{late}");
+
+    let _ = call(&core, "alethe_cancel", json!({ "jobIds": ["job-01"] }));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Plays `first`, waits about `pause_secs`, plays `then`, and holds the process open.
+fn fake_claude_two_part_launcher(
+    dir: &std::path::Path,
+    first: &str,
+    pause_secs: u32,
+    then: &str,
+) -> Launcher {
+    let first_path = dir.join("first.jsonl");
+    let then_path = dir.join("then.jsonl");
+    std::fs::write(&first_path, first).expect("write first part");
+    std::fs::write(&then_path, then).expect("write second part");
+    #[cfg(windows)]
+    let (program, args): (&str, Vec<String>) = {
+        let script = dir.join("two-part.bat");
+        std::fs::write(
+            &script,
+            format!(
+                "@echo off
+type \"{}\"
+ping -n {} 127.0.0.1 >NUL
+type \"{}\"
+ping -n 60 127.0.0.1 >NUL
+",
+                first_path.to_string_lossy(),
+                pause_secs + 1,
+                then_path.to_string_lossy()
+            ),
+        )
+        .expect("write two-part script");
+        (
+            "cmd",
+            vec!["/c".into(), script.to_string_lossy().into_owned()],
+        )
+    };
+    #[cfg(not(windows))]
+    let (program, args): (&str, Vec<String>) = (
+        "sh",
+        vec![
+            "-c".into(),
+            format!(
+                "cat '{}'; sleep {}; cat '{}'; sleep 60",
+                first_path.display(),
+                pause_secs,
+                then_path.display()
+            ),
+        ],
+    );
+    Launcher {
+        kind: "claude".into(),
+        program: PathBuf::from(program),
+        args,
+        env: Vec::new(),
+    }
+}
+
+#[test]
+fn a_claude_worker_keeps_what_it_wrote_when_the_warning_interrupts_it() {
+    let dir = workspace("timeout-claude-wrap-up");
+    let core = Core::default();
+    // Claude takes the warning as an interrupt: the turn in flight ends (the `result` below, nine
+    // seconds in, after the warning at eight) and a new turn starts with the warning. The worker
+    // then writes nothing more before the budget ends at ten.
+    let first = concat!(
+        r#"{"type":"system","subtype":"init","session_id":"claude-wrap-up"}"#,
+        "\n",
+        r#"{"type":"assistant","message":{"content":[{"type":"text","text":"draft of section B1"}]}}"#,
+        "\n",
+    );
+    let then = concat!(
+        r#"{"type":"result","subtype":"error_during_execution","is_error":true,"result":""}"#,
+        "\n",
+    );
+    core.set_launcher(fake_claude_two_part_launcher(&dir, first, 9, then));
+
+    call(
+        &core,
+        "alethe_delegate",
+        json!({
+            "cwd": dir.to_string_lossy(),
+            "tasks": ["write section B1"],
+            "agent": "claude",
+            "timeoutSeconds": 10
+        }),
+    );
+    let checked = call(
+        &core,
+        "alethe_check",
+        json!({ "wait": true, "timeoutMs": 30000 }),
+    );
+    let deliveries = checked["deliveries"].as_array().expect("deliveries");
+    assert_eq!(deliveries.len(), 1, "{checked}");
+    assert_eq!(deliveries[0]["outcome"], json!("timeout"), "{checked}");
+    assert!(
+        deliveries[0]["text"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("draft of section B1"),
+        "the draft written before the warning is lost: {checked}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_revived_worker_gets_its_own_budget_not_the_one_before() {
+    let dir = workspace("timeout-revived");
+    let core = Core::default();
+    let transcript = concat!(
+        r#"{"type":"system","subtype":"init","session_id":"revived-budget"}"#,
+        "\n",
+    );
+    core.set_launcher(fake_claude_holding_launcher(&dir, transcript));
+
+    call(
+        &core,
+        "alethe_delegate",
+        json!({
+            "cwd": dir.to_string_lossy(),
+            "tasks": ["long task"],
+            "agent": "claude",
+            "timeoutSeconds": 5
+        }),
+    );
+    std::thread::sleep(std::time::Duration::from_millis(800));
+    call(&core, "alethe_cancel", json!({ "jobIds": ["job-01"] }));
+    let sent = call(
+        &core,
+        "alethe_send",
+        json!({ "jobId": "job-01", "message": "carry on" }),
+    );
+    assert_eq!(sent["revived"], json!("job-01"), "{sent}");
+
+    // The first run would have warned at 4 s and stopped at 5 s; this run warns near 4.8 s and
+    // stops near 5.8 s.
+    std::thread::sleep(std::time::Duration::from_millis(3500));
+    let at_four = core.snapshot();
+    assert_eq!(at_four["jobs"][0]["status"], "running", "{at_four}");
+    assert_eq!(
+        at_four["jobs"][0]["askedToWrapUp"],
+        json!(false),
+        "warned on the budget of the run before: {at_four}"
+    );
+    std::thread::sleep(std::time::Duration::from_millis(1000));
+    let at_five = core.snapshot();
+    assert_eq!(
+        at_five["jobs"][0]["status"], "running",
+        "stopped on the budget of the run before: {at_five}"
+    );
+
+    let _ = call(&core, "alethe_cancel", json!({ "jobIds": ["job-01"] }));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn isolating_outside_a_repository_says_so() {
     let core = Core::default();
     core.set_launcher(silent_launcher());

@@ -768,6 +768,9 @@ export const en = {
   'prefs.orchestrationDefaultTimeout': 'Default budget per worker (seconds)',
   'prefs.orchestrationTimeoutHint':
     'Used when a planner names no budget. 0 lets a worker run without a limit.',
+  'prefs.orchestrationWorkerPlugins': 'Codex plugins off in workers',
+  'prefs.orchestrationWorkerPluginsHint':
+    'One plugin id per line or comma, such as ecc@ecc. Codex workers start without their hooks and context; your own hooks and MCP servers stay.',
   'prefs.orchestrationRoles': 'Roles',
   'prefs.orchestrationRolesDesc':
     'A planner that delegates with a role gets exactly what the role sets: agent, model, effort, read-only and budget. It cannot change them in the call.',

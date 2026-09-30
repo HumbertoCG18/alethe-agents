@@ -780,6 +780,9 @@ export const ptBR: Record<MessageKey, string> = {
   'prefs.orchestrationDefaultTimeout': 'Orçamento padrão por worker (segundos)',
   'prefs.orchestrationTimeoutHint':
     'Vale quando o planner não informa um orçamento. 0 deixa o worker rodar sem limite.',
+  'prefs.orchestrationWorkerPlugins': 'Plugins do Codex desligados nos workers',
+  'prefs.orchestrationWorkerPluginsHint':
+    'Um id de plugin por linha ou vírgula, como ecc@ecc. Os workers Codex começam sem os hooks e o contexto deles; seus próprios hooks e servidores MCP continuam.',
   'prefs.orchestrationRoles': 'Papéis',
   'prefs.orchestrationRolesDesc':
     'Um planner que delega com um papel recebe exatamente o que o papel define: agente, modelo, esforço, somente leitura e orçamento. Ele não pode mudar isso na chamada.',

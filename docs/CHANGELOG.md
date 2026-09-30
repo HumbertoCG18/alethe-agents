@@ -19,6 +19,10 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
   `role` and gets exactly that, so switching the model that does a kind of work is one change in
   Preferences. The same page sets how many workers run at the same time and the default budget
   per worker, which were fixed at 4 and 900 seconds.
+- **Codex workers can start without chosen plugins.** The Orchestration settings take a list of
+  Codex plugin ids that worker threads start without, so plugins that run hooks on every start
+  and prompt, or add their context to every call, stay out of workers that only read and report.
+  Interactive Codex sessions, and your own hooks and MCP servers, are not affected.
 - **Delegated workers can run on a chosen model, effort and read-only sandbox.** A planner can now
   pass `model`, `effort` and `readOnly` when it delegates, so work such as an independent review on
   another model runs as a worker on the orchestration board instead of outside Alethe. The worker

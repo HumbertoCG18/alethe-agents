@@ -1097,6 +1097,34 @@ export const en = {
   'whatsNew.close': 'Got it',
   'whatsNew.update': 'View update',
   'whatsNew.releaseHeading': 'v{version} — {date}',
+  'whatsNew.v170.note1':
+    'Features now load as plugins: Git Control, Todo List and the Theme Pack ship as official plugins, and a plugin can be imported from its folder.',
+  'whatsNew.v170.note2':
+    'A plugin catalogue in Preferences installs and updates plugins in one click, each package pinned to a SHA-256 checksum.',
+  'whatsNew.v170.note3':
+    'Orchestration v2: a lead agent delegates to Claude and Codex workers on a board, asks before leaving its sandbox and checks each vendor’s remaining quota first.',
+  'whatsNew.v170.note4':
+    'Remote control grew into a mobile client with a live terminal, an agent chat view and interactive questions.',
+  'whatsNew.v170.note5':
+    'Projects can be split into optional named grids, each with its own terminals and layout.',
+  'whatsNew.v170.note6': 'New agents and terminals: Cursor CLI, Kiro CLI and plain WSL terminals.',
+  'whatsNew.v170.note7': '9router routing integration, and cloud sync for preferences (free tier).',
+  'whatsNew.v170.note8': 'Ctrl+P now finds commands, not just terminals.',
+  'whatsNew.v160.note1':
+    'Normal and Clean interface styles for the whole app, chosen during onboarding with a live preview.',
+  'whatsNew.v160.note2':
+    'Claude Code and Codex conversations can be continued in the other agent from the terminal.',
+  'whatsNew.v160.note3':
+    'Agents can be installed, updated and uninstalled from inside Alethe, and GitHub Copilot CLI joins as a new agent.',
+  'whatsNew.v160.note4':
+    'New MCP tab in the right sidebar with every configured MCP server and the skills installed for each agent.',
+  'whatsNew.v160.note5':
+    'Grid layouts are edited directly on the grid, with adaptive presets and the eight most recently saved layouts.',
+  'whatsNew.v160.note6':
+    'Browser panes are back in the workspace grid, and a URL printed in a terminal can open as one.',
+  'whatsNew.v160.note7':
+    'Remote control pairs through a short-lived pairing window, starts read-only and can hide individual terminals.',
+  'whatsNew.v160.note8': 'New Golden Premium and Ember themes.',
   'whatsNew.v150.note1':
     'Full-profile backup export now archives the entire profile (todos, history, preferences, tokens, scrollback) instead of a fixed short list.',
   'whatsNew.v150.note2':
@@ -1270,6 +1298,7 @@ export const en = {
   'widget.tryAgain': 'try again',
   'widget.noTokenConfigured': 'no token configured',
   'widget.connectToSeeUsage': 'connect to see usage',
+  'widget.usageUnavailableHint': 'the usage service refused the request; try again shortly',
   'widget.usage5h': 'usage 5h',
   'widget.resetIn': 'reset in {time}',
   'widget.resetsIn': 'resets in {time}',
@@ -2008,10 +2037,12 @@ export const en = {
   'ws.now': 'now',
   'ws.claude5h': 'claude 5h {pct}%',
   'ws.codex5h': 'codex 5h {pct}%',
+  'ws.codexWeek': 'codex week {pct}%',
   'ws.usagePanelOpen': 'Usage stats (Claude / Codex)',
   'ws.usage5hLabel': '5h',
   'ws.usageWeekLabel': '7 days',
   'ws.usageOpusLabel': 'opus 7d',
+  'ws.usageModelLabel': '{model} 7d',
   'ws.usageStatus': 'status',
   'ws.usageOk': 'ok',
   'ws.usageLimited': 'rate limited',
@@ -2130,6 +2161,10 @@ export const en = {
   'orchestrator.plannerEyebrow': 'planner',
   'orchestrator.plannerNodeTitle': 'Open the terminal this planner runs in',
   'orchestrator.plannerGone': 'The terminal this planner ran in is no longer open',
+  'orchestrator.plannerInMainWindow': "Open this planner's terminal from the main window",
+  'orchestrator.openInWindow': 'Open in new window',
+  'orchestrator.openInWindowFailed': 'Could not open the board in a new window',
+  'orchestrator.windowPaneGone': 'This orchestration pane no longer exists.',
   'orchestrator.noPlanner': 'no planner',
   'orchestrator.noPlannerTitle': 'Work delegated from outside an agent terminal',
   'orchestrator.plannerTitle': '{label} · {agent}',
@@ -2184,6 +2219,11 @@ export const en = {
   'orchestrator.applyConflictBody':
     "Worker {id}'s branch conflicts with the current one. Resolve it by hand, same as any other worktree.",
   'orchestrator.applyFailed': "Could not apply the worker's changes",
+  'orchestrator.menuOpen': 'Open',
+  'orchestrator.menuStop': 'Stop',
+  'orchestrator.menuRestart': 'Restart',
+  'orchestrator.stopFailed': 'Could not stop the worker',
+  'orchestrator.restartFailed': 'Could not restart the worker',
   'orchestrator.applySuccess': 'Applied',
   'orchestrator.applySuccessBody': 'Merged into {branch} and the worktree was removed.',
   'orchestrator.composeTo': 'to {id}',
@@ -2248,6 +2288,13 @@ export const en = {
   'mod.jobGuardInactive':
     'Orphan process protection: unavailable on this platform/session. A crash may leave processes running; the next boot still tries to clean up automatically.',
   'ui.terminal.restartFailed': 'Failed to restart terminal',
+  'ui.terminal.orchestrationStartFailed': 'Could not start orchestration',
+  'ui.terminal.orchestrationStartFailedBody':
+    'Claude did not come back with the orchestrator tools.',
+  'ui.terminal.openOrchestration': 'Open orchestration',
+  'ui.terminal.orchestrationRestartTitle': 'Restart Claude for orchestration?',
+  'ui.terminal.orchestrationRestartBody':
+    'This conversation was started without the orchestrator tools. Claude restarts on the same conversation to get them.',
   'git.initOffer.title': 'Not a Git repository yet',
   'git.initOffer.body':
     'Agent isolation, worktrees and merges all need this folder to be a Git repository. Initialize one now?',

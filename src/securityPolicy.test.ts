@@ -169,4 +169,17 @@ describe('production renderer security policy', () => {
     expect(capability.permissions).not.toContain('core:event:allow-emit')
     expect(capability.permissions).not.toContain('core:event:allow-emit-to')
   })
+
+  // The detached orchestration board (#247) gets its own capability instead of widening the main
+  // one: it only listens to events and closes itself.
+  it('keeps the detached orchestration board window to the minimum it needs', () => {
+    const board = readJson<Capability>('src-tauri/capabilities/orchestration-window.json')
+    expect(board.webviews).toEqual(['orchestration-*'])
+    expect(board.windows).toBeUndefined()
+    expect(board.permissions).toEqual([
+      'core:event:allow-listen',
+      'core:event:allow-unlisten',
+      'core:window:allow-destroy',
+    ])
+  })
 })

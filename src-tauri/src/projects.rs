@@ -3,7 +3,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter};
 use tokio::sync::Mutex as AsyncMutex;
 
 use crate::paths::projects_file_path;
@@ -87,6 +87,8 @@ pub fn load_projects(app: AppHandle) -> Result<Option<String>, String> {
 
 ///
 
+pub const PROJECTS_SAVED_EVENT: &str = "projects://saved";
+
 #[tauri::command]
 pub async fn save_projects(app: AppHandle, content: String, sequence: u64) -> Result<(), String> {
     let _guard = save_mutex().lock().await;
@@ -123,6 +125,8 @@ pub async fn save_projects(app: AppHandle, content: String, sequence: u64) -> Re
     .map_err(|error| format!("save_projects: falha na task bloqueante: {error}"))??;
 
     LAST_WRITE_SEQUENCE.store(sequence, Ordering::SeqCst);
+    // A detached orchestration board only reads projects.json; this is its cue to read it again.
+    let _ = app.emit(PROJECTS_SAVED_EVENT, ());
     Ok(())
 }
 

@@ -1,0 +1,11 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "orchestration-window",
+  "description": "Detached orchestration board windows: they follow app events and close themselves, nothing else",
+  "webviews": ["orchestration-*"],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "core:window:allow-destroy"
+  ]
+}

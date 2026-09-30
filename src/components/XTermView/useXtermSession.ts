@@ -13,6 +13,12 @@ import { AgentCompletionMonitor } from '../../lib/agentCompletionMonitor'
 import { deliverOpenCodePrompt } from '../../lib/agentPromptDelivery'
 import { resolveAgentCliCommand } from '../../lib/agentProviders'
 import { preparePtyRuntimeLaunch } from '../../lib/agentRuntimeAdapter'
+import {
+  type ClaudeLaunchExtras,
+  claudeLaunchExtras,
+  plannerLabelFor,
+  recordClaudeLaunch,
+} from '../../lib/claudeMcpConfigs'
 import { claudeSessionFromHook } from '../../lib/claudeSessionTracking'
 import { getLocale, translate } from '../../lib/i18n'
 import { isWindows } from '../../lib/platform'
@@ -35,10 +41,8 @@ import {
 import { waitForSessionHint } from '../../lib/sessionWatch'
 import { acquireSpawnSlot, releaseSpawnSlot } from '../../lib/spawnQueue'
 import {
-  agentHooksSettingsPath,
   aiMemoryCodexConfigWrite,
   aiMemoryDetect,
-  aiMemoryMcpConfigPath,
   aiMemoryOpenCodeConfigWrite,
   attachPty,
   clearPtyScrollback,
@@ -48,15 +52,12 @@ import {
   findCliLauncher,
   graphifyCodexConfigWrite,
   graphifyEnsureGraph,
-  graphifyMcpConfigPath,
   graphifyOpenCodeConfigWrite,
   gsdOpenCodePluginWrite,
   killPty,
   listenPtyActivity,
   listenPtyData,
   listenPtyExit,
-  orchestratorMcpConfigPath,
-  playwrightMcpConfigPath,
   ptyExists,
   readClipboardPayload,
   readGsdChildSession,
@@ -119,13 +120,14 @@ function isBrowserInputPending(): boolean {
 let aiMemoryMissingWarned = false
 
 /** The terminal's own name is what the person recognises a planner by, not its pty id. */
-function plannerLabelFor(ptyId: string): string {
-  for (const project of useProjectsStore.getState().projects) {
-    for (const terminal of project.terminals) {
-      if (terminal.tabs.some((tab) => tab.ptyId === ptyId)) return terminal.name
-    }
-  }
-  return ptyId
+/** Warns once per session that AI memory is on but its CLI is not installed. */
+function warnAiMemoryMissing(): void {
+  if (aiMemoryMissingWarned) return
+  aiMemoryMissingWarned = true
+  useUiStore.getState().pushToast({
+    title: translate(getLocale(), 'aiMemory.notInstalledTitle'),
+    body: translate(getLocale(), 'aiMemory.notInstalledBody'),
+  })
 }
 
 type BootPhase = 'preparing' | 'queued' | 'spawning' | 'attaching' | 'ready'
@@ -1132,87 +1134,50 @@ export function useXtermSession(params: {
         // Prepare optional integrations before spawning.
         const mcpConfigPaths: string[] = []
         let hooksSettingsPath: string | undefined
+        let claudeExtras: ClaudeLaunchExtras | undefined
 
-        if (
-          graphifyRepo &&
-          (command === 'claude' || command === 'codex' || command === 'opencode')
-        ) {
+        // Claude takes its MCP servers and hooks as launch arguments; every relaunch of this pane
+        // rebuilds them the same way (see claudeMcpConfigs and agentRelaunch).
+        if (command === 'claude') {
+          claudeExtras = await claudeLaunchExtras({
+            ptyId,
+            cwd,
+            graphifyRepo,
+            onAiMemoryMissing: warnAiMemoryMissing,
+          })
+          mcpConfigPaths.push(...claudeExtras.mcpConfigPaths)
+          hooksSettingsPath = claudeExtras.hooksSettingsPath
+          if (disposed) return
+        }
+
+        // Codex and OpenCode read in-repo config files instead, written once here.
+        if (graphifyRepo && (command === 'codex' || command === 'opencode')) {
           void graphifyEnsureGraph(graphifyRepo).catch(() => undefined)
-          if (command === 'claude') {
-            const p = await graphifyMcpConfigPath(graphifyRepo).catch(() => undefined)
-            if (p) mcpConfigPaths.push(p)
-          } else if (command === 'opencode') {
+          if (command === 'opencode') {
             await graphifyOpenCodeConfigWrite(graphifyRepo).catch(() => {})
-          } else if (command === 'codex') {
+          } else {
             await graphifyCodexConfigWrite(graphifyRepo).catch(() => {})
           }
           if (disposed) return
         }
 
         const aiMemoryEnabled = useProjectsStore.getState().preferences.enabledFeatures.aiMemory
-        if (
-          aiMemoryEnabled &&
-          cwd &&
-          (command === 'claude' || command === 'codex' || command === 'opencode')
-        ) {
+        if (aiMemoryEnabled && cwd && (command === 'codex' || command === 'opencode')) {
           const status = await aiMemoryDetect().catch(() => undefined)
           if (status?.installed) {
-            if (command === 'claude') {
-              const p = await aiMemoryMcpConfigPath(cwd).catch(() => undefined)
-              if (p) mcpConfigPaths.push(p)
-            } else if (command === 'opencode') {
+            if (command === 'opencode') {
               await aiMemoryOpenCodeConfigWrite(cwd).catch(() => {})
-            } else if (command === 'codex') {
+            } else {
               await aiMemoryCodexConfigWrite(cwd).catch(() => {})
             }
-          } else if (!aiMemoryMissingWarned) {
-            aiMemoryMissingWarned = true
-            useUiStore.getState().pushToast({
-              title: translate(getLocale(), 'aiMemory.notInstalledTitle'),
-              body: translate(getLocale(), 'aiMemory.notInstalledBody'),
-            })
+          } else {
+            warnAiMemoryMissing()
           }
-          if (disposed) return
-        }
-
-        // Claude only: it takes an ephemeral --mcp-config, so nothing is left behind pointing at a
-        // dead endpoint. Codex and OpenCode need in-repo config writes.
-        //
-        // This must never start a browser. The config points at the shared browser when one is
-        // already running and otherwise leaves Playwright on its default, which opens a browser
-        // only once the agent reaches for one.
-        const playwrightEnabled = useProjectsStore.getState().preferences.enabledFeatures.playwright
-        if (playwrightEnabled && command === 'claude') {
-          const { playwrightBrowserMode, playwrightDedicatedHeadless } =
-            useProjectsStore.getState().preferences
-          const p = await playwrightMcpConfigPath({
-            dedicated: playwrightBrowserMode === 'dedicated',
-            headless: playwrightDedicatedHeadless,
-          }).catch(() => undefined)
-          if (p) mcpConfigPaths.push(p)
           if (disposed) return
         }
 
         const orchestratorEnabled =
           useProjectsStore.getState().preferences.enabledFeatures.orchestrator
-        if (orchestratorEnabled && command === 'claude') {
-          const p = await orchestratorMcpConfigPath(ptyId, plannerLabelFor(ptyId), command).catch(
-            () => undefined,
-          )
-          if (p) mcpConfigPaths.push(p)
-          if (disposed) return
-        }
-
-        // Tags every Claude pane's hooks with its ptyId. SessionStart/UserPromptSubmit report the
-        // conversation the CLI is actually on, which is what keeps the pane in sync after an in-CLI
-        // /clear or /resume; with the orchestrator on, the same file also carries its subagent and
-        // tool-call hooks so the canvas can hang them off this planner.
-        if (command === 'claude') {
-          hooksSettingsPath = await agentHooksSettingsPath(ptyId, orchestratorEnabled).catch(
-            () => undefined,
-          )
-          if (disposed) return
-        }
 
         if (orchestratorEnabled && command === 'codex' && cwd) {
           // Same idea for Codex: it has its own native subagents (SubagentStart/Stop), just no http
@@ -1288,6 +1253,9 @@ export function useXtermSession(params: {
           return
         }
         setBootPhase('spawning')
+        // A pty that is still alive is reattached, not relaunched: its process keeps whatever it
+        // was launched with, so only a real launch is recorded.
+        const launchesClaude = claudeExtras ? !(await ptyExists(ptyId).catch(() => true)) : false
         let response: { id: string }
         try {
           response = await spawnPty({
@@ -1304,6 +1272,8 @@ export function useXtermSession(params: {
           releaseSpawnSlot()
         }
         console.info(`[pty-launch] ${command ?? 'shell'} spawn OK id=${response.id}`)
+        if (claudeExtras && launchesClaude)
+          recordClaudeLaunch(response.id, claudeExtras.orchestrator)
         spawnedAtRef.current = Date.now()
         usedResumeRef.current = Boolean(resumeId)
         if (disposed) return

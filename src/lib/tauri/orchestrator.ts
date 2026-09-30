@@ -103,6 +103,8 @@ export type OrchestratorJob = {
   pendingApproval: OrchestratorPendingApproval | null
   /** The worker that took this one's task over after it ended without finishing it. */
   supersededBy?: string | null
+  /** The worker was told its time budget is nearly over and to write down what it has. */
+  askedToWrapUp?: boolean
   hasDiff: boolean
   summary: string
   /** Set only on the frontend, for a Claude/Codex native subagent reshaped into this type — it never

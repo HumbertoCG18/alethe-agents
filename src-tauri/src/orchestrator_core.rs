@@ -2014,10 +2014,13 @@ fn dispatch_tool(
                 .get("webSearch")
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
-            let read_only = arguments
-                .get("readOnly")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
+            // Anything but a boolean is refused: read as false it would start a writable worker the
+            // caller meant to only read.
+            let read_only = match arguments.get("readOnly") {
+                None | Some(Value::Null) => false,
+                Some(Value::Bool(value)) => *value,
+                Some(other) => return Err(format!("readOnly must be true or false, got {other}")),
+            };
             let model = option_name(arguments, "model")?;
             let effort = option_name(arguments, "effort")?;
             // Not validated here on purpose — an unconfigured agent fails cleanly later, in

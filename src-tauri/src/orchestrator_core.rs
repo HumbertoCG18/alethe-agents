@@ -9,7 +9,7 @@ use std::collections::{HashMap, VecDeque};
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::mpsc::{channel, Sender};
+use std::sync::mpsc::{channel, RecvTimeoutError, Sender};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -312,6 +312,48 @@ fn trimmed_job(mut job: Value) -> Value {
     job
 }
 
+/// The worker's time budget, stated at the start of its first turn. A warning sent mid-turn does
+/// not help: Codex only reads it once the text it is writing is done, which is often the answer
+/// itself, and then spends another round replying to it.
+fn with_budget(text: String, timeout_ms: Option<u64>) -> String {
+    let Some(seconds) = timeout_ms
+        .map(|ms| ms / 1000)
+        .filter(|seconds| *seconds > 0)
+    else {
+        return text;
+    };
+    format!(
+        "[Alethe] Time budget: {seconds} s from now. Write your answer by {} s; anything not \
+         written when the budget ends is lost.\n\n{text}",
+        seconds * 7 / 10
+    )
+}
+
+#[cfg(test)]
+mod budget_tests {
+    use super::with_budget;
+
+    #[test]
+    fn the_first_turn_states_the_budget_and_when_to_answer() {
+        let text = with_budget("Review the diff.".into(), Some(600_000));
+        assert!(text.starts_with("[Alethe] Time budget: 600 s"), "{text}");
+        assert!(text.contains("by 420 s"), "{text}");
+        assert!(text.ends_with("\n\nReview the diff."), "{text}");
+    }
+
+    #[test]
+    fn a_worker_without_a_budget_gets_its_task_as_is() {
+        assert_eq!(
+            with_budget("Review the diff.".into(), None),
+            "Review the diff."
+        );
+        assert_eq!(
+            with_budget("Review the diff.".into(), Some(500)),
+            "Review the diff."
+        );
+    }
+}
+
 fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -410,8 +452,6 @@ struct Job {
     /// The worker that took this one's task over after it ended without finishing. The board
     /// leaves a superseded worker out, so a task shows only the worker that currently has it.
     superseded_by: Option<String>,
-    /// Live only: the worker was told its budget is nearly over and to write down what it has.
-    asked_to_wrap_up: bool,
 }
 
 impl Job {
@@ -445,7 +485,6 @@ impl Job {
             "readOnly": self.sandbox == SANDBOX_READ_ONLY,
             "pendingApproval": self.pending,
             "supersededBy": self.superseded_by,
-            "askedToWrapUp": self.asked_to_wrap_up,
             "hasDiff": self.diff.is_some(),
             "summary": tail(if self.report.is_empty() { &self.reply } else { &self.report }, 1200),
         })
@@ -553,7 +592,6 @@ impl Job {
             awaiting_steer: false,
             next_request_id: 10,
             superseded_by: text("supersededBy"),
-            asked_to_wrap_up: false,
         })
     }
 
@@ -735,6 +773,76 @@ fn thread_resume_params(
     let mut params = thread_start_params(cwd, approval_policy, sandbox, web_search, model, effort);
     params["threadId"] = json!(thread_id);
     params
+}
+
+/// Whether the process ended within `limit`. Never waits past it, even when the OS cannot say.
+fn exited_within(child: &mut Child, limit: Duration) -> bool {
+    let deadline = Instant::now() + limit;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return true,
+            Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(50)),
+            _ => return false,
+        }
+    }
+}
+
+/// Kills a process and what it started. On Windows the child is often the `cmd.exe` running
+/// `codex.cmd`, and killing only that would leave Codex running. `taskkill` is started, not waited
+/// on, so a slow one cannot hold the caller.
+fn kill_tree(child: &mut Child) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let _ = Command::new("taskkill")
+            .args(["/T", "/F", "/PID", &child.id().to_string()])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn();
+    }
+    let _ = child.kill();
+}
+
+#[cfg(test)]
+mod process_tests {
+    use super::{exited_within, kill_tree};
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+
+    fn long_running() -> std::process::Child {
+        #[cfg(windows)]
+        let mut command = {
+            let mut command = Command::new("cmd");
+            command.args(["/c", "ping -n 30 127.0.0.1 >NUL"]);
+            command
+        };
+        #[cfg(not(windows))]
+        let mut command = {
+            let mut command = Command::new("sh");
+            command.args(["-c", "sleep 30"]);
+            command
+        };
+        command
+            .stdout(Stdio::null())
+            .spawn()
+            .expect("a long-running process")
+    }
+
+    #[test]
+    fn a_process_that_does_not_end_is_waited_on_only_as_long_as_allowed() {
+        let mut child = long_running();
+        let started = Instant::now();
+        assert!(!exited_within(&mut child, Duration::from_millis(300)));
+        assert!(started.elapsed() < Duration::from_secs(3));
+
+        kill_tree(&mut child);
+        assert!(
+            exited_within(&mut child, Duration::from_secs(10)),
+            "the process survived the kill"
+        );
+    }
 }
 
 /// The models Codex offers, reduced to what the Orchestration settings need: the value to pass
@@ -1130,7 +1238,10 @@ impl Core {
             .spawn()
             .map_err(|error| format!("codex did not start: {error}"))?;
         let stdout = child.stdout.take();
-        let written = child.stdin.take().map(|mut stdin| {
+        // Codex shuts down at the end of its input, before a pending model/list is answered, so
+        // stdin stays open until the answer is in.
+        let mut stdin = child.stdin.take();
+        let written = stdin.as_mut().map(|stdin| {
             [
                 json!({ "id": 1, "method": "initialize", "params": {
                     "clientInfo": { "name": "alethe-orchestrator", "title": "Alethe", "version": "1" }
@@ -1157,12 +1268,23 @@ impl Core {
             });
         }
         let reply = receiver.recv_timeout(Duration::from_secs(15));
-        let _ = child.kill();
-        let _ = child.wait();
+        // Closing the input lets Codex exit on its own. Killing it mid-call is tied to lsass
+        // crashes on Windows (#202), so that is only the fallback. Both waits are bounded, so the
+        // settings page never hangs on a Codex that will not go.
+        drop(stdin);
+        if !exited_within(&mut child, Duration::from_secs(5)) {
+            kill_tree(&mut child);
+            let _ = exited_within(&mut child, Duration::from_secs(5));
+        }
         if !matches!(written, Some(Ok(()))) {
             return Err("codex did not take the request".into());
         }
-        let reply = reply.map_err(|_| "codex did not list its models in time".to_string())?;
+        let reply = reply.map_err(|error| match error {
+            RecvTimeoutError::Timeout => "codex did not list its models in time".to_string(),
+            RecvTimeoutError::Disconnected => {
+                "codex exited before it listed its models".to_string()
+            }
+        })?;
         if let Some(error) = reply.get("error") {
             return Err(format!("codex could not list its models: {error}"));
         }
@@ -1202,11 +1324,13 @@ impl Core {
             job.status = STATUS_RUNNING.to_string();
             // A worker that runs again is current again, whatever replaced it meanwhile.
             job.superseded_by = None;
-            job.asked_to_wrap_up = false;
             job.started_at = Some(now_ms());
             job.ended_at = None;
             // Work that arrived while the worker was down leads; otherwise this is its first turn.
-            let first_turn = job.inbox.pop_front().unwrap_or_else(|| job.spec.clone());
+            let first_turn = with_budget(
+                job.inbox.pop_front().unwrap_or_else(|| job.spec.clone()),
+                job.timeout_ms,
+            );
             let started = (
                 job.agent.clone(),
                 job.cwd.clone(),
@@ -1398,16 +1522,7 @@ impl Core {
             .get(&job_id)
             .and_then(|job| job.started_at);
         thread::spawn(move || {
-            // Four fifths in, the worker is told to write down what it has: a worker that spends
-            // the whole budget reading is stopped with nothing to show for it.
-            let warn_ms = timeout_ms / 5 * 4;
-            thread::sleep(Duration::from_millis(warn_ms));
-            // On a thread of its own: a worker that stopped reading its input can hold the write,
-            // and the stop below still has to happen on time.
-            let warner = core.clone();
-            let warned = job_id.clone();
-            thread::spawn(move || warner.wrap_up(&warned, run, timeout_ms, timeout_ms - warn_ms));
-            thread::sleep(Duration::from_millis(timeout_ms - warn_ms));
+            thread::sleep(Duration::from_millis(timeout_ms));
             let (payload, written) = {
                 let inner = guard(&core.inner);
                 let Some(job) = inner.jobs.get(&job_id) else {
@@ -1441,8 +1556,8 @@ impl Core {
                     stage_rpc(&mut inner, &job_id, "turn/interrupt", payload)
                 };
                 if let Ok((stdin, request)) = staged {
-                    // Detached for the same reason as the warning; the teardown below closes the
-                    // pipe either way.
+                    // Detached: a worker that stopped reading its input can hold the write, and
+                    // the stop below still has to happen on time. The teardown closes the pipe.
                     thread::spawn(move || {
                         let _ = send_rpc(&stdin, &request);
                     });
@@ -1464,38 +1579,6 @@ impl Core {
                 true,
             );
         });
-    }
-
-    /// Tells a worker that is still mid-turn how little of its budget is left. Steering is the
-    /// same path the lead uses, so a worker with no turn to steer yet is simply left alone.
-    fn wrap_up(&self, job_id: &str, run: Option<u64>, budget_ms: u64, left_ms: u64) {
-        let running = guard(&self.inner)
-            .jobs
-            .get(job_id)
-            .is_some_and(|job| job.status == STATUS_RUNNING && job.started_at == run);
-        if !running {
-            return;
-        }
-        let mut arguments = Map::new();
-        arguments.insert("jobId".into(), json!(job_id));
-        arguments.insert(
-            "message".into(),
-            json!(format!(
-                "Time check from the orchestrator: about {}s of your {}s budget are left, and \
-                 anything you have not written when it ends is lost. Stop gathering now and write \
-                 your answer with what you have. Say plainly what is left undone.",
-                left_ms / 1000,
-                budget_ms / 1000
-            )),
-        );
-        if dispatch_tool(self, "alethe_steer", &arguments, None).is_err() {
-            return;
-        }
-        let mut inner = guard(&self.inner);
-        if let Some(job) = inner.jobs.get_mut(job_id) {
-            job.asked_to_wrap_up = true;
-        }
-        self.notify(&inner);
     }
 
     fn settle(&self, job_id: &str, status: &str, outcome: &str, text: &str) {
@@ -2058,7 +2141,7 @@ pub fn tools() -> Value {
                     },
                     "timeoutSeconds": {
                         "type": "number",
-                        "description": "Budget per worker before Alethe stops it, default 900 unless the person changed it in the Orchestration settings. Four fifths in, the worker is told to write down what it has, and a worker that is stopped still delivers what it had written. Pass 0 to let a worker run without a limit."
+                        "description": "Budget per worker before Alethe stops it, default 900 unless the person changed it in the Orchestration settings. The worker is told its budget when it starts, and a worker that is stopped still delivers what it had written. Pass 0 to let a worker run without a limit."
                     },
                     "role": {
                         "type": "string",
@@ -2631,7 +2714,6 @@ fn dispatch_tool(
                             awaiting_steer: false,
                             next_request_id: 10,
                             superseded_by: None,
-                            asked_to_wrap_up: false,
                         },
                     );
                     inner.order.push(id.clone());
@@ -3110,7 +3192,6 @@ mod tests {
             awaiting_steer: false,
             next_request_id: 10,
             superseded_by: None,
-            asked_to_wrap_up: false,
         }
     }
 

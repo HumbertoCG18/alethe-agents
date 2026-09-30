@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { orchestratorCodexModels } from '../../../lib/tauri/orchestrator'
 import { EMPTY_PROJECTS_FILE, type OrchestrationRole } from '../../../lib/types'
 import { useProjectsStore } from '../../../stores/projectsStore'
 import { OrchestrationPage } from './OrchestrationPage'
@@ -69,6 +70,29 @@ describe('OrchestrationPage', () => {
     expect(screen.queryByRole('option', { name: 'ultra' })).toBeNull()
     fireEvent.click(screen.getByRole('option', { name: 'medium' }))
     expect(orchestration().roles[0]).toMatchObject({ effort: 'medium' })
+  })
+
+  it('still offers the Codex efforts when Codex does not list its models', async () => {
+    vi.mocked(orchestratorCodexModels).mockRejectedValueOnce(
+      new Error('codex did not list its models in time'),
+    )
+    withRoles([{ ...reviewer, effort: null }])
+    render(<OrchestrationPage />)
+    await act(async () => {})
+
+    fireEvent.click(screen.getByRole('button', { name: 'Effort for reviewer' }))
+    expect(screen.getByRole('option', { name: 'xhigh' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('option', { name: 'medium' }))
+    expect(orchestration().roles[0]).toMatchObject({ effort: 'medium' })
+  })
+
+  it('offers the Codex efforts while Codex is still listing its models', () => {
+    vi.mocked(orchestratorCodexModels).mockReturnValueOnce(new Promise(() => {}))
+    withRoles([{ ...reviewer, effort: null }])
+    render(<OrchestrationPage />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Effort for reviewer' }))
+    expect(screen.getByRole('option', { name: 'high' })).toBeTruthy()
   })
 
   it('offers the efforts Claude Code takes for a Claude role', () => {

@@ -227,6 +227,91 @@ mod reply_tests {
     }
 }
 
+/// The start of a long text, cut at a character boundary.
+fn head(text: &str, limit: usize) -> String {
+    if text.chars().count() <= limit {
+        return text.to_string();
+    }
+    let mut cut: String = text.chars().take(limit).collect();
+    cut.push('…');
+    cut
+}
+
+/// How much of a worker a planner gets from `alethe_status`. The UI reads the whole snapshot.
+const STATUS_SPEC_CHARS: usize = 240;
+const STATUS_SUMMARY_CHARS: usize = 400;
+const STATUS_PLAN_STEPS: usize = 3;
+/// Settled workers listed by default, and when the planner asks for all of them.
+const STATUS_SETTLED: usize = 10;
+const STATUS_SETTLED_ALL: usize = 40;
+
+/// The snapshot reduced to what a planner can take in. Returned whole, a dozen workers with long
+/// briefs pass the size a planner's tool result may have, and the call fails instead of answering.
+/// A planner gets its own workers unless it asks for all: the active ones and the most recent
+/// settled ones, each with its long texts trimmed. `omitted` counts the workers left out.
+fn planner_status(mut snapshot: Value, planner: Option<&str>, all: bool) -> Value {
+    let jobs = snapshot
+        .get_mut("jobs")
+        .and_then(Value::as_array_mut)
+        .map(std::mem::take)
+        .unwrap_or_default();
+    let total = jobs.len();
+    let active = |job: &Value| {
+        matches!(
+            job.get("status").and_then(Value::as_str),
+            Some(STATUS_QUEUED | STATUS_RUNNING | STATUS_BLOCKED)
+        )
+    };
+    let listed: Vec<Value> = jobs
+        .into_iter()
+        .filter(|job| {
+            all || planner.is_none() || job.get("plannerId").and_then(Value::as_str) == planner
+        })
+        .collect();
+    let limit = if all {
+        STATUS_SETTLED_ALL
+    } else {
+        STATUS_SETTLED
+    };
+    let settled = listed.iter().filter(|job| !active(job)).count();
+    let mut older = settled.saturating_sub(limit);
+    let kept: Vec<Value> = listed
+        .into_iter()
+        .filter(|job| {
+            if active(job) || older == 0 {
+                return true;
+            }
+            older -= 1;
+            false
+        })
+        .map(trimmed_job)
+        .collect();
+    snapshot["omitted"] = json!(total - kept.len());
+    snapshot["jobs"] = Value::Array(kept);
+    snapshot
+}
+
+fn trimmed_job(mut job: Value) -> Value {
+    if let Some(spec) = job.get("spec").and_then(Value::as_str) {
+        job["spec"] = json!(head(spec, STATUS_SPEC_CHARS));
+    }
+    if let Some(summary) = job.get("summary").and_then(Value::as_str) {
+        job["summary"] = json!(tail(summary, STATUS_SUMMARY_CHARS));
+    }
+    if let Some(plan) = job.get_mut("plan").and_then(Value::as_array_mut) {
+        let earlier = plan.len().saturating_sub(STATUS_PLAN_STEPS);
+        plan.drain(..earlier);
+    }
+    if let Some(total) = job
+        .get("tokens")
+        .and_then(|tokens| tokens.get("total"))
+        .cloned()
+    {
+        job["tokens"] = json!({ "total": total });
+    }
+    job
+}
+
 fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1910,8 +1995,16 @@ pub fn tools() -> Value {
         },
         {
             "name": "alethe_status",
-            "description": "Snapshot of every worker without blocking: status, elapsed time, current plan and token usage.",
-            "inputSchema": { "type": "object", "properties": {} }
+            "description": "Your workers without blocking: status, elapsed time, the last plan steps and token usage, with long texts trimmed. Lists the ones still active plus your most recent settled ones; omitted says how many were left out. Use alethe_check for what a worker reported.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "all": {
+                        "type": "boolean",
+                        "description": "Also list other planners' workers and older settled ones, still trimmed."
+                    }
+                }
+            }
         },
         {
             "name": "alethe_steer",
@@ -2513,7 +2606,14 @@ fn dispatch_tool(
             }))
         }
 
-        "alethe_status" => Ok(core.snapshot()),
+        "alethe_status" => Ok(planner_status(
+            core.snapshot(),
+            planner,
+            arguments
+                .get("all")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+        )),
 
         "alethe_steer" => {
             let job_id = required_str(arguments, "jobId")?;

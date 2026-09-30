@@ -1537,3 +1537,105 @@ fn a_claude_role_runs_on_its_model_and_effort() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// What alethe_status returns has to fit a planner; the UI keeps reading the full snapshot (#258).
+fn call_as(core: &Core, planner: &str, name: &str, arguments: Value) -> Value {
+    let body = json!({
+        "jsonrpc": "2.0",
+        "id": 10,
+        "method": "tools/call",
+        "params": { "name": name, "arguments": arguments }
+    });
+    let raw = handle_mcp_body(core, &body.to_string(), Some(planner)).expect("a response");
+    let response: Value = serde_json::from_str(&raw).expect("valid json");
+    let text = response["result"]["content"][0]["text"]
+        .as_str()
+        .expect("tool text");
+    serde_json::from_str(text).unwrap_or_else(|_| json!({ "raw": text }))
+}
+
+#[test]
+fn the_status_stays_small_however_long_the_tasks_are() {
+    let dir = workspace("status-small");
+    let core = Core::default();
+    // About 6,000 characters each, with accents, like a real review brief.
+    let brief = "Revisão do diff com atenção à validação e às exceções — ".repeat(110);
+    let tasks: Vec<String> = (0..12).map(|i| format!("{i}: {brief}")).collect();
+    call_as(
+        &core,
+        "planner-a",
+        "alethe_delegate",
+        json!({ "tasks": tasks, "cwd": dir.to_string_lossy() }),
+    );
+    // No launcher is registered, so every worker settles at once.
+    call_as(
+        &core,
+        "planner-a",
+        "alethe_check",
+        json!({ "wait": true, "timeoutMs": 5000 }),
+    );
+
+    let status = call_as(&core, "planner-a", "alethe_status", json!({}));
+    let size = status.to_string().chars().count();
+    assert!(size < 12_000, "the status has {size} characters");
+    let jobs = status["jobs"].as_array().expect("jobs");
+    assert!(!jobs.is_empty(), "{status}");
+    for job in jobs {
+        let spec = job["spec"].as_str().unwrap_or_default();
+        assert!(spec.chars().count() <= 241, "task text not trimmed: {spec}");
+    }
+    // Of twelve settled workers, the ten most recent are listed, in order, and two are counted.
+    let listed: Vec<&str> = jobs.iter().filter_map(|job| job["id"].as_str()).collect();
+    let expected: Vec<String> = (3..=12).map(|n| format!("job-{n:02}")).collect();
+    assert_eq!(listed, expected, "{status}");
+    assert_eq!(status["omitted"], json!(2), "{status}");
+
+    let snapshot = core.snapshot();
+    assert_eq!(
+        snapshot["jobs"].as_array().map(Vec::len),
+        Some(12),
+        "the UI still gets every worker"
+    );
+    assert!(
+        snapshot["jobs"][0]["spec"]
+            .as_str()
+            .unwrap_or_default()
+            .chars()
+            .count()
+            > 5_000,
+        "the UI still gets the whole task text"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_planner_sees_its_own_workers_and_a_count_of_the_rest() {
+    let dir = workspace("status-mine");
+    let core = Core::default();
+    let cwd = dir.to_string_lossy().into_owned();
+    call_as(
+        &core,
+        "planner-a",
+        "alethe_delegate",
+        json!({ "tasks": ["task of a"], "cwd": cwd }),
+    );
+    call_as(
+        &core,
+        "planner-b",
+        "alethe_delegate",
+        json!({ "tasks": ["task of b"], "cwd": cwd }),
+    );
+
+    let mine = call_as(&core, "planner-a", "alethe_status", json!({}));
+    let jobs = mine["jobs"].as_array().expect("jobs");
+    assert_eq!(jobs.len(), 1, "{mine}");
+    assert_eq!(jobs[0]["plannerId"], "planner-a");
+    assert_eq!(mine["omitted"], json!(1), "{mine}");
+
+    let all = call_as(&core, "planner-a", "alethe_status", json!({ "all": true }));
+    assert_eq!(all["jobs"].as_array().map(Vec::len), Some(2), "{all}");
+    assert_eq!(all["omitted"], json!(0), "{all}");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -119,6 +119,9 @@ pub struct OrchestrationSettings {
     pub max_concurrent: usize,
     /// 0 lets a worker run without a limit.
     pub default_timeout_seconds: u64,
+    /// Codex plugin ids turned off in worker threads (#266).
+    #[serde(default)]
+    pub worker_disabled_plugins: Vec<String>,
 }
 
 /// What a role decides. Passing any of these next to a role is refused.
@@ -646,6 +649,8 @@ struct Inner {
     /// The budget a worker gets when the call names none; None lets it run without a limit.
     default_timeout_ms: Option<u64>,
     roles: Vec<Role>,
+    /// Codex plugins turned off in worker threads.
+    worker_disabled_plugins: Vec<String>,
     job_counter: u64,
     run_counter: u64,
     planners: HashMap<String, Planner>,
@@ -757,6 +762,15 @@ fn thread_start_params(
         params["model"] = json!(model);
     }
     params
+}
+
+/// Turns the given Codex plugins off for this thread only. Each one otherwise runs its hooks on
+/// every worker start and prompt and sends its context with every call, which a worker that only
+/// reads and reports has no use for. The person's own hooks and MCP servers are not plugins and stay.
+fn disable_plugins(params: &mut Value, plugins: &[String]) {
+    for plugin in plugins {
+        params["config"]["plugins"][plugin] = json!({ "enabled": false });
+    }
 }
 
 /// Picking a thread up again takes the same settings it started with. Without them the resumed
@@ -1207,6 +1221,7 @@ impl Core {
                 seconds => Some(seconds.saturating_mul(1000)),
             };
             inner.roles = settings.roles;
+            inner.worker_disabled_plugins = settings.worker_disabled_plugins;
             self.notify(&inner);
         }
         // A higher limit lets queued work start now instead of after the next worker finishes.
@@ -1442,7 +1457,7 @@ impl Core {
             let _ = send_rpc(&stdin, &json!({ "method": "initialized" }));
             // Codex keeps threads on disk, so a worker whose process died can pick up its own history
             // instead of reading everything again.
-            let opening = match &resume_thread {
+            let mut opening = match &resume_thread {
                 Some(thread_id) => json!({
                     "id": 2,
                     "method": "thread/resume",
@@ -1469,6 +1484,8 @@ impl Core {
                     )
                 }),
             };
+            let plugins = guard(&self.inner).worker_disabled_plugins.clone();
+            disable_plugins(&mut opening["params"], &plugins);
             let _ = send_rpc(&stdin, &opening);
         }
 
@@ -3371,6 +3388,46 @@ mod tests {
         );
         assert_eq!(params["sandbox"], "workspace-write");
         assert_eq!(params["config"]["tools"]["web_search"]["mode"], "live");
+    }
+
+    // Plugins listed in the Orchestration settings are off in a worker's thread (#266).
+    #[test]
+    fn a_codex_worker_thread_starts_without_the_listed_plugins() {
+        let mut params = thread_start_params("/repo", "\"never\"", "read-only", false, None, None);
+        disable_plugins(&mut params, &["ecc@ecc".into(), "ponytail@ponytail".into()]);
+        assert_eq!(params["config"]["plugins"]["ecc@ecc"]["enabled"], false);
+        assert_eq!(
+            params["config"]["plugins"]["ponytail@ponytail"]["enabled"],
+            false
+        );
+        assert_eq!(params["config"]["tools"]["web_search"]["mode"], "disabled");
+
+        let mut untouched =
+            thread_start_params("/repo", "\"never\"", "read-only", false, None, None);
+        disable_plugins(&mut untouched, &[]);
+        assert!(untouched["config"].get("plugins").is_none(), "{untouched}");
+    }
+
+    #[test]
+    fn the_settings_carry_the_plugins_workers_start_without() {
+        let core = Core::default();
+        let settings: OrchestrationSettings = serde_json::from_value(json!({
+            "maxConcurrent": 4,
+            "defaultTimeoutSeconds": 900,
+            "workerDisabledPlugins": ["ecc@ecc"]
+        }))
+        .expect("settings");
+        core.apply_settings(settings);
+        assert_eq!(
+            guard(&core.inner).worker_disabled_plugins,
+            vec!["ecc@ecc".to_string()]
+        );
+
+        // Settings saved before the list existed still parse.
+        let older: OrchestrationSettings =
+            serde_json::from_value(json!({ "maxConcurrent": 4, "defaultTimeoutSeconds": 900 }))
+                .expect("older settings");
+        assert!(older.worker_disabled_plugins.is_empty());
     }
 
     // A worker picked up again after its process died must not lose its read-only sandbox.

@@ -11,6 +11,16 @@
   align-items: center;
 }
 
+.pluginList {
+  grid-column: 1 / -1;
+}
+
+.pluginList textarea {
+  min-height: 72px;
+  resize: vertical;
+  font-family: var(--font-mono);
+}
+
 .roles {
   display: flex;
   flex-direction: column;

@@ -9,6 +9,7 @@ import {
   isOrchestrationName,
   MAX_CONCURRENT_LIMITS,
   MAX_TIMEOUT_SECONDS,
+  pluginIds,
 } from '../../../lib/orchestrationSettings'
 import { type CodexModelOption, orchestratorCodexModels } from '../../../lib/tauri/orchestrator'
 import type { OrchestrationRole, OrchestrationSettings } from '../../../lib/types'
@@ -44,6 +45,8 @@ export function OrchestrationPage() {
   const [nameDraft, setNameDraft] = useState<{ index: number; base: string; text: string } | null>(
     null,
   )
+  // The plugin list as typed, so a trailing comma or line survives until the field loses focus.
+  const [pluginsDraft, setPluginsDraft] = useState<string | null>(null)
 
   useEffect(() => {
     let live = true
@@ -156,6 +159,22 @@ export function OrchestrationPage() {
               }}
             />
             <span className={controls.hint}>{t('prefs.orchestrationTimeoutHint')}</span>
+          </label>
+          <label className={`${controls.field} ${styles.pluginList}`}>
+            <span className={controls.label}>{t('prefs.orchestrationWorkerPlugins')}</span>
+            <textarea
+              className={controls.input}
+              aria-label={t('prefs.orchestrationWorkerPlugins')}
+              rows={3}
+              spellCheck={false}
+              value={pluginsDraft ?? settings.workerDisabledPlugins.join('\n')}
+              onChange={(event) => {
+                setPluginsDraft(event.target.value)
+                save({ workerDisabledPlugins: pluginIds(event.target.value.split(/[\s,]+/)) })
+              }}
+              onBlur={() => setPluginsDraft(null)}
+            />
+            <span className={controls.hint}>{t('prefs.orchestrationWorkerPluginsHint')}</span>
           </label>
         </div>
       </SettingsSection>

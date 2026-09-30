@@ -157,4 +157,19 @@ describe('OrchestrationPage', () => {
 
     expect(orchestration().maxConcurrent).toBe(5)
   })
+
+  // Codex plugins a worker starts without (#266).
+  it('saves the Codex plugins workers start without, one id per line or comma', () => {
+    render(<OrchestrationPage />)
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Codex plugins off in workers' }), {
+      target: { value: 'claude-mem@claude-mem-local, ecc@ecc\nponytail@ponytail' },
+    })
+
+    expect(orchestration().workerDisabledPlugins).toEqual([
+      'claude-mem@claude-mem-local',
+      'ecc@ecc',
+      'ponytail@ponytail',
+    ])
+  })
 })

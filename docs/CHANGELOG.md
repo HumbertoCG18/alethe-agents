@@ -115,6 +115,10 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ### Fixed
 
+- Alethe no longer closes by itself while a delegated worker streams a long reply with accented
+  or other non-ASCII text. Trimming the live reply to its last 16,000 bytes could cut a character
+  in half, which crashed the whole app
+  ([#256](https://github.com/Kc1t/alethe-agents/issues/256)).
 - Every coding agent reached the routing model described the same way, so a request that named no
   agent had nothing to choose on and the answer spread evenly across them, which showed up as a low
   confidence and a fallback. Agents now carry how many panes they have open and whether one of them

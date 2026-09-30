@@ -186,6 +186,47 @@ fn tail(text: &str, limit: usize) -> String {
     trimmed.chars().skip(count - limit).collect()
 }
 
+/// Appends to a worker's live reply and keeps only its last `REPLY_LIMIT` bytes. The cut moves
+/// forward to a character boundary: splitting inside a multi-byte character panics, and a release
+/// build aborts on panic, which closes the whole app.
+fn push_reply(reply: &mut String, text: &str) {
+    reply.push_str(text);
+    if reply.len() > REPLY_LIMIT {
+        let mut cut = reply.len() - REPLY_LIMIT;
+        while !reply.is_char_boundary(cut) {
+            cut += 1;
+        }
+        *reply = reply.split_off(cut);
+    }
+}
+
+#[cfg(test)]
+mod reply_tests {
+    use super::{push_reply, REPLY_LIMIT};
+
+    // A cut inside a multi-byte character used to panic, and a release build aborts on panic (#256).
+    #[test]
+    fn a_long_reply_with_accents_is_trimmed_at_a_character_boundary() {
+        let mut reply = String::new();
+        // Each 'ã' is two bytes, so one more byte puts the cut in the middle of a character.
+        push_reply(&mut reply, &"ã".repeat(REPLY_LIMIT));
+        push_reply(&mut reply, "a");
+        assert!(reply.len() <= REPLY_LIMIT);
+        assert!(reply.ends_with("ãa"));
+
+        push_reply(&mut reply, "çã");
+        assert!(reply.len() <= REPLY_LIMIT);
+        assert!(reply.ends_with("açã"));
+    }
+
+    #[test]
+    fn a_short_reply_is_kept_whole() {
+        let mut reply = String::from("olá");
+        push_reply(&mut reply, ", revisão concluída");
+        assert_eq!(reply, "olá, revisão concluída");
+    }
+}
+
 fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1481,11 +1522,7 @@ impl Core {
             }
             "item/agentMessage/delta" => {
                 if let Some(delta) = params.get("delta").and_then(Value::as_str) {
-                    job.reply.push_str(delta);
-                    if job.reply.len() > REPLY_LIMIT {
-                        let cut = job.reply.len() - REPLY_LIMIT;
-                        job.reply = job.reply.split_off(cut);
-                    }
+                    push_reply(&mut job.reply, delta);
                 }
                 return;
             }
@@ -1603,11 +1640,7 @@ impl Core {
                 }
                 let mut inner = guard(&self.inner);
                 if let Some(job) = inner.jobs.get_mut(job_id) {
-                    job.reply.push_str(&text);
-                    if job.reply.len() > REPLY_LIMIT {
-                        let cut = job.reply.len() - REPLY_LIMIT;
-                        job.reply = job.reply.split_off(cut);
-                    }
+                    push_reply(&mut job.reply, &text);
                 }
                 self.notify(&inner);
             }

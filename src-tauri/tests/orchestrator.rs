@@ -2020,3 +2020,163 @@ fn a_planner_sees_its_own_workers_and_a_count_of_the_rest() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// A role falls back to the role it names when its provider is running out (#268).
+fn roles_with_fallbacks() -> OrchestrationSettings {
+    settings(json!({
+        "roles": [
+            {
+                "name": "executor-t2",
+                "agent": "claude",
+                "model": "claude-opus-5-5",
+                "effort": "high",
+                "readOnly": false,
+                "timeoutSeconds": 600,
+                "fallback": "executor-codex"
+            },
+            {
+                "name": "executor-codex",
+                "agent": "codex",
+                "model": "gpt-6.1-sol",
+                "effort": "medium",
+                "readOnly": false,
+                "timeoutSeconds": 900
+            },
+            {
+                "name": "reviewer",
+                "agent": "codex",
+                "model": "gpt-6.1-sol",
+                "effort": "medium",
+                "readOnly": true,
+                "timeoutSeconds": 600,
+                "fallback": "executor-t2"
+            }
+        ],
+        "maxConcurrent": 4,
+        "defaultTimeoutSeconds": 900
+    }))
+}
+
+fn quota(core: &Core, claude: u32, codex: u32) {
+    core.set_agent_fitness(
+        "claude",
+        json!({ "worst": "5h", "used": claude, "rateLimited": false }),
+    );
+    core.set_agent_fitness(
+        "codex",
+        json!({ "worst": "week", "used": codex, "rateLimited": false }),
+    );
+}
+
+fn delegate_role(core: &Core, dir: &std::path::Path, role: &str) -> (Value, Value) {
+    let delegated = call(
+        core,
+        "alethe_delegate",
+        json!({ "tasks": ["do the work"], "cwd": dir.to_string_lossy(), "role": role }),
+    );
+    let snapshot = core.snapshot();
+    let job = snapshot["jobs"]
+        .as_array()
+        .and_then(|jobs| jobs.last())
+        .cloned()
+        .unwrap_or(Value::Null);
+    (delegated, job)
+}
+
+#[test]
+fn a_role_falls_back_when_its_provider_is_running_out() {
+    let dir = workspace("role-fallback");
+    let core = Core::default();
+    core.apply_settings(roles_with_fallbacks());
+    quota(&core, 86, 20);
+
+    let (delegated, job) = delegate_role(&core, &dir, "executor-t2");
+    assert_eq!(delegated["timeoutSeconds"], json!(900), "{delegated}");
+    assert_eq!(
+        job["role"], "executor-t2",
+        "the planner's role is kept: {job}"
+    );
+    assert_eq!(job["agent"], "codex", "{job}");
+    assert_eq!(job["model"], "gpt-6.1-sol", "{job}");
+    assert_eq!(job["effort"], "medium", "{job}");
+    assert_eq!(
+        job["routing"],
+        json!({
+            "verdict": "fallback",
+            "from": "executor-t2",
+            "to": "executor-codex",
+            "agent": "claude",
+            "window": "5h",
+            "used": 86.0
+        }),
+        "{job}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_role_runs_as_configured_unless_its_fallback_has_room() {
+    let dir = workspace("role-no-fallback");
+    let core = Core::default();
+    core.apply_settings(roles_with_fallbacks());
+
+    quota(&core, 50, 20);
+    let (_, below) = delegate_role(&core, &dir, "executor-t2");
+    assert_eq!(below["agent"], "claude", "below the threshold: {below}");
+
+    quota(&core, 86, 90);
+    let (_, both) = delegate_role(&core, &dir, "executor-t2");
+    assert_eq!(both["agent"], "claude", "both running out: {both}");
+    assert_eq!(both["model"], "claude-opus-5-5", "{both}");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_read_only_role_never_falls_back_to_a_writable_one() {
+    let dir = workspace("role-fallback-read-only");
+    let core = Core::default();
+    core.apply_settings(roles_with_fallbacks());
+    quota(&core, 10, 95);
+
+    let (_, job) = delegate_role(&core, &dir, "reviewer");
+    assert_eq!(job["agent"], "codex", "{job}");
+    assert_eq!(job["readOnly"], true, "{job}");
+    assert_ne!(
+        job["routing"]["verdict"], "fallback",
+        "a read-only role was run writable: {job}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn the_headroom_hint_reads_the_agent_a_role_runs_on() {
+    let dir = workspace("role-headroom-hint");
+    let core = Core::default();
+    // No fallback configured for this one, so the hint is all the planner gets.
+    core.apply_settings(settings(json!({
+        "roles": [{
+            "name": "executor-t2",
+            "agent": "claude",
+            "model": "claude-opus-5-5",
+            "effort": null,
+            "readOnly": false,
+            "timeoutSeconds": null
+        }],
+        "maxConcurrent": 4,
+        "defaultTimeoutSeconds": 900
+    })));
+    quota(&core, 86, 20);
+
+    let (delegated, job) = delegate_role(&core, &dir, "executor-t2");
+    assert_eq!(job["agent"], "claude", "{job}");
+    assert_eq!(
+        delegated["headroomHint"]["agent"], "codex",
+        "the hint has to be about claude, the agent this role runs on: {delegated}"
+    );
+    assert_eq!(job["routing"]["verdict"], "ignored", "{job}");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

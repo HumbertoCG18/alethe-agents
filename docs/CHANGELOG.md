@@ -23,6 +23,11 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
   Codex plugin ids that worker threads start without, so plugins that run hooks on every start
   and prompt, or add their context to every call, stay out of workers that only read and report.
   Interactive Codex sessions, and your own hooks and MCP servers, are not affected.
+- **A role can fall back to another when its provider runs out.** Each role in the Orchestration
+  settings can name a fallback role. When a delegation asks for a role whose provider is at or past
+  80% of its quota and the fallback's provider has room, the workers run as the fallback role, and
+  the worker card says so. A read-only role only falls back to a read-only one. The headroom hint a
+  planner gets now reads the agent a role runs on instead of assuming Codex.
 - **Delegated workers can run on a chosen model, effort and read-only sandbox.** A planner can now
   pass `model`, `effort` and `readOnly` when it delegates, so work such as an independent review on
   another model runs as a worker on the orchestration board instead of outside Alethe. The worker

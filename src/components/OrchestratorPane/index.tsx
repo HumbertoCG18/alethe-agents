@@ -1622,13 +1622,17 @@ export const OrchestratorPane = memo(function OrchestratorPane({
                           style={{ left: edge.note.x, top: edge.note.y }}
                         >
                           {t(
-                            edge.note.verdict === 'ignored'
-                              ? 'orchestrator.routingIgnored'
-                              : 'orchestrator.routingChosen',
+                            edge.note.verdict === 'fallback'
+                              ? 'orchestrator.routingFallback'
+                              : edge.note.verdict === 'ignored'
+                                ? 'orchestrator.routingIgnored'
+                                : 'orchestrator.routingChosen',
                             {
                               agent: edge.note.agent,
                               window: edge.note.window,
                               used: String(edge.note.used),
+                              from: edge.note.from ?? '',
+                              to: edge.note.to ?? '',
                             },
                           )}
                         </span>

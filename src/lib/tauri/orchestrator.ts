@@ -61,11 +61,17 @@ export type OrchestratorClaudeQuota = {
 }
 
 export type OrchestratorRouting = {
-  /** `ignored` means the planner delegated into the strained side with the reading in hand. */
-  verdict: 'chosen' | 'ignored'
+  /**
+   * `ignored` means the planner delegated into the strained side with the reading in hand;
+   * `fallback` that the role asked for ran as its fallback role because `agent` was running out.
+   */
+  verdict: 'chosen' | 'ignored' | 'fallback'
   agent: string
   window: string
   used: number
+  /** Set on a `fallback`: the role asked for and the role it ran as. */
+  from?: string
+  to?: string
 }
 
 export type OrchestratorJob = {

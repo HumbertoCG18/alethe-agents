@@ -67,13 +67,33 @@ export function normalizeOrchestrationSettings(raw: unknown): OrchestrationSetti
     ? source.defaultTimeoutSeconds
     : DEFAULTS.defaultTimeoutSeconds
   return {
-    roles: roles.map((role) => ({ ...role })),
+    roles: roles.map(({ fallback, ...role }) =>
+      fallback &&
+      canFallBackTo(
+        role,
+        roles.find((other) => other.name === fallback),
+      )
+        ? { ...role, fallback }
+        : role,
+    ),
     maxConcurrent,
     defaultTimeoutSeconds,
     workerDisabledPlugins: pluginIds(
       Array.isArray(source.workerDisabledPlugins) ? source.workerDisabledPlugins : [],
     ),
   }
+}
+
+/**
+ * Whether `role` may run as `fallback` while its provider is running out (#268): another role,
+ * and never a writable one for a read-only role. The orchestrator checks the same.
+ */
+export function canFallBackTo(
+  role: Pick<OrchestrationRole, 'name' | 'readOnly'>,
+  fallback: Pick<OrchestrationRole, 'name' | 'readOnly'> | undefined,
+): boolean {
+  if (!fallback || fallback.name === role.name) return false
+  return !role.readOnly || fallback.readOnly
 }
 
 /** Codex plugin ids, each once; anything Codex could not take as an id is dropped. */

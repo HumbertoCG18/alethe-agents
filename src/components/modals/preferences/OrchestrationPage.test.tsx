@@ -172,4 +172,43 @@ describe('OrchestrationPage', () => {
       'ponytail@ponytail',
     ])
   })
+
+  // A role's fallback while its provider is running out (#268).
+  it('offers as fallback only the roles a role may run as', () => {
+    const executor: OrchestrationRole = {
+      name: 'executor',
+      agent: 'claude',
+      model: null,
+      effort: null,
+      readOnly: false,
+      timeoutSeconds: null,
+    }
+    withRoles([reviewer, executor, { ...reviewer, name: 'reviewer-b' }])
+    render(<OrchestrationPage />)
+
+    // A read-only role cannot fall back to the writable executor.
+    fireEvent.click(screen.getByRole('button', { name: 'Fallback for reviewer' }))
+    expect(screen.queryByRole('option', { name: 'executor' })).toBeNull()
+    fireEvent.click(screen.getByRole('option', { name: 'reviewer-b' }))
+    expect(orchestration().roles[0]).toMatchObject({ name: 'reviewer', fallback: 'reviewer-b' })
+
+    choose('Fallback for executor', 'reviewer')
+    expect(orchestration().roles[1]).toMatchObject({ name: 'executor', fallback: 'reviewer' })
+  })
+
+  it('keeps a fallback pointing at a role that is renamed, and drops it when that role goes', () => {
+    withRoles([
+      { ...reviewer, fallback: 'reviewer-b' },
+      { ...reviewer, name: 'reviewer-b' },
+    ])
+    render(<OrchestrationPage />)
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Name of role reviewer-b' }), {
+      target: { value: 'reviewer-c' },
+    })
+    expect(orchestration().roles[0].fallback).toBe('reviewer-c')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove reviewer-c' }))
+    expect(orchestration().roles[0].fallback ?? null).toBeNull()
+  })
 })

@@ -807,6 +807,11 @@ export const ptBR: Record<MessageKey, string> = {
   'prefs.orchestrationCliDefault': 'Padrão da CLI',
   'prefs.orchestrationModelDefault': 'Padrão do modelo',
   'prefs.orchestrationBudgetDefault': 'Padrão',
+  'prefs.orchestrationFallback': 'Fallback',
+  'prefs.orchestrationFallbackFor': 'Fallback de {name}',
+  'prefs.orchestrationFallbackNone': 'Nenhum',
+  'prefs.orchestrationFallbackHint':
+    'Quando o provedor de um papel passa de 80% da quota e o do fallback tem folga, o trabalho roda como o papel de fallback. Um papel somente leitura só cai para outro somente leitura.',
   'prefs.orchestrationModelsLoading': 'Lendo os modelos que o Codex oferece…',
   'prefs.orchestrationModelsFailed':
     'Não foi possível listar os modelos do Codex ({error}). Você ainda pode digitar o nome de um modelo.',
@@ -2265,6 +2270,7 @@ export const ptBR: Record<MessageKey, string> = {
   'orchestrator.askFileChange': 'Ele quer alterar arquivos.',
   'orchestrator.routingChosen': 'escolhido · {agent} {window} {used}%',
   'orchestrator.routingIgnored': 'hint ignorado · {agent} {window} {used}%',
+  'orchestrator.routingFallback': 'fallback · {from} → {to} · {agent} {window} {used}%',
   'orchestrator.askIn': 'em {path}',
   'orchestrator.askHint':
     'Recusar deixa ele seguir por outro caminho. Abortar encerra o turno dele.',

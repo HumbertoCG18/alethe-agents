@@ -108,6 +108,9 @@ pub struct Role {
     /// None uses the default budget; 0 lets the worker run without a limit.
     #[serde(default)]
     pub timeout_seconds: Option<u64>,
+    /// The role to run instead while this one's provider is running out of quota (#268).
+    #[serde(default)]
+    pub fallback: Option<String>,
 }
 
 /// What the Orchestration settings in Preferences hand to the orchestrator.
@@ -893,12 +896,47 @@ fn codex_models(result: &Value) -> Value {
     Value::Array(models)
 }
 
+/// The role to run instead of `role` while its provider is running out (#268): the one it names,
+/// when that one's provider has room and it does not make read-only work writable. One level only,
+/// and the note says why, for the worker card.
+fn fallback_of<'a>(
+    fitness: &HashMap<String, Value>,
+    roles: &'a [Role],
+    role: &Role,
+) -> Option<(&'a Role, Value)> {
+    let name = role.fallback.as_deref()?;
+    let fallback = roles
+        .iter()
+        .find(|other| other.name == name && other.name != role.name)?;
+    if role.read_only && !fallback.read_only {
+        return None;
+    }
+    let snapshot = fitness
+        .get(&role.agent)
+        .filter(|snapshot| past_threshold(snapshot))?;
+    if fitness.get(&fallback.agent).is_some_and(past_threshold) {
+        return None;
+    }
+    Some((
+        fallback,
+        json!({
+            "verdict": "fallback",
+            "from": role.name,
+            "to": fallback.name,
+            "agent": role.agent,
+            "window": snapshot.get("worst").and_then(Value::as_str).unwrap_or_default(),
+            "used": snapshot.get("used").and_then(Value::as_f64).unwrap_or(0.0).round(),
+        }),
+    ))
+}
+
 /// A delegate call that names a role gets that role's settings and nothing else, so a planner can
-/// neither run a read-only role writable nor switch its model. Unknown roles are refused.
+/// neither run a read-only role writable nor switch its model. Unknown roles are refused. A role
+/// whose provider is running out runs as its fallback, with a routing note that says so.
 fn resolve_role(
     core: &Core,
     arguments: &Map<String, Value>,
-) -> Result<Option<Map<String, Value>>, String> {
+) -> Result<Option<(Map<String, Value>, Option<Value>)>, String> {
     let name = match arguments.get("role") {
         None | Some(Value::Null) => return Ok(None),
         Some(Value::String(name)) => name,
@@ -913,7 +951,7 @@ fn resolve_role(
         ));
     }
     let inner = guard(&core.inner);
-    let Some(role) = inner.roles.iter().find(|role| &role.name == name) else {
+    let Some(asked) = inner.roles.iter().find(|role| &role.name == name) else {
         let known: Vec<&str> = inner.roles.iter().map(|role| role.name.as_str()).collect();
         return Err(format!(
             "unknown role {name}; configured roles: {}",
@@ -924,6 +962,12 @@ fn resolve_role(
             }
         ));
     };
+    let (role, note) = match fallback_of(&guard(&core.fitness), &inner.roles, asked) {
+        Some((fallback, note)) => (fallback, Some(note)),
+        None => (asked, None),
+    };
+    // The worker keeps the role the planner asked for, so the next delegation of that role decides
+    // again. A worker picked up with alethe_send stays where it ran: its thread lives on that agent.
     let mut resolved = arguments.clone();
     resolved.insert("agent".into(), json!(role.agent));
     if let Some(model) = &role.model {
@@ -936,7 +980,7 @@ fn resolve_role(
     if let Some(seconds) = role.timeout_seconds {
         resolved.insert("timeoutSeconds".into(), json!(seconds));
     }
-    Ok(Some(resolved))
+    Ok(Some((resolved, note)))
 }
 
 /// What a Claude worker's command line adds to its launcher: the session to resume, if any, and the
@@ -1157,9 +1201,15 @@ impl Core {
         guard(&self.launchers).insert(launcher.kind.clone(), launcher);
     }
 
+    /// A fallback note, written when the worker was created, says more than a headroom note and
+    /// is kept.
     fn set_job_routing(&self, job_id: &str, routing: Value) {
         let mut inner = guard(&self.inner);
-        if let Some(job) = inner.jobs.get_mut(job_id) {
+        if let Some(job) = inner
+            .jobs
+            .get_mut(job_id)
+            .filter(|job| job.routing.is_none())
+        {
             job.routing = Some(routing);
         }
         self.notify(&inner);
@@ -2488,21 +2538,29 @@ pub fn call_tool(
         return Ok(value);
     };
     if name == "alethe_delegate" {
-        let requested = arguments
-            .get("agent")
-            .and_then(Value::as_str)
-            .unwrap_or("codex");
+        let ids: Vec<String> = map
+            .get("jobs")
+            .and_then(Value::as_array)
+            .map(|jobs| {
+                jobs.iter()
+                    .filter_map(|job| job.get("id").and_then(Value::as_str))
+                    .map(ToOwned::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default();
+        // The agent the workers run on: a call made with a role has no `agent` of its own.
+        let requested = ids
+            .first()
+            .and_then(|id| guard(&core.inner).jobs.get(id).map(|job| job.agent.clone()))
+            .or_else(|| {
+                arguments
+                    .get("agent")
+                    .and_then(Value::as_str)
+                    .map(ToOwned::to_owned)
+            })
+            .unwrap_or_else(|| "codex".to_string());
+        let requested = requested.as_str();
         if let Some(note) = routing_note(&block, requested) {
-            let ids: Vec<String> = map
-                .get("jobs")
-                .and_then(Value::as_array)
-                .map(|jobs| {
-                    jobs.iter()
-                        .filter_map(|job| job.get("id").and_then(Value::as_str))
-                        .map(ToOwned::to_owned)
-                        .collect()
-                })
-                .unwrap_or_default();
             for id in ids {
                 core.set_job_routing(&id, note.clone());
             }
@@ -2526,7 +2584,10 @@ fn dispatch_tool(
             // A role becomes ordinary arguments, so it goes through the same checks as a call
             // that spells them out.
             let resolved = resolve_role(core, arguments)?;
-            let arguments = resolved.as_ref().unwrap_or(arguments);
+            let fallback_note = resolved.as_ref().and_then(|(_, note)| note.clone());
+            let arguments = resolved
+                .as_ref()
+                .map_or(arguments, |(resolved, _)| resolved);
             let role = arguments
                 .get("role")
                 .and_then(Value::as_str)
@@ -2727,7 +2788,7 @@ fn dispatch_tool(
                             child: None,
                             stdin: None,
                             inbox: VecDeque::new(),
-                            routing: None,
+                            routing: fallback_note.clone(),
                             awaiting_steer: false,
                             next_request_id: 10,
                             superseded_by: None,

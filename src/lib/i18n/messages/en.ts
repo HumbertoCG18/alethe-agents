@@ -795,6 +795,11 @@ export const en = {
   'prefs.orchestrationCliDefault': 'CLI default',
   'prefs.orchestrationModelDefault': "Model's default",
   'prefs.orchestrationBudgetDefault': 'Default',
+  'prefs.orchestrationFallback': 'Fallback',
+  'prefs.orchestrationFallbackFor': 'Fallback for {name}',
+  'prefs.orchestrationFallbackNone': 'None',
+  'prefs.orchestrationFallbackHint':
+    "When a role's provider passes 80% of its quota and the fallback's provider has room, the work runs as the fallback role. A read-only role only falls back to a read-only one.",
   'prefs.orchestrationModelsLoading': 'Reading the models Codex offers…',
   'prefs.orchestrationModelsFailed':
     'Could not list the Codex models ({error}). You can still type a model name.',
@@ -2239,6 +2244,7 @@ export const en = {
   'orchestrator.askFileChange': 'It wants to change files.',
   'orchestrator.routingChosen': 'chosen · {agent} {window} {used}%',
   'orchestrator.routingIgnored': 'ignored hint · {agent} {window} {used}%',
+  'orchestrator.routingFallback': 'fallback · {from} → {to} · {agent} {window} {used}%',
   'orchestrator.askIn': 'in {path}',
   'orchestrator.askHint':
     'Declining lets it carry on down another path. Aborting ends its turn here.',

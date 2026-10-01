@@ -65,6 +65,48 @@ describe('preference normalization', () => {
     ])
   })
 
+  // A role's fallback while its provider is running out (#268).
+  it('keeps a fallback only when it names another role the role may run as', () => {
+    const role = (
+      name: string,
+      agent: 'codex' | 'claude',
+      readOnly: boolean,
+      fallback?: unknown,
+    ) => ({
+      name,
+      agent,
+      model: null,
+      effort: null,
+      readOnly,
+      timeoutSeconds: null,
+      ...(fallback === undefined ? {} : { fallback }),
+    })
+    const preferences = normalizePreferences({
+      ...DEFAULT_PREFERENCES,
+      orchestration: {
+        ...DEFAULT_PREFERENCES.orchestration,
+        roles: [
+          role('executor', 'claude', false, 'executor-codex'),
+          role('executor-codex', 'codex', false),
+          // A read-only role must not fall back to a writable one.
+          role('reviewer', 'codex', true, 'executor'),
+          role('self', 'codex', false, 'self'),
+          role('missing', 'codex', false, 'nobody'),
+          role('odd', 'codex', false, 42),
+        ],
+      } as unknown as typeof DEFAULT_PREFERENCES.orchestration,
+    })
+
+    expect(preferences.orchestration.roles.map((entry) => [entry.name, entry.fallback])).toEqual([
+      ['executor', 'executor-codex'],
+      ['executor-codex', undefined],
+      ['reviewer', undefined],
+      ['self', undefined],
+      ['missing', undefined],
+      ['odd', undefined],
+    ])
+  })
+
   it('keeps valid roles and drops the ones the orchestrator would refuse', () => {
     const reviewer = {
       name: 'reviewer',

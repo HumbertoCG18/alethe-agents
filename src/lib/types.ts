@@ -562,6 +562,11 @@ export type OrchestrationRole = {
   readOnly: boolean
   /** null uses the default budget; 0 lets the worker run without a limit. */
   timeoutSeconds: number | null
+  /**
+   * Another role to run instead while this one's provider is past 80% of its quota. A read-only
+   * role only falls back to a read-only one.
+   */
+  fallback?: string | null
 }
 
 export type OrchestrationSettings = {

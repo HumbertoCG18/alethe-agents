@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { agentLabel } from '../../../lib/agentProviders'
 import { useT } from '../../../lib/i18n'
 import {
+  canFallBackTo,
   CLAUDE_EFFORTS,
   CODEX_EFFORTS,
   isOrchestrationName,
@@ -58,8 +59,25 @@ export function OrchestrationPage() {
     }
   }, [])
 
+  // A fallback that no longer names a role this one may run as is dropped as the roles change.
+  const withValidFallbacks = (roles: OrchestrationRole[]) =>
+    roles.map((role) =>
+      role.fallback &&
+      !canFallBackTo(
+        role,
+        roles.find((other) => other.name === role.fallback),
+      )
+        ? { ...role, fallback: null }
+        : role,
+    )
   const save = (patch: Partial<OrchestrationSettings>) =>
-    setPreferences({ orchestration: { ...settings, ...patch } })
+    setPreferences({
+      orchestration: {
+        ...settings,
+        ...patch,
+        ...(patch.roles ? { roles: withValidFallbacks(patch.roles) } : {}),
+      },
+    })
   const saveRole = (index: number, patch: Partial<OrchestrationRole>) =>
     save({ roles: settings.roles.map((role, i) => (i === index ? { ...role, ...patch } : role)) })
 
@@ -80,7 +98,16 @@ export function OrchestrationPage() {
     const taken = settings.roles.some((other, i) => i !== index && other.name === next)
     if (isOrchestrationName(next) && !taken) {
       setNameDraft(null)
-      saveRole(index, { name: next })
+      // Roles that fall back to this one follow it to its new name.
+      save({
+        roles: settings.roles.map((other, i) =>
+          i === index
+            ? { ...other, name: next }
+            : other.fallback === role.name
+              ? { ...other, fallback: next }
+              : other,
+        ),
+      })
     } else {
       setNameDraft({ index, base: role.name, text: next })
     }
@@ -203,6 +230,7 @@ export function OrchestrationPage() {
               <span>{t('prefs.orchestrationEffort')}</span>
               <span>{t('prefs.orchestrationReadOnly')}</span>
               <span>{t('prefs.orchestrationBudget')}</span>
+              <span>{t('prefs.orchestrationFallback')}</span>
               <span />
             </div>
             {settings.roles.map((role, index) => {
@@ -279,6 +307,17 @@ export function OrchestrationPage() {
                         if (seconds !== undefined) saveRole(index, { timeoutSeconds: seconds })
                       }}
                     />
+                    <Dropdown
+                      value={role.fallback ?? ''}
+                      ariaLabel={t('prefs.orchestrationFallbackFor', { name: label })}
+                      options={[
+                        { value: '', label: t('prefs.orchestrationFallbackNone') },
+                        ...settings.roles
+                          .filter((other) => canFallBackTo(role, other))
+                          .map((other) => ({ value: other.name, label: other.name })),
+                      ]}
+                      onChange={(value) => saveRole(index, { fallback: value || null })}
+                    />
                     <button
                       type="button"
                       className={controls.iconBtnSm}
@@ -296,6 +335,9 @@ export function OrchestrationPage() {
             })}
           </div>
         )}
+        {settings.roles.length > 0 ? (
+          <p className={controls.hint}>{t('prefs.orchestrationFallbackHint')}</p>
+        ) : null}
 
         <button
           type="button"

@@ -96,6 +96,7 @@ import { AgentIcon } from '../icons/AgentIcons'
 import { MarkdownRenderer } from '../MarkdownPane/MarkdownRenderer'
 import { Modal } from '../modals/Modal'
 import { Collapse } from '../ui/Collapse'
+import { contextShare } from './contextShare'
 import styles from './OrchestratorPane.module.css'
 import { WorkerContextMenu } from './WorkerContextMenu'
 
@@ -165,13 +166,6 @@ function formatTokens(total: number | undefined): string | null {
   if (!total) return null
   if (total < 1000) return `${total}`
   return `${(total / 1000).toFixed(total < 10_000 ? 1 : 0)}k`
-}
-
-function contextShare(job: OrchestratorJob): number | null {
-  const used = job.tokens?.total?.totalTokens
-  const window = job.tokens?.modelContextWindow
-  if (!used || !window) return null
-  return Math.min(100, Math.round((used / window) * 100))
 }
 
 /** A worker's conclusion is the last thing it says: its opening line is narration, not a result. */

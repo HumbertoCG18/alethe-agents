@@ -1,0 +1,91 @@
+{
+  "versao": 1,
+  "projeto": "alethe-agents",
+  "tronco": "dev",
+  "campanhas": [
+    {
+      "id": "TODO",
+      "titulo": "Todo List como vista da campanha ativa",
+      "prioridade": 1,
+      "janela": "assistida",
+      "depende_de": [],
+      "worktrees": [],
+      "atualizado_em": "2026-10-02",
+      "tarefas": [
+        {"id": "TODO-01", "titulo": "Lista principal mostra as tarefas da campanha ativa, com seletor de fonte (campanha ou Meus todos)", "nivel": "T2", "estado": "pronta", "depende_de": [], "origem": "USER"},
+        {"id": "TODO-02", "titulo": "Adicionar tarefa pela Todo List grava no registro, com ID automático, trava e escrita atômica", "nivel": "T2", "estado": "pronta", "depende_de": ["TODO-01"], "origem": "USER"},
+        {"id": "TODO-03", "titulo": "Caixa de seleção conclui a tarefa (Gate 2 do usuário), com desfazer", "nivel": "T1", "estado": "pronta", "depende_de": ["TODO-01"], "origem": "USER"},
+        {"id": "TODO-04", "titulo": "Abas Ativas e Concluídas e barra de progresso seguem a campanha ativa", "nivel": "T1", "estado": "pronta", "depende_de": ["TODO-01"], "origem": "USER"},
+        {"id": "TODO-05", "titulo": "Configurações: fonte da lista; pasta de armazenamento só para os todos pessoais", "nivel": "T1", "estado": "pronta", "depende_de": ["TODO-01"], "origem": "USER"},
+        {"id": "TODO-06", "titulo": "CLI: campanhas.py tarefa CAMPANHA \"título\" com ID automático (laboratório)", "nivel": "T1", "estado": "pronta", "depende_de": [], "origem": "USER"}
+      ]
+    },
+    {
+      "id": "ELO",
+      "titulo": "Elo tarefa, orquestração e agente noturno",
+      "prioridade": 2,
+      "janela": "assistida",
+      "depende_de": [],
+      "worktrees": [],
+      "atualizado_em": "2026-10-02",
+      "tarefas": [
+        {"id": "ELO-01", "titulo": "active-task.md ganha campanha e tarefa (laboratório)", "nivel": "T1", "estado": "pronta", "depende_de": [], "origem": "USER"},
+        {"id": "ELO-02", "titulo": "delegate-gate bloqueia delegação sem tarefa do registro, com o comando de criação na mensagem (laboratório)", "nivel": "T2", "estado": "pronta", "depende_de": ["ELO-01", "TODO-06"], "origem": "USER"},
+        {"id": "ELO-03", "titulo": "alethe_delegate aceita a tarefa; o quadro mostra tarefa e campanha", "nivel": "T2", "estado": "pronta", "depende_de": [], "origem": "USER"},
+        {"id": "ELO-04", "titulo": "Campanha ativa mostra os workers vivos", "nivel": "T1", "estado": "pronta", "depende_de": ["ELO-03"], "origem": "USER"},
+        {"id": "ELO-05", "titulo": "Agente noturno no elo: só tarefas da noite livres, termina em aguarda você", "nivel": "T2", "estado": "pronta", "depende_de": ["ELO-02"], "origem": "USER"},
+        {"id": "ELO-06", "titulo": "Diário da noite (campanhas.py noite) e cartão Noite de… na Todo List", "nivel": "T2", "estado": "pronta", "depende_de": ["ELO-05"], "origem": "USER"}
+      ]
+    },
+    {
+      "id": "ACHADOS",
+      "titulo": "Caixa de achados fora da campanha",
+      "prioridade": 3,
+      "janela": "assistida",
+      "depende_de": [],
+      "worktrees": [],
+      "atualizado_em": "2026-10-02",
+      "tarefas": [
+        {"id": "ACHADOS-01", "titulo": "campanhas.py achado: tipo, título curto, sem repetição, até 3 por tarefa (laboratório)", "nivel": "T1", "estado": "pronta", "depende_de": [], "origem": "USER"},
+        {"id": "ACHADOS-02", "titulo": "Cartão Achados na Todo List, com contagem e lista", "nivel": "T1", "estado": "pronta", "depende_de": ["ACHADOS-01"], "origem": "USER"},
+        {"id": "ACHADOS-03", "titulo": "Triagem pelo agente: virar tarefa de uma campanha ou descartar", "nivel": "T1", "estado": "pronta", "depende_de": ["ACHADOS-01"], "origem": "USER"}
+      ]
+    },
+    {
+      "id": "AGY",
+      "titulo": "Workers Antigravity na orquestração",
+      "prioridade": 4,
+      "janela": "assistida",
+      "depende_de": [],
+      "worktrees": ["alethe-agents-agy"],
+      "atualizado_em": "2026-09-24",
+      "tarefas": [
+        {"id": "AGY-01", "titulo": "Retomar a implementação parada na worktree (upstream #218)", "nivel": "T2", "estado": "proposta", "depende_de": [], "origem": "USER"}
+      ]
+    },
+    {
+      "id": "AGENDADOR",
+      "titulo": "Agendador noturno lendo o registro",
+      "prioridade": 5,
+      "janela": "assistida",
+      "depende_de": [],
+      "worktrees": [],
+      "atualizado_em": "2026-10-02",
+      "tarefas": [
+        {"id": "AGENDADOR-01", "titulo": "Agendador do Alethe abre um agente novo por tarefa da noite livre", "nivel": "T2", "estado": "proposta", "depende_de": ["ELO-05"], "origem": "DECISION"}
+      ]
+    },
+    {
+      "id": "UI",
+      "titulo": "Consistência visual das telas novas",
+      "prioridade": 6,
+      "janela": "assistida",
+      "depende_de": [],
+      "worktrees": [],
+      "atualizado_em": "2026-10-02",
+      "tarefas": [
+        {"id": "UI-01", "titulo": "Revisar telas novas contra os padrões do app (coluna Orquestrador nas Preferências e outras)", "nivel": "T1", "estado": "proposta", "depende_de": [], "origem": "USER"}
+      ]
+    }
+  ]
+}

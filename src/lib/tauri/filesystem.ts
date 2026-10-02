@@ -40,6 +40,11 @@ export async function readTextFile(path: string): Promise<string> {
   return invoke<string>('read_text_file', { path })
 }
 
+/** Where a relative terminal path really is, also searching the repository's other worktrees. */
+export async function findRelativePath(cwd: string, path: string): Promise<string | null> {
+  return invoke<string | null>('find_relative_path', { cwd, path })
+}
+
 export async function writeTextFile(path: string, content: string): Promise<void> {
   await invoke('write_text_file', { path, content })
 }

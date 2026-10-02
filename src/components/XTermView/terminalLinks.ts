@@ -94,6 +94,14 @@ export function resolveTerminalFilePath(
   return joinPath(cwd, clean.replace(/^\.([\\/])/, ''))
 }
 
+/** The printed path without line/column when it is relative, so it can also be looked up in the
+ * project's other worktrees; null for absolute and home paths. */
+export function relativeTerminalPath(path: string): string | null {
+  const clean = stripLineColumn(path.trim())
+  if (/^(?:[A-Za-z]:[\\/]|\\\\|~(?:[\\/]|$)|\/)/.test(clean)) return null
+  return clean.replace(/^\.([\\/])/, '')
+}
+
 function normalizeUrlTarget(text: string): string {
   if (URL_PROTOCOL_PATTERN.test(text)) {
     return text.replace(URL_PROTOCOL_PATTERN, (protocol) => protocol.toLowerCase())

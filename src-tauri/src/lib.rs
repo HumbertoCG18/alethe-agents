@@ -308,6 +308,7 @@ pub fn run() {
             filesystem::home_directory,
             filesystem::read_text_file,
             filesystem::write_text_file,
+            filesystem::find_relative_path,
             filesystem::write_project_marker,
             filesystem::read_project_marker,
             filesystem::rename_filesystem_entry,

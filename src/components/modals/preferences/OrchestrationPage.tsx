@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { agentLabel } from '../../../lib/agentProviders'
 import { useT } from '../../../lib/i18n'
 import {
-  canFallBackTo,
+  canFallBackToName,
   CLAUDE_EFFORTS,
   CODEX_EFFORTS,
   isOrchestrationName,
@@ -21,6 +21,7 @@ import styles from './OrchestrationPage.module.css'
 import { SettingsSection } from './primitives'
 
 const AGENTS: OrchestrationRole['agent'][] = ['codex', 'claude']
+const ORCHESTRATORS: NonNullable<OrchestrationRole['orchestrator']>[] = ['claude', 'codex']
 
 function nextRoleName(roles: OrchestrationRole[]): string {
   const taken = new Set(roles.map((role) => role.name))
@@ -62,11 +63,7 @@ export function OrchestrationPage() {
   // A fallback that no longer names a role this one may run as is dropped as the roles change.
   const withValidFallbacks = (roles: OrchestrationRole[]) =>
     roles.map((role) =>
-      role.fallback &&
-      !canFallBackTo(
-        role,
-        roles.find((other) => other.name === role.fallback),
-      )
+      role.fallback && !canFallBackToName(role, role.fallback, roles)
         ? { ...role, fallback: null }
         : role,
     )
@@ -91,19 +88,23 @@ export function OrchestrationPage() {
     return [...new Set(listed.flatMap((option) => option.efforts))]
   }
 
-  // A rename is saved only once the orchestrator accepts the name and no other role has it, so it
-  // can never hand one role's name, and what that role allows, to another.
+  // A rename is saved only once the orchestrator accepts the name and no other row for the same
+  // orchestrator has it, so it can never hand one role's name, and what that role allows, to another.
   const renameRole = (index: number, role: OrchestrationRole, text: string) => {
     const next = text.trim()
-    const taken = settings.roles.some((other, i) => i !== index && other.name === next)
+    const taken = settings.roles.some(
+      (other, i) => i !== index && other.name === next && other.orchestrator === role.orchestrator,
+    )
     if (isOrchestrationName(next) && !taken) {
       setNameDraft(null)
-      // Roles that fall back to this one follow it to its new name.
+      // Roles that fall back to this one follow it to its new name, unless another row keeps the
+      // old one.
+      const follow = !settings.roles.some((other, i) => i !== index && other.name === role.name)
       save({
         roles: settings.roles.map((other, i) =>
           i === index
             ? { ...other, name: next }
-            : other.fallback === role.name
+            : follow && other.fallback === role.name
               ? { ...other, fallback: next }
               : other,
         ),
@@ -225,6 +226,7 @@ export function OrchestrationPage() {
           <div className={styles.roles}>
             <div className={styles.roleHeader} aria-hidden>
               <span>{t('prefs.orchestrationRoleName')}</span>
+              <span>{t('prefs.orchestrationOrchestrator')}</span>
               <span>{t('prefs.orchestrationAgent')}</span>
               <span>{t('prefs.orchestrationModel')}</span>
               <span>{t('prefs.orchestrationEffort')}</span>
@@ -234,7 +236,14 @@ export function OrchestrationPage() {
               <span />
             </div>
             {settings.roles.map((role, index) => {
-              const label = role.name || String(index + 1)
+              const name = role.name || String(index + 1)
+              // Rows for different orchestrators can share a name, so the label tells them apart.
+              const label = role.orchestrator
+                ? t('prefs.orchestrationRoleOnOrchestrator', {
+                    name,
+                    agent: agentLabel(role.orchestrator),
+                  })
+                : name
               const codex = role.agent === 'codex'
               const draft =
                 nameDraft && nameDraft.index === index && nameDraft.base === role.name
@@ -250,6 +259,31 @@ export function OrchestrationPage() {
                       aria-label={t('prefs.orchestrationRoleNameFor', { name: label })}
                       aria-invalid={nameInvalid}
                       onChange={(event) => renameRole(index, role, event.target.value)}
+                    />
+                    <Dropdown
+                      value={role.orchestrator ?? ''}
+                      ariaLabel={t('prefs.orchestrationOrchestratorFor', { name: label })}
+                      options={[
+                        { value: '', label: t('prefs.orchestrationOrchestratorAny') },
+                        ...ORCHESTRATORS.map((agent) => ({
+                          value: agent,
+                          label: agentLabel(agent),
+                        })),
+                      ].map((option) => ({
+                        ...option,
+                        // One row per name and orchestrator.
+                        disabled: settings.roles.some(
+                          (other, i) =>
+                            i !== index &&
+                            other.name === role.name &&
+                            (other.orchestrator ?? '') === option.value,
+                        ),
+                      }))}
+                      onChange={(value) =>
+                        saveRole(index, {
+                          orchestrator: (value || undefined) as OrchestrationRole['orchestrator'],
+                        })
+                      }
                     />
                     <Dropdown
                       value={role.agent}
@@ -312,9 +346,9 @@ export function OrchestrationPage() {
                       ariaLabel={t('prefs.orchestrationFallbackFor', { name: label })}
                       options={[
                         { value: '', label: t('prefs.orchestrationFallbackNone') },
-                        ...settings.roles
-                          .filter((other) => canFallBackTo(role, other))
-                          .map((other) => ({ value: other.name, label: other.name })),
+                        ...[...new Set(settings.roles.map((other) => other.name))]
+                          .filter((other) => canFallBackToName(role, other, settings.roles))
+                          .map((other) => ({ value: other, label: other })),
                       ]}
                       onChange={(value) => saveRole(index, { fallback: value || null })}
                     />
@@ -336,7 +370,10 @@ export function OrchestrationPage() {
           </div>
         )}
         {settings.roles.length > 0 ? (
-          <p className={controls.hint}>{t('prefs.orchestrationFallbackHint')}</p>
+          <>
+            <p className={controls.hint}>{t('prefs.orchestrationFallbackHint')}</p>
+            <p className={controls.hint}>{t('prefs.orchestrationOrchestratorHint')}</p>
+          </>
         ) : null}
 
         <button

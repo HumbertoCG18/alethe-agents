@@ -800,6 +800,12 @@ export const en = {
   'prefs.orchestrationFallbackNone': 'None',
   'prefs.orchestrationFallbackHint':
     "When a role's provider passes 80% of its quota and the fallback's provider has room, the work runs as the fallback role. A read-only role only falls back to a read-only one.",
+  'prefs.orchestrationOrchestrator': 'Orchestrator',
+  'prefs.orchestrationOrchestratorFor': 'Orchestrator for {name}',
+  'prefs.orchestrationOrchestratorAny': 'Any',
+  'prefs.orchestrationRoleOnOrchestrator': '{name} ({agent})',
+  'prefs.orchestrationOrchestratorHint':
+    'A row for a specific orchestrator wins over the Any row of the same name, so the same role can send Claude and Codex sessions to different workers.',
   'prefs.orchestrationModelsLoading': 'Reading the models Codex offers…',
   'prefs.orchestrationModelsFailed':
     'Could not list the Codex models ({error}). You can still type a model name.',

@@ -32,8 +32,8 @@
 .roleRow {
   display: grid;
   grid-template-columns:
-    minmax(96px, 1.1fr) minmax(104px, 1fr) minmax(120px, 1.4fr) minmax(96px, 1fr)
-    40px 88px minmax(104px, 1fr) 28px;
+    minmax(96px, 1.1fr) minmax(88px, 0.9fr) minmax(104px, 1fr) minmax(120px, 1.4fr)
+    minmax(96px, 1fr) 40px 88px minmax(104px, 1fr) 28px;
   gap: 8px;
   align-items: center;
 }

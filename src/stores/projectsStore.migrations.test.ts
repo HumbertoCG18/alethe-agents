@@ -107,6 +107,81 @@ describe('preference normalization', () => {
     ])
   })
 
+  // A role row for one orchestrator (#276).
+  it('keeps one row per name and orchestrator, and the orchestrator across a save', () => {
+    const row = (name: string, orchestrator?: unknown, model: string | null = null) => ({
+      name,
+      agent: 'codex' as const,
+      model,
+      effort: null,
+      readOnly: false,
+      timeoutSeconds: null,
+      ...(orchestrator === undefined ? {} : { orchestrator }),
+    })
+    const preferences = normalizePreferences({
+      ...DEFAULT_PREFERENCES,
+      orchestration: {
+        ...DEFAULT_PREFERENCES.orchestration,
+        roles: [
+          row('executor', 'claude', 'first'),
+          row('executor', 'codex'),
+          row('executor'),
+          row('executor', 'claude', 'second'),
+          // null is the row for any orchestrator, already taken above.
+          row('executor', null, 'second'),
+          row('odd', 'gemini'),
+        ],
+      } as unknown as typeof DEFAULT_PREFERENCES.orchestration,
+    })
+
+    const { roles } = preferences.orchestration
+    expect(roles.map((role) => [role.name, role.orchestrator, role.model])).toEqual([
+      ['executor', 'claude', 'first'],
+      ['executor', 'codex', null],
+      ['executor', undefined, null],
+    ])
+    const saved = JSON.parse(JSON.stringify(preferences))
+    expect(normalizePreferences(saved).orchestration.roles).toEqual(roles)
+  })
+
+  it('keeps a fallback the row reaches for its own orchestrator', () => {
+    const row = (
+      name: string,
+      orchestrator: 'claude' | 'codex' | undefined,
+      fallback?: string,
+    ) => ({
+      name,
+      agent: 'codex' as const,
+      model: null,
+      effort: null,
+      readOnly: false,
+      timeoutSeconds: null,
+      ...(orchestrator ? { orchestrator } : {}),
+      ...(fallback ? { fallback } : {}),
+    })
+    const preferences = normalizePreferences({
+      ...DEFAULT_PREFERENCES,
+      orchestration: {
+        ...DEFAULT_PREFERENCES.orchestration,
+        roles: [
+          row('spare', 'claude'),
+          row('from-claude', 'claude', 'spare'),
+          // A Codex planner never reaches the Claude row of spare.
+          row('from-codex', 'codex', 'spare'),
+          // A row for any orchestrator serves a Claude planner too.
+          row('from-any', undefined, 'spare'),
+        ],
+      },
+    })
+
+    expect(preferences.orchestration.roles.map((role) => [role.name, role.fallback])).toEqual([
+      ['spare', undefined],
+      ['from-claude', 'spare'],
+      ['from-codex', undefined],
+      ['from-any', 'spare'],
+    ])
+  })
+
   it('keeps valid roles and drops the ones the orchestrator would refuse', () => {
     const reviewer = {
       name: 'reviewer',

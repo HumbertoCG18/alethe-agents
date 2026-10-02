@@ -28,6 +28,10 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
   80% of its quota and the fallback's provider has room, the workers run as the fallback role, and
   the worker card says so. A read-only role only falls back to a read-only one. The headroom hint a
   planner gets now reads the agent a role runs on instead of assuming Codex.
+- **A role can run differently for Claude and Codex orchestrators.** Each role row in the
+  Orchestration settings can be for Any, Claude or Codex orchestrators. When a session delegates a
+  role, the row for its own agent wins over the Any row of the same name, so switching the
+  orchestrator also switches which provider the workers spend.
 - **Delegated workers can run on a chosen model, effort and read-only sandbox.** A planner can now
   pass `model`, `effort` and `readOnly` when it delegates, so work such as an independent review on
   another model runs as a worker on the orchestration board instead of outside Alethe. The worker
@@ -220,6 +224,8 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
   how long the teardown took is written to `app-events.log`.
 - A finished worker on the orchestration board showed the same green dot as a running one. Its dot
   now uses the finished colour from the legend, in the run list, on its card and in the composer.
+- A Codex worker's card read "100% context" after a few turns, because it added up every turn's
+  prompt. It now shows how full the context window is on the last turn.
 
 - On Linux, closing a terminal could end every process of your user session instead of only that
   terminal's processes, depending on the process ID it got. Terminals are now stopped directly

@@ -30,14 +30,21 @@ const optionalName = (value: unknown): value is string | null =>
 const wholeSeconds = (value: unknown): value is number =>
   typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= MAX_TIMEOUT_SECONDS
 
+/** A row's orchestrator: absent or null serves any planner. */
+const ORCHESTRATORS: readonly unknown[] = [undefined, null, 'claude', 'codex']
+
 /** Whether the orchestrator would run this role as it is written. */
 export function isValidRole(role: unknown): role is OrchestrationRole {
   if (!role || typeof role !== 'object') return false
-  const { name, agent, model, effort, readOnly, timeoutSeconds } = role as Record<string, unknown>
+  const { name, agent, model, effort, readOnly, timeoutSeconds, orchestrator } = role as Record<
+    string,
+    unknown
+  >
   if (typeof name !== 'string' || !isOrchestrationName(name)) return false
   if (agent !== 'codex' && agent !== 'claude') return false
   if (!optionalName(model) || !optionalName(effort) || typeof readOnly !== 'boolean') return false
   if (timeoutSeconds !== null && !wholeSeconds(timeoutSeconds)) return false
+  if (!ORCHESTRATORS.includes(orchestrator)) return false
   // The headless Claude launch bypasses permissions and has no read-only mode.
   return agent === 'codex' || !readOnly
 }
@@ -48,11 +55,14 @@ export function isValidRole(role: unknown): role is OrchestrationRole {
  */
 export function normalizeOrchestrationSettings(raw: unknown): OrchestrationSettings {
   const source = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
+  // One row per name and orchestrator (#276). Names hold no whitespace, so the key is unambiguous.
   const seen = new Set<string>()
   const roles = (Array.isArray(source.roles) ? source.roles : []).filter(
     (role): role is OrchestrationRole => {
-      if (!isValidRole(role) || seen.has(role.name)) return false
-      seen.add(role.name)
+      if (!isValidRole(role)) return false
+      const key = `${role.orchestrator ?? ''} ${role.name}`
+      if (seen.has(key)) return false
+      seen.add(key)
       return true
     },
   )
@@ -67,15 +77,10 @@ export function normalizeOrchestrationSettings(raw: unknown): OrchestrationSetti
     ? source.defaultTimeoutSeconds
     : DEFAULTS.defaultTimeoutSeconds
   return {
-    roles: roles.map(({ fallback, ...role }) =>
-      fallback &&
-      canFallBackTo(
-        role,
-        roles.find((other) => other.name === fallback),
-      )
-        ? { ...role, fallback }
-        : role,
-    ),
+    roles: roles.map(({ fallback, orchestrator, ...rest }) => {
+      const role = orchestrator ? { ...rest, orchestrator } : rest
+      return fallback && canFallBackToName(role, fallback, roles) ? { ...role, fallback } : role
+    }),
     maxConcurrent,
     defaultTimeoutSeconds,
     workerDisabledPlugins: pluginIds(
@@ -94,6 +99,26 @@ export function canFallBackTo(
 ): boolean {
   if (!fallback || fallback.name === role.name) return false
   return !role.readOnly || fallback.readOnly
+}
+
+/**
+ * Whether `role` may keep `name` as its fallback: a row of that name it reaches may run in its
+ * place. A row for one orchestrator reaches that orchestrator's row of the name, else the row for
+ * any; a row for any serves every planner, so it reaches every row of the name (#276).
+ */
+export function canFallBackToName(
+  role: Pick<OrchestrationRole, 'name' | 'readOnly' | 'orchestrator'>,
+  name: string,
+  roles: readonly OrchestrationRole[],
+): boolean {
+  const named = roles.filter((other) => other.name === name)
+  const reached = role.orchestrator
+    ? [
+        named.find((other) => other.orchestrator === role.orchestrator) ??
+          named.find((other) => !other.orchestrator),
+      ]
+    : named
+  return reached.some((other) => canFallBackTo(role, other))
 }
 
 /** Codex plugin ids, each once; anything Codex could not take as an id is dropped. */

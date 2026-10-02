@@ -812,6 +812,12 @@ export const ptBR: Record<MessageKey, string> = {
   'prefs.orchestrationFallbackNone': 'Nenhum',
   'prefs.orchestrationFallbackHint':
     'Quando o provedor de um papel passa de 80% da quota e o do fallback tem folga, o trabalho roda como o papel de fallback. Um papel somente leitura só cai para outro somente leitura.',
+  'prefs.orchestrationOrchestrator': 'Orquestrador',
+  'prefs.orchestrationOrchestratorFor': 'Orquestrador de {name}',
+  'prefs.orchestrationOrchestratorAny': 'Qualquer',
+  'prefs.orchestrationRoleOnOrchestrator': '{name} ({agent})',
+  'prefs.orchestrationOrchestratorHint':
+    'Uma linha para um orquestrador específico vence a linha Qualquer de mesmo nome, então o mesmo papel pode mandar sessões do Claude e do Codex para workers diferentes.',
   'prefs.orchestrationModelsLoading': 'Lendo os modelos que o Codex oferece…',
   'prefs.orchestrationModelsFailed':
     'Não foi possível listar os modelos do Codex ({error}). Você ainda pode digitar o nome de um modelo.',

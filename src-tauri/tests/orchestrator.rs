@@ -1930,21 +1930,6 @@ fn a_claude_role_runs_on_its_model_and_effort() {
 }
 
 // What alethe_status returns has to fit a planner; the UI keeps reading the full snapshot (#258).
-fn call_as(core: &Core, planner: &str, name: &str, arguments: Value) -> Value {
-    let body = json!({
-        "jsonrpc": "2.0",
-        "id": 10,
-        "method": "tools/call",
-        "params": { "name": name, "arguments": arguments }
-    });
-    let raw = handle_mcp_body(core, &body.to_string(), Some(planner)).expect("a response");
-    let response: Value = serde_json::from_str(&raw).expect("valid json");
-    let text = response["result"]["content"][0]["text"]
-        .as_str()
-        .expect("tool text");
-    serde_json::from_str(text).unwrap_or_else(|_| json!({ "raw": text }))
-}
-
 #[test]
 fn the_status_stays_small_however_long_the_tasks_are() {
     let dir = workspace("status-small");
@@ -1954,19 +1939,19 @@ fn the_status_stays_small_however_long_the_tasks_are() {
     let tasks: Vec<String> = (0..12).map(|i| format!("{i}: {brief}")).collect();
     call_as(
         &core,
-        "planner-a",
+        Some("planner-a"),
         "alethe_delegate",
         json!({ "tasks": tasks, "cwd": dir.to_string_lossy() }),
     );
     // No launcher is registered, so every worker settles at once.
     call_as(
         &core,
-        "planner-a",
+        Some("planner-a"),
         "alethe_check",
         json!({ "wait": true, "timeoutMs": 5000 }),
     );
 
-    let status = call_as(&core, "planner-a", "alethe_status", json!({}));
+    let status = call_as(&core, Some("planner-a"), "alethe_status", json!({}));
     let size = status.to_string().chars().count();
     assert!(size < 12_000, "the status has {size} characters");
     let jobs = status["jobs"].as_array().expect("jobs");
@@ -2007,24 +1992,24 @@ fn a_planner_sees_its_own_workers_and_a_count_of_the_rest() {
     let cwd = dir.to_string_lossy().into_owned();
     call_as(
         &core,
-        "planner-a",
+        Some("planner-a"),
         "alethe_delegate",
         json!({ "tasks": ["task of a"], "cwd": cwd }),
     );
     call_as(
         &core,
-        "planner-b",
+        Some("planner-b"),
         "alethe_delegate",
         json!({ "tasks": ["task of b"], "cwd": cwd }),
     );
 
-    let mine = call_as(&core, "planner-a", "alethe_status", json!({}));
+    let mine = call_as(&core, Some("planner-a"), "alethe_status", json!({}));
     let jobs = mine["jobs"].as_array().expect("jobs");
     assert_eq!(jobs.len(), 1, "{mine}");
     assert_eq!(jobs[0]["plannerId"], "planner-a");
     assert_eq!(mine["omitted"], json!(1), "{mine}");
 
-    let all = call_as(&core, "planner-a", "alethe_status", json!({ "all": true }));
+    let all = call_as(&core, Some("planner-a"), "alethe_status", json!({ "all": true }));
     assert_eq!(all["jobs"].as_array().map(Vec::len), Some(2), "{all}");
     assert_eq!(all["omitted"], json!(0), "{all}");
 

@@ -1617,12 +1617,13 @@ pub fn cleanup_orphan_scrollback(app: &AppHandle) {
     }
 }
 
-/// Removes every session from shared state immediately and terminates process trees off the event
-/// loop, so a slow Windows `taskkill` cannot make the application appear frozen while closing.
 /// How long shutdown waits for terminal processes to die before giving up on them.
 const SHUTDOWN_KILL_TIMEOUT: Duration = Duration::from_secs(4);
 
-pub fn kill_all_sessions_background(sessions: &PtySessions) {
+/// Removes every session from shared state immediately and terminates their process trees in
+/// parallel, waiting at most `SHUTDOWN_KILL_TIMEOUT`. The caller's thread blocks for that wait, so
+/// the app hides its windows first (#275). Returns how many sessions it tore down.
+pub fn kill_all_sessions_background(sessions: &PtySessions) -> usize {
     let drained = sessions
         .lock()
         .ok()
@@ -1635,7 +1636,7 @@ pub fn kill_all_sessions_background(sessions: &PtySessions) {
         .unwrap_or_default();
 
     if drained.is_empty() {
-        return;
+        return 0;
     }
 
     // One thread per session, then wait for them. Two reasons this is not fire-and-forget:
@@ -1664,6 +1665,7 @@ pub fn kill_all_sessions_background(sessions: &PtySessions) {
             break;
         }
     }
+    total
 }
 
 static JOB_GUARD_ACTIVE: OnceLock<bool> = OnceLock::new();

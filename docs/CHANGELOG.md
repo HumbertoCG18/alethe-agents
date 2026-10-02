@@ -215,6 +215,9 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
   ("path nao existe"), because it was looked up only in the terminal's folder. When it is not there,
   the project's other worktrees are searched too, including paths that start with the worktree's
   folder name.
+- Closing the app no longer leaves the window frozen on screen for up to four seconds while the
+  terminals' processes are stopped. The window disappears as soon as the close is confirmed, and
+  how long the teardown took is written to `app-events.log`.
 
 - On Linux, closing a terminal could end every process of your user session instead of only that
   terminal's processes, depending on the process ID it got. Terminals are now stopped directly

@@ -580,9 +580,22 @@ pub fn run() {
 
 #[tauri::command]
 fn quit_app(app: tauri::AppHandle, sessions: tauri::State<'_, PtySessions>) {
+    // The teardown below waits a few seconds at most for process trees to die; hidden first, the
+    // window does not sit frozen on screen meanwhile (#275).
+    for window in app.webview_windows().values() {
+        let _ = window.hide();
+    }
     // The Windows job object remains the hard guarantee that descendants die with the app. The
     // best-effort explicit teardown runs in the background so a slow process tree cannot block exit.
-    pty::kill_all_sessions_background(sessions.inner());
+    let started = std::time::Instant::now();
+    let sessions = pty::kill_all_sessions_background(sessions.inner());
+    let _ = logging::record_app_event(
+        "app.quit".to_string(),
+        format!(
+            "sessions={sessions} teardown_ms={}",
+            started.elapsed().as_millis()
+        ),
+    );
     crash_watch::mark_clean_exit();
     app.exit(0);
 }
@@ -602,5 +615,29 @@ mod tests {
             return;
         }
         assert!(!cli_resolver::build_rebuilt_path().is_empty());
+    }
+
+    /// Guards #275: the teardown waits for process trees to die, and a window still on screen
+    /// during that wait looks frozen. It has to be hidden first, and the wait has to be logged.
+    #[test]
+    fn quitting_hides_the_window_before_waiting_on_the_teardown() {
+        let source = include_str!("lib.rs");
+        let body = source
+            .split("fn quit_app(")
+            .nth(1)
+            .expect("quit_app exists");
+        let body = &body[..body.find("\n}").expect("quit_app ends")];
+        let hide = body.find(".hide()").expect("quit_app hides the windows");
+        let teardown = body
+            .find("kill_all_sessions_background")
+            .expect("quit_app tears the terminals down");
+        assert!(
+            hide < teardown,
+            "the windows must be hidden before the wait"
+        );
+        assert!(
+            body.contains("\"app.quit\""),
+            "the teardown time goes to app-events.log"
+        );
     }
 }

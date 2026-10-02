@@ -133,6 +133,8 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ### Fixed
 
+- The title bar Claude, Codex and Antigravity usage pills now refresh as soon as the window
+  regains focus, instead of staying hidden for minutes after a start with the window unfocused.
 - Alethe no longer closes by itself while a delegated worker streams a long reply with accented
   or other non-ASCII text. Trimming the live reply to its last 16,000 bytes could cut a character
   in half, which crashed the whole app

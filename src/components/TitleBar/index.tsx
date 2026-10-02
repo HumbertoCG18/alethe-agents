@@ -22,7 +22,7 @@ import {
   Workflow,
   X,
 } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 
 import { requestAppClose } from '../../hooks/useCloseConfirmation'
 import { useRouter9Runtime } from '../../hooks/useRouter9Runtime'
@@ -30,15 +30,16 @@ import { getCachedAntigravityUsage } from '../../lib/antigravityUsageCache'
 import { loadClaudeUsage } from '../../lib/claudeUsageCache'
 import { getCachedCodexUsage } from '../../lib/codexUsageCache'
 import { useT } from '../../lib/i18n'
-import { useSidebarViews } from '../../lib/viewPlacement'
 import { observeClaudeReset, observeCodexReset } from '../../lib/limitResetWatch'
 import { formatShortcut } from '../../lib/platform'
 import { codexHeadlineWindow, hasCodexWindow, killPty, remoteControlInfo } from '../../lib/tauri'
+import { useSidebarViews } from '../../lib/viewPlacement'
 import { usePomodoroStore } from '../../stores/pomodoroStore'
 import { useProjectsStore } from '../../stores/projectsStore'
 import { useUiStore } from '../../stores/uiStore'
 import { AntigravityIcon, ClaudeIcon, CodexIcon } from '../icons/AgentIcons'
 import { ContextMenu, type MenuItem } from '../ProjectSidebar/ContextMenu'
+import { createActivityTracker } from './activityTracker'
 import styles from './TitleBar.module.css'
 
 const CLAUDE_POLL_INTERVAL_MS = 5 * 60_000
@@ -307,12 +308,12 @@ export function TitleBar() {
     setAgentCanvasSession(null)
   }
 
-  const activeRef = useRef(true)
+  const [tracker] = useState(createActivityTracker)
 
   useEffect(() => {
     let cancelled = false
     const refreshRemoteDevices = async () => {
-      if (!activeRef.current) return
+      if (!tracker.isActive()) return
       try {
         const info = await remoteControlInfo()
         if (!cancelled) {
@@ -335,13 +336,13 @@ export function TitleBar() {
       cancelled = true
       window.clearInterval(interval)
     }
-  }, [])
+  }, [tracker])
 
   useEffect(() => {
     let cancelled = false
     let interval: number | null = null
     const tick = async () => {
-      if (!activeRef.current) return
+      if (!tracker.isActive()) return
       const usage = await loadClaudeUsage()
       if (usage && !cancelled) observeClaudeReset(usage)
     }
@@ -349,19 +350,21 @@ export function TitleBar() {
       void tick()
       interval = window.setInterval(tick, CLAUDE_POLL_INTERVAL_MS)
     }, 1500)
+    const offActivate = tracker.onActivate(() => void tick())
     return () => {
+      offActivate()
       cancelled = true
       window.clearTimeout(startupDelay)
       if (interval !== null) window.clearInterval(interval)
     }
-  }, [])
+  }, [tracker])
 
   useEffect(() => {
     let cancelled = false
     let interval: number | null = null
     let consecutiveFailures = 0
     const tick = async () => {
-      if (!activeRef.current) return
+      if (!tracker.isActive()) return
       try {
         const usage = await getCachedCodexUsage()
         if (!cancelled) {
@@ -380,18 +383,20 @@ export function TitleBar() {
       void tick()
       interval = window.setInterval(tick, CLAUDE_POLL_INTERVAL_MS)
     }, 2500)
+    const offActivate = tracker.onActivate(() => void tick())
     return () => {
+      offActivate()
       cancelled = true
       window.clearTimeout(startupDelay)
       if (interval !== null) window.clearInterval(interval)
     }
-  }, [setCodexUsage])
+  }, [setCodexUsage, tracker])
 
   useEffect(() => {
     let cancelled = false
     let interval: number | null = null
     const tick = async () => {
-      if (!activeRef.current) return
+      if (!tracker.isActive()) return
       try {
         const usage = await getCachedAntigravityUsage()
         if (!cancelled) {
@@ -407,18 +412,20 @@ export function TitleBar() {
       void tick()
       interval = window.setInterval(tick, CLAUDE_POLL_INTERVAL_MS)
     }, 3000)
+    const offActivate = tracker.onActivate(() => void tick())
     return () => {
+      offActivate()
       cancelled = true
       window.clearTimeout(startupDelay)
       if (interval !== null) window.clearInterval(interval)
     }
-  }, [setAntigravityUsage])
+  }, [setAntigravityUsage, tracker])
 
   const win = getCurrentWindow()
 
   useEffect(() => {
     const update = (focused: boolean) => {
-      activeRef.current = focused && document.visibilityState === 'visible'
+      tracker.set(focused && document.visibilityState === 'visible')
     }
     update(document.hasFocus())
     const onVisibility = () => update(document.hasFocus())
@@ -433,7 +440,7 @@ export function TitleBar() {
       document.removeEventListener('visibilitychange', onVisibility)
       unlisten?.()
     }
-  }, [win])
+  }, [win, tracker])
 
   useEffect(() => {
     document.title = APP_TITLE

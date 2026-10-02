@@ -211,6 +211,15 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 - The close button of a pane shown inside a group, such as the Orchestration pane next to its
   planner, now closes it. It did nothing, because the group kept drawing the pane. Closing the
   first pane of a group also no longer hides the other panes in it.
+- A relative path printed by an agent working in another git worktree of the project failed to open
+  ("path nao existe"), because it was looked up only in the terminal's folder. When it is not there,
+  the project's other worktrees are searched too, including paths that start with the worktree's
+  folder name.
+- Closing the app no longer leaves the window frozen on screen for up to four seconds while the
+  terminals' processes are stopped. The window disappears as soon as the close is confirmed, and
+  how long the teardown took is written to `app-events.log`.
+- A finished worker on the orchestration board showed the same green dot as a running one. Its dot
+  now uses the finished colour from the legend, in the run list, on its card and in the composer.
 
 - On Linux, closing a terminal could end every process of your user session instead of only that
   terminal's processes, depending on the process ID it got. Terminals are now stopped directly

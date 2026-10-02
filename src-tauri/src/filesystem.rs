@@ -387,3 +387,134 @@ pub fn unwatch_file(state: tauri::State<'_, FileWatchers>, path: String) -> Resu
     }
     Ok(())
 }
+
+/// Where a relative path printed in a terminal really is. Agents often write
+/// in another git worktree of the project while the pane stays in the main
+/// checkout, so when the path is not under `cwd` it is looked up under every
+/// worktree root, and under the worktree whose folder is the path's first
+/// segment (`repo-feature/docs/x.md`). The most recently modified match wins.
+#[tauri::command]
+pub async fn find_relative_path(cwd: String, path: String) -> Option<String> {
+    tokio::task::spawn_blocking(move || {
+        find_relative_path_inner(Path::new(cwd.trim()), path.trim())
+    })
+    .await
+    .ok()
+    .flatten()
+    .map(|found| found.to_string_lossy().into_owned())
+}
+
+fn find_relative_path_inner(cwd: &Path, relative: &str) -> Option<PathBuf> {
+    let relative = Path::new(relative);
+    if relative.as_os_str().is_empty() || relative.has_root() {
+        return None;
+    }
+    // Collecting the components turns git's `C:/...` into native separators.
+    let direct: PathBuf = cwd.join(relative).components().collect();
+    if direct.exists() {
+        return Some(direct);
+    }
+
+    let output = crate::git_control::git_command(cwd, &["worktree", "list", "--porcelain"]).ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let mut components = relative.components();
+    let first = components.next()?.as_os_str().to_owned();
+    let rest = components.as_path();
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| line.strip_prefix("worktree "))
+        .map(PathBuf::from)
+        .flat_map(|root| {
+            let named = (root.file_name() == Some(first.as_os_str())).then(|| root.join(rest));
+            [Some(root.join(relative)), named]
+        })
+        .flatten()
+        .filter_map(|candidate| {
+            let modified = fs::metadata(&candidate).ok()?.modified().ok()?;
+            Some((modified, candidate.components().collect::<PathBuf>()))
+        })
+        .max_by_key(|(modified, _)| *modified)
+        .map(|(_, candidate)| candidate)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::git_control::checked_output;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn finds_a_relative_path_in_a_sibling_worktree() {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let parent = std::env::temp_dir().join(format!("alethe-relative-path-{suffix}"));
+        let main = parent.join("repo");
+        fs::create_dir_all(&main).unwrap();
+        checked_output(&main, &["init", "-b", "main"]).unwrap();
+        checked_output(&main, &["config", "user.name", "Alethe Test"]).unwrap();
+        checked_output(&main, &["config", "user.email", "alethe@example.invalid"]).unwrap();
+        fs::write(main.join("a.txt"), "a\n").unwrap();
+        checked_output(&main, &["add", "-A"]).unwrap();
+        checked_output(&main, &["commit", "-m", "base"]).unwrap();
+        // Two sibling worktrees holding the same report, so the newest one has to be picked.
+        let add_report = |name: &str| {
+            let worktree = parent.join(name);
+            checked_output(
+                &main,
+                &[
+                    "worktree",
+                    "add",
+                    "-b",
+                    name,
+                    worktree.to_str().unwrap(),
+                    "HEAD",
+                ],
+            )
+            .unwrap();
+            fs::create_dir_all(worktree.join("docs")).unwrap();
+            let report = worktree.join("docs").join("report.md");
+            fs::write(&report, name).unwrap();
+            report
+        };
+        let feature = add_report("repo-feature");
+        let other = add_report("repo-other");
+        let touch = |path: &Path, hours_ago: u64| {
+            let at = SystemTime::now() - std::time::Duration::from_secs(hours_ago * 3600);
+            let file = fs::File::options().write(true).open(path).unwrap();
+            file.set_modified(at).unwrap();
+        };
+
+        assert_eq!(
+            find_relative_path_inner(&main, "a.txt"),
+            Some(main.join("a.txt"))
+        );
+        assert_eq!(
+            find_relative_path_inner(&main, "repo-feature/docs/report.md"),
+            Some(feature.clone())
+        );
+        assert_eq!(find_relative_path_inner(&main, "docs/missing.md"), None);
+        touch(&other, 2);
+        assert_eq!(
+            find_relative_path_inner(&main, "docs/report.md"),
+            Some(feature.clone())
+        );
+        touch(&feature, 3);
+        assert_eq!(
+            find_relative_path_inner(&main, "docs/report.md"),
+            Some(other)
+        );
+
+        for name in ["repo-feature", "repo-other"] {
+            let worktree = parent.join(name);
+            let _ = checked_output(
+                &main,
+                &["worktree", "remove", "--force", worktree.to_str().unwrap()],
+            );
+        }
+        let _ = fs::remove_dir_all(&parent);
+    }
+}

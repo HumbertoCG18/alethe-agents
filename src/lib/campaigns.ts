@@ -1,9 +1,11 @@
 /**
- * Campaign registry (`.workflow/campanhas.json` in the project's main checkout), read-only.
+ * Campaign registry (`.workflow/campanhas.json` in the project's main checkout).
  *
- * Progress and situation mirror agent-workflow-lab/bin/campanhas.py; `campaigns.test.ts` checks
- * this module against that script's `listar --json` output. Field and state names stay in the
- * registry's own language (Portuguese), since they are the file format.
+ * Progress, situation and the edits (new task, state change) mirror
+ * agent-workflow-lab/bin/campanhas.py; `campaigns.test.ts` checks this module against that
+ * script's `listar --json` output. Field and state names stay in the registry's own language
+ * (Portuguese), since they are the file format. The file itself is written by the
+ * `campaign_registry_write` command, under the script's lock.
  */
 import { normalizeCwd } from './platform'
 import type { GitCheckout, GitCheckouts } from './tauri/git'
@@ -235,6 +237,140 @@ export function parseCampaigns(source: string): CampaignRegistry | null {
     }
   })
   return { campaigns, errors: [] }
+}
+
+/**
+ * `<CAMPAIGN>-NN`, as campanhas.py `next_task_id`: the largest numeric suffix among the campaign's
+ * task ids plus one, two digits at least, skipping any id `taken` anywhere in the registry.
+ */
+export function nextTaskId(
+  campaignId: string,
+  taskIds: readonly string[],
+  taken: ReadonlySet<string>,
+): string {
+  const prefix = `${campaignId}-`
+  const suffixes = taskIds
+    .filter((id) => id.startsWith(prefix) && /^\d+$/.test(id.slice(prefix.length)))
+    .map((id) => Number(id.slice(prefix.length)))
+  const name = (n: number) => `${prefix}${String(n).padStart(2, '0')}`
+  let n = Math.max(0, ...suffixes) + 1
+  while (taken.has(name(n))) n += 1
+  return name(n)
+}
+
+const CAMPAIGN_TITLE_MAX = 140
+
+/**
+ * campanhas.py `titulo_valido` on a trimmed title: 1 to 140 code points (not UTF-16 units), no
+ * control character or line break.
+ */
+export const validCampaignTitle = (title: string) =>
+  title.length > 0 &&
+  [...title].length <= CAMPAIGN_TITLE_MAX &&
+  !/[\p{Cc}\p{Zl}\p{Zp}]/u.test(title)
+
+/** The local calendar day, as Python's `date.today().isoformat()`. */
+export function isoDay(date: Date): string {
+  const pad = (value: number) => String(value).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+}
+
+type RawRegistry = { campanhas: Array<Raw & { id: string; tarefas: Raw[] }> }
+
+/** The edited registry as campanhas.py writes it, or `invalid` when it would not validate. */
+function edited<T extends object>(
+  data: RawRegistry,
+  done: T,
+): ({ ok: true; content: string } & T) | { ok: false; error: 'invalid' } {
+  const content = `${JSON.stringify(data, null, 2)}\n`
+  const parsed = parseCampaigns(content)
+  return parsed && parsed.errors.length === 0
+    ? { ok: true, content, ...done }
+    : { ok: false, error: 'invalid' }
+}
+
+export type AddTaskResult =
+  | { ok: true; content: string; id: string }
+  | { ok: false; error: 'title' | 'missing' | 'invalid' }
+  | { ok: false; error: 'duplicate'; id: string }
+
+/**
+ * `campanhas.py tarefa`: appends a `proposta` task from `USER` with the next id to the campaign
+ * and dates it `today`. `source` is the registry text as read; `content` is the text to write.
+ */
+export function addCampaignTask(
+  source: string,
+  campaignId: string,
+  rawTitle: string,
+  today: string,
+): AddTaskResult {
+  const title = rawTitle.trim()
+  if (!validCampaignTitle(title)) return { ok: false, error: 'title' }
+  const data = JSON.parse(source) as RawRegistry
+  const campaign = data.campanhas.find((item) => item.id === campaignId)
+  if (!campaign) return { ok: false, error: 'missing' }
+  const same = campaign.tarefas.find(
+    (task) => text(task.titulo).trim().toLowerCase() === title.toLowerCase(),
+  )
+  if (same) return { ok: false, error: 'duplicate', id: text(same.id) }
+  const taken = new Set(
+    data.campanhas.flatMap((item) => [item.id, ...item.tarefas.map((task) => text(task.id))]),
+  )
+  const id = nextTaskId(
+    campaign.id,
+    campaign.tarefas.map((task) => text(task.id)),
+    taken,
+  )
+  campaign.tarefas.push({ id, titulo: title, estado: 'proposta', depende_de: [], origem: 'USER' })
+  campaign.atualizado_em = today
+  return edited(data, { id })
+}
+
+export type TaskStateResult =
+  | { ok: true; content: string; previous: { state: TaskState; result: string | null } }
+  | { ok: false; error: 'missing' | 'invalid' }
+
+/**
+ * `campanhas.py estado`: sets the task's state and `resultado` (removed when null) and dates its
+ * campaign `today`. `previous` restores the task as it was.
+ */
+export function setCampaignTaskState(
+  source: string,
+  taskId: string,
+  state: TaskState,
+  result: string | null,
+  today: string,
+): TaskStateResult {
+  const data = JSON.parse(source) as RawRegistry
+  for (const campaign of data.campanhas) {
+    const task = campaign.tarefas.find((item) => item.id === taskId)
+    if (!task) continue
+    const previous = {
+      state: task.estado as TaskState,
+      result: typeof task.resultado === 'string' ? task.resultado : null,
+    }
+    task.estado = state
+    if (result === null) delete task.resultado
+    else task.resultado = result
+    campaign.atualizado_em = today
+    return edited(data, { previous })
+  }
+  return { ok: false, error: 'missing' }
+}
+
+/** Order of the open states in the list: what is moving first, what waits on a decision last. */
+const OPEN_ORDER: TaskState[] = ['em execução', 'pronta', 'reservada', 'proposta', 'bloqueada']
+
+/** A campaign's tasks for a list tab: open ones by state then id, done ones by id after them. */
+export function campaignTaskView(
+  tasks: readonly CampaignTask[],
+  filter: 'all' | 'active' | 'completed',
+): CampaignTask[] {
+  const rank = (task: CampaignTask) =>
+    task.state === DONE ? OPEN_ORDER.length : OPEN_ORDER.indexOf(task.state)
+  return tasks
+    .filter((task) => filter === 'all' || (filter === 'completed') === (task.state === DONE))
+    .sort((a, b) => rank(a) - rank(b) || a.id.localeCompare(b.id, 'en', { numeric: true }))
 }
 
 const basename = (path: string) =>

@@ -51,6 +51,21 @@ describe('hydrateTodos', () => {
     expect(useTodosStore.getState().storagePath).toBe('')
   })
 
+  it('opens on the active campaign by default and keeps the list source the user chose', async () => {
+    await hydrateTodos(fakeStorage().storage, { todos: [], storagePath: '' })
+    expect(useTodosStore.getState().listSource).toBe('campaign')
+
+    const { storage, snapshot } = fakeStorage()
+    await hydrateTodos(storage, { todos: [], storagePath: '' })
+    useTodosStore.getState().setListSource('mine')
+    await Promise.resolve()
+    expect(snapshot().listSource).toBe('mine')
+
+    resetTodosStoreForTests()
+    await hydrateTodos(storage, { todos: [], storagePath: '' })
+    expect(useTodosStore.getState().listSource).toBe('mine')
+  })
+
   it('treats an emptied list as owned, not as an absent record', async () => {
     const { storage } = fakeStorage({ todos: [] })
 

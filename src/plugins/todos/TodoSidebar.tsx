@@ -21,6 +21,7 @@ import {
   useGsdSyncAvailable,
   useGsdSyncSessions,
 } from '../../hooks/useGsdSyncSessions'
+import { type Campaign, campaignTaskView } from '../../lib/campaigns'
 import { useT } from '../../lib/i18n'
 import { formatShortcut } from '../../lib/platform'
 import { type PlanningStatus, readPlanningStatus } from '../../lib/tauri'
@@ -29,6 +30,14 @@ import type { Terminal, TodoItem } from '../../lib/types'
 import { selectActiveProject, useProjectsStore } from '../../stores/projectsStore'
 import { useUiStore } from '../../stores/uiStore'
 import { CampaignsSection } from './CampaignsSection'
+import campaignStyles from './CampaignsSection.module.css'
+import {
+  type CampaignEdits,
+  STATE_KEYS,
+  TASK_LANES,
+  useCampaignEdits,
+  useCampaignView,
+} from './campaignView'
 import { TODO_SETTINGS_MODAL_ID } from './manifest'
 import { useTodosStore } from './store'
 import styles from './TodoSidebar.module.css'
@@ -160,10 +169,40 @@ export function TodoSidebar() {
     () => new Set(['completed']),
   )
   const addInputRef = useRef<HTMLInputElement>(null)
+  const view = useCampaignView()
+  const edits = useCampaignEdits(view)
+  const listSource = useTodosStore((state) => state.listSource)
+  // The source picked in this project (a campaign id, or null for the personal list).
+  const [picked, setPicked] = useState<{ projectId: string | null; id: string | null } | null>(null)
+  const campaigns = view.registry?.campaigns ?? []
+  const fallback =
+    listSource === 'campaign'
+      ? (view.activeId ??
+        campaigns.find((campaign) => campaign.situation.kind !== 'done')?.id ??
+        null)
+      : null
+  const sourceId = picked && picked.projectId === view.projectId ? picked.id : fallback
+  const campaign = campaigns.find((item) => item.id === sourceId) ?? null
+  const pickSource = (id: string | null) => setPicked({ projectId: view.projectId, id })
+  const addPlaceholder = campaign
+    ? t('todo.campaignAddPlaceholder', { id: campaign.id })
+    : t('todo.addPlaceholder')
 
   const active = todos.filter((todo) => !todo.completed)
   const completed = todos.filter((todo) => todo.completed)
-  const progress = todos.length > 0 ? Math.round((completed.length / todos.length) * 100) : 0
+  const progress = campaign
+    ? {
+        done: campaign.done,
+        total: campaign.total,
+        percent: campaign.percent,
+        label: `${campaign.done} / ${campaign.total}${campaign.decomposed ? '' : '+?'}`,
+      }
+    : {
+        done: completed.length,
+        total: todos.length,
+        percent: todos.length > 0 ? Math.round((completed.length / todos.length) * 100) : 0,
+        label: `${completed.length} / ${todos.length}`,
+      }
   const activeProjectSections = projects
     .map((project) => ({
       key: `project:${project.id}`,
@@ -192,7 +231,13 @@ export function TodoSidebar() {
     return () => window.removeEventListener('keydown', focusComposer, true)
   }, [])
 
-  const submit = () => {
+  const submit = async () => {
+    if (campaign) {
+      if (!(await edits.add(campaign, title))) return
+      setTitle('')
+      setComposerExpanded(false)
+      return
+    }
     if (!createTodo(title, parseTags(tagDraft), projectDraft || undefined)) return
     setTitle('')
     setTagDraft('')
@@ -482,7 +527,18 @@ export function TodoSidebar() {
         <div className={styles.headerTop}>
           <div className={styles.heading}>
             <ListTodo size={17} />
-            <span>{t('todo.personalTitle')}</span>
+            {campaigns.length > 0 ? (
+              <ProjectPicker
+                heading
+                value={campaign?.id ?? ''}
+                projects={campaigns.map((item) => ({ id: item.id, name: item.id }))}
+                noProjectLabel={t('todo.personalTitle')}
+                ariaLabel={t('todo.sourceLabel')}
+                onChange={(id) => pickSource(id || null)}
+              />
+            ) : (
+              <span>{t('todo.personalTitle')}</span>
+            )}
           </div>
           <button
             type="button"
@@ -498,15 +554,13 @@ export function TodoSidebar() {
           className={styles.progress}
           role="progressbar"
           aria-valuemin={0}
-          aria-valuemax={todos.length}
-          aria-valuenow={completed.length}
+          aria-valuemax={progress.total}
+          aria-valuenow={progress.done}
         >
           <span className={styles.progressTrack}>
-            <span className={styles.progressFill} style={{ width: `${progress}%` }} />
+            <span className={styles.progressFill} style={{ width: `${progress.percent}%` }} />
           </span>
-          <span className={styles.progressCount}>
-            {completed.length} / {todos.length}
-          </span>
+          <span className={styles.progressCount}>{progress.label}</span>
         </div>
         <div className={styles.filters} role="tablist" aria-label={t('todo.filters')}>
           <button
@@ -543,14 +597,14 @@ export function TodoSidebar() {
         className={styles.addForm}
         onSubmit={(event) => {
           event.preventDefault()
-          submit()
+          void submit()
         }}
       >
         <div className={styles.composerBox}>
           <button
             type="submit"
             className={styles.composerSubmit}
-            disabled={!title.trim()}
+            disabled={!title.trim() || (campaign !== null && edits.busy)}
             title={t('todo.add')}
             aria-label={t('todo.add')}
           >
@@ -560,18 +614,20 @@ export function TodoSidebar() {
             ref={addInputRef}
             className={styles.composerInput}
             value={title}
-            maxLength={TODO_TITLE_MAX_LENGTH}
+            // A campaign title is checked in code points on submit; maxLength counts UTF-16 units.
+            maxLength={campaign ? undefined : TODO_TITLE_MAX_LENGTH}
             onFocus={() => setComposerExpanded(true)}
             onChange={(event) => setTitle(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === 'Escape' && !title.trim()) setComposerExpanded(false)
             }}
-            placeholder={t('todo.addPlaceholder')}
-            aria-label={t('todo.addPlaceholder')}
+            placeholder={addPlaceholder}
+            aria-label={addPlaceholder}
           />
           <kbd className={styles.composerShortcut}>{formatShortcut('Ctrl+N')}</kbd>
         </div>
-        {composerExpanded ? (
+        {/* Tags and project belong to personal todos only. */}
+        {composerExpanded && !campaign ? (
           <div className={styles.composerDetails}>
             <div className={styles.tagInputWrap}>
               <Tag size={13} aria-hidden="true" />
@@ -596,7 +652,9 @@ export function TodoSidebar() {
 
       <div className={styles.content}>
         {filter !== 'completed' ? <GsdSyncSection /> : null}
-        {todos.length === 0 ? (
+        {campaign ? (
+          <CampaignTaskRows campaign={campaign} filter={filter} edits={edits} />
+        ) : todos.length === 0 ? (
           <div className={styles.empty}>
             <div className={styles.emptyIcon}>
               <ListTodo size={20} />
@@ -629,9 +687,64 @@ export function TodoSidebar() {
             ) : null}
           </>
         )}
-        <CampaignsSection />
+        <CampaignsSection view={view} onSelect={pickSource} />
       </div>
     </aside>
+  )
+}
+
+/** The selected campaign's tasks for a list tab, in the Todo rows. */
+function CampaignTaskRows({
+  campaign,
+  filter,
+  edits,
+}: {
+  campaign: Campaign
+  filter: 'all' | 'active' | 'completed'
+  edits: CampaignEdits
+}) {
+  const t = useT()
+  const tasks = campaignTaskView(campaign.tasks, filter)
+  if (tasks.length === 0) return <p className={styles.filterEmpty}>{t('todo.campaignEmpty')}</p>
+  return (
+    <div className={styles.list}>
+      {tasks.map((task) => {
+        const done = task.state === 'concluída'
+        const undoable = done && edits.undoable(task.id)
+        // A task done elsewhere has no state here to go back to.
+        const label = t(
+          done ? (undoable ? 'todo.reopen' : STATE_KEYS[task.state]) : 'todo.complete',
+        )
+        return (
+          <div
+            key={task.id}
+            data-task={task.id}
+            className={`${styles.todoRow} ${done ? styles.todoRowCompleted : ''}`}
+          >
+            <span aria-hidden />
+            <button
+              type="button"
+              className={styles.checkButton}
+              onClick={() => void edits.toggle(task)}
+              disabled={edits.busy || (done && !undoable)}
+              title={label}
+              aria-label={label}
+            >
+              {done ? <Check size={12} /> : null}
+            </button>
+            <div className={styles.todoTitle} title={task.title}>
+              <span className={campaignStyles.id}>{task.id}</span>
+              <span className={styles.todoTitleText}>{task.title}</span>
+            </div>
+            {done ? null : (
+              <span className={campaignStyles.chip} data-lane={TASK_LANES[task.state]}>
+                {t(STATE_KEYS[task.state])}
+              </span>
+            )}
+          </div>
+        )
+      })}
+    </div>
   )
 }
 
@@ -641,6 +754,7 @@ function ProjectPicker({
   noProjectLabel,
   ariaLabel,
   compact = false,
+  heading = false,
   onChange,
 }: {
   value: string
@@ -648,6 +762,8 @@ function ProjectPicker({
   noProjectLabel: string
   ariaLabel: string
   compact?: boolean
+  /** Reads as the panel heading itself: the list source picker. */
+  heading?: boolean
   onChange: (value: string) => void
 }) {
   const [open, setOpen] = useState(false)
@@ -698,8 +814,12 @@ function ProjectPicker({
   }
 
   return (
-    <div className={compact ? styles.projectLink : styles.projectInputWrap}>
-      <FolderKanban size={compact ? 11 : 13} aria-hidden="true" />
+    <div
+      className={
+        heading ? styles.sourcePicker : compact ? styles.projectLink : styles.projectInputWrap
+      }
+    >
+      {heading ? null : <FolderKanban size={compact ? 11 : 13} aria-hidden="true" />}
       <button
         ref={triggerRef}
         type="button"

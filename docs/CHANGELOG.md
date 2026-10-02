@@ -16,7 +16,7 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
   `.workflow/campanhas.json`, a collapsed Campaigns section below your todos lists each campaign
   with its progress, situation (in progress, ready, waiting on another campaign or task, blocked,
   done), window, worktree and last update, and expands into its tasks with their state, level and
-  unmet prerequisites. It is read-only and refreshes when the file changes. **Open** starts Claude
+  unmet prerequisites. It refreshes when the file changes. **Open** starts Claude
   Code or Codex in the campaign's worktree with a prompt to resume it from the registry and its
   handoff, or focuses the tab it already opened for that campaign. A terminal you opened yourself,
   or one opened for another campaign, is never taken over.
@@ -25,6 +25,14 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
   Campaigns section, highlighted, with a **Continue** button that goes back to the tab opened for
   it or opens one. When no campaign terminal is focused, the last one active in that project stays on
   top.
+- **The Todo list shows the active campaign's tasks.** In a project with a campaign registry, the
+  list opens on the active campaign: Active (in progress, ready, reserved, proposed, blocked),
+  Completed and All follow it, and so does the progress bar. The heading picks another campaign or
+  **My todos**, and choosing a campaign in the Campaigns section shows it too. Adding a task there
+  adds it to the campaign with the next id, as a proposal from you; checking a task marks it done
+  ("marcada no Alethe"), with an undo. Writes take the same lock as `campanhas.py` and are refused,
+  with a reload, when the registry changed since it was read. **List source** in the Todo settings
+  makes the list open on your personal todos instead. Projects without a registry are unchanged.
 - **Orchestration settings with named worker roles.** A new Orchestration category in Preferences
   holds roles such as a reviewer: each sets the agent, model, effort, read-only mode and time
   budget, with the models and efforts listed from the installed Codex (and Codex's common efforts

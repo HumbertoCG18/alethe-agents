@@ -133,6 +133,9 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ### Fixed
 
+- Codex terminals get the orchestrator tools again. Codex no longer reports that the `alethe` MCP
+  server timed out after 30 seconds, a request Alethe cannot serve now fails at once with an
+  error instead of hanging, and accented text in delegation briefs and replies stays intact.
 - Alethe no longer closes by itself while a delegated worker streams a long reply with accented
   or other non-ASCII text. Trimming the live reply to its last 16,000 bytes could cut a character
   in half, which crashed the whole app

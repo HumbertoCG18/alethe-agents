@@ -220,8 +220,22 @@
   background: var(--bg-sunken);
 }
 
+/* The list source picker reads as the heading itself, with the pickers' caret. */
+.sourcePicker {
+  position: relative;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+
+.sourcePicker .projectPickerButton {
+  padding-left: 0;
+  color: inherit;
+}
+
 .projectInputWrap::after,
-.projectLink::after {
+.projectLink::after,
+.sourcePicker::after {
   content: '⌄';
   position: absolute;
   right: 6px;

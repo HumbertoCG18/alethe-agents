@@ -9,12 +9,18 @@ import gabarito from './__fixtures__/campanhas.gabarito.json'
 import gptTutor from './__fixtures__/campanhas.gpt-tutor.json'
 import {
   activeCampaign,
+  addCampaignTask,
   type Campaign,
   campaignActivity,
   campaignCwd,
+  campaignTaskView,
+  isoDay,
+  nextTaskId,
   parseCampaigns,
   registryPath,
   resumePrompt,
+  setCampaignTaskState,
+  validCampaignTitle,
 } from './campaigns'
 import type { GitCheckouts } from './tauri/git'
 
@@ -41,9 +47,17 @@ function byId(campaigns: Campaign[], id: string): Campaign {
 describe('parseCampaigns', () => {
   it('matches the campanhas.py gabarito field by field', () => {
     const campaigns = parse(exemplo)
+    const ids = new Set(
+      campaigns.flatMap((campaign) => [campaign.id, ...campaign.tasks.map((task) => task.id)]),
+    )
     expect(
       campaigns.map((campaign) => ({
         id: campaign.id,
+        proxima_tarefa: nextTaskId(
+          campaign.id,
+          campaign.tasks.map((task) => task.id),
+          ids,
+        ),
         concluidas: campaign.done,
         total: campaign.total,
         decomposta: campaign.decomposed,
@@ -316,5 +330,190 @@ describe('campaign checkouts', () => {
       expect(activeCampaign(listed, git, { cwd: 'c:\\REPO\\src' }, null)).toBe('MAIN')
       expect(campaignCwd(byId(listed, 'FEAT'), git)).toBe('C:/repo-feature')
     })
+  })
+})
+
+const today = '2026-10-02'
+const oito = () => structuredClone(exemplo).campanhas.find((campaign) => campaign.id === 'OITO')!
+
+/** The registry `content` parsed back, and its campaign `id`. */
+function written(content: string, id: string) {
+  const data = JSON.parse(content) as typeof exemplo
+  return { data, campaign: data.campanhas.find((campaign) => campaign.id === id)! }
+}
+
+describe('nextTaskId', () => {
+  it('follows campanhas.py: largest numeric suffix of the campaign plus one, two digits at least', () => {
+    expect(nextTaskId('X', [], new Set())).toBe('X-01')
+    expect(nextTaskId('X', ['X-01', 'X-07', 'X-03'], new Set())).toBe('X-08')
+    expect(nextTaskId('X', ['X-99'], new Set())).toBe('X-100')
+    expect(nextTaskId('X', ['X-009'], new Set())).toBe('X-10')
+  })
+
+  it('counts only ids shaped <CAMPAIGN>-<digits>', () => {
+    expect(nextTaskId('X', ['X-01', 'X-07a', 'XY-09', 'X-', 'Y-05'], new Set())).toBe('X-02')
+    // The campaign id is matched literally, not as a pattern.
+    expect(nextTaskId('A.B', ['A.B-01', 'AxB-05'], new Set())).toBe('A.B-02')
+  })
+
+  it('never reuses an id taken anywhere in the registry', () => {
+    expect(nextTaskId('X', ['X-01'], new Set(['X-01', 'X-02', 'X-03']))).toBe('X-04')
+  })
+})
+
+describe('addCampaignTask', () => {
+  it('appends a proposed USER task with the next id, dates the campaign and stays valid', () => {
+    const result = addCampaignTask(JSON.stringify(exemplo), 'OITO', '  Nova tarefa  ', today)
+    expect(result).toMatchObject({ ok: true, id: 'OITO-09' })
+    if (!result.ok) return
+    const { data, campaign } = written(result.content, 'OITO')
+    const added = campaign.tarefas.at(-1)!
+    // Same keys, in the same order, as `campanhas.py tarefa` writes them.
+    expect(Object.entries(added)).toEqual([
+      ['id', 'OITO-09'],
+      ['titulo', 'Nova tarefa'],
+      ['estado', 'proposta'],
+      ['depende_de', []],
+      ['origem', 'USER'],
+    ])
+    expect(campaign.atualizado_em).toBe(today)
+    expect(data.campanhas[0].atualizado_em).toBe('2026-10-01')
+    expect(parseCampaigns(result.content)?.errors).toEqual([])
+    expect(result.content).toBe(`${JSON.stringify(data, null, 2)}\n`)
+  })
+
+  it('takes titles of 1 to 140 characters, refusing only control characters and line breaks', () => {
+    const source = JSON.stringify(exemplo)
+    for (const title of [
+      '',
+      '   ',
+      'a'.repeat(141),
+      'line\nbreak',
+      'tab\there',
+      'a\u2028b',
+      'a\u2029b',
+    ]) {
+      expect(addCampaignTask(source, 'OITO', title, today)).toEqual({ ok: false, error: 'title' })
+    }
+    // Code points, not UTF-16 units; a no-break space and a ZWJ emoji are text.
+    for (const title of ['a'.repeat(140), '😀'.repeat(140), 'a\u00a0b', '👩‍💻 deploy']) {
+      expect(addCampaignTask(source, 'OITO', title, today)).toMatchObject({ ok: true })
+    }
+  })
+
+  it('refuses a title the campaign already has, ignoring case, naming the task', () => {
+    expect(addCampaignTask(JSON.stringify(exemplo), 'OITO', ' PROPOSTA ', today)).toEqual({
+      ok: false,
+      error: 'duplicate',
+      id: 'OITO-06',
+    })
+    // Another campaign's title is no duplicate.
+    expect(addCampaignTask(JSON.stringify(exemplo), 'PARADA', 'proposta', today)).toMatchObject({
+      ok: true,
+      id: 'PARADA-02',
+    })
+  })
+
+  it('refuses an unknown campaign and a registry that would be invalid', () => {
+    expect(addCampaignTask(JSON.stringify(exemplo), 'GONE', 'x', today)).toEqual({
+      ok: false,
+      error: 'missing',
+    })
+    const broken = structuredClone(exemplo)
+    broken.campanhas[0].tarefas[0].estado = 'feita'
+    expect(addCampaignTask(JSON.stringify(broken), 'OITO', 'x', today)).toEqual({
+      ok: false,
+      error: 'invalid',
+    })
+  })
+})
+
+describe('setCampaignTaskState', () => {
+  it('marks a task done in Alethe, and the previous state puts it back as it was', () => {
+    const done = setCampaignTaskState(
+      JSON.stringify(exemplo),
+      'OITO-03',
+      'concluída',
+      'marcada no Alethe',
+      today,
+    )
+    expect(done).toMatchObject({ ok: true, previous: { state: 'pronta', result: null } })
+    if (!done.ok) return
+    const { campaign } = written(done.content, 'OITO')
+    expect(campaign.tarefas[2]).toEqual({
+      ...oito().tarefas[2],
+      estado: 'concluída',
+      resultado: 'marcada no Alethe',
+    })
+    expect(campaign.atualizado_em).toBe(today)
+
+    const undone = setCampaignTaskState(
+      done.content,
+      'OITO-03',
+      done.previous.state,
+      done.previous.result,
+      today,
+    )
+    expect(undone.ok && written(undone.content, 'OITO').campaign.tarefas[2]).toEqual(
+      oito().tarefas[2],
+    )
+  })
+
+  it('keeps a result the task already had when it is restored', () => {
+    const registry = structuredClone(exemplo)
+    Object.assign(registry.campanhas[1].tarefas[2], { resultado: 'antes' })
+    const done = setCampaignTaskState(JSON.stringify(registry), 'OITO-03', 'concluída', 'x', today)
+    expect(done).toMatchObject({ ok: true, previous: { state: 'pronta', result: 'antes' } })
+  })
+
+  it('refuses a task the registry does not have', () => {
+    expect(
+      setCampaignTaskState(JSON.stringify(exemplo), 'GONE-01', 'concluída', null, today),
+    ).toEqual({ ok: false, error: 'missing' })
+  })
+})
+
+describe('campaignTaskView', () => {
+  const tasks = parse({
+    campanhas: [
+      {
+        id: 'X',
+        prioridade: 1,
+        janela: 'assistida',
+        tarefas: [
+          { id: 'X-100', estado: 'pronta' },
+          { id: 'X-02', estado: 'bloqueada' },
+          { id: 'X-03', estado: 'concluída' },
+          { id: 'X-04', estado: 'proposta' },
+          { id: 'X-05', estado: 'reservada' },
+          { id: 'X-06', estado: 'em execução' },
+          { id: 'X-99', estado: 'pronta' },
+          { id: 'X-01', estado: 'concluída' },
+        ],
+      },
+    ],
+  })[0].tasks
+  const ids = (filter: 'all' | 'active' | 'completed') =>
+    campaignTaskView(tasks, filter).map((task) => task.id)
+
+  it('lists the open tasks by state (in progress, ready, reserved, proposed, blocked), then by id', () => {
+    expect(ids('active')).toEqual(['X-06', 'X-99', 'X-100', 'X-05', 'X-04', 'X-02'])
+  })
+
+  it('lists only the done tasks under Completed, and everything under All', () => {
+    expect(ids('completed')).toEqual(['X-01', 'X-03'])
+    expect(ids('all')).toEqual(['X-06', 'X-99', 'X-100', 'X-05', 'X-04', 'X-02', 'X-01', 'X-03'])
+  })
+})
+
+describe('registry helpers', () => {
+  it('measures titles in code points, as the composer checks them', () => {
+    expect(validCampaignTitle('😀'.repeat(140))).toBe(true)
+    expect(validCampaignTitle('😀'.repeat(141))).toBe(false)
+    expect(validCampaignTitle('')).toBe(false)
+  })
+
+  it('dates writes with the local calendar day, as campanhas.py does', () => {
+    expect(isoDay(new Date(2026, 0, 5, 23, 59))).toBe('2026-01-05')
   })
 })

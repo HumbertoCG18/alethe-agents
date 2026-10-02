@@ -8,6 +8,7 @@ mod antigravity_usage;
 mod backup;
 mod browser_pane;
 mod browser_session;
+mod campaign_registry;
 mod cdp;
 mod claude_sessions;
 mod claude_usage;
@@ -316,6 +317,7 @@ pub fn run() {
             filesystem::ensure_todo_template,
             filesystem::watch_file,
             filesystem::unwatch_file,
+            campaign_registry::campaign_registry_write,
             pty::pty_exists,
             pty::spawn_pty,
             pty::attach_pty,

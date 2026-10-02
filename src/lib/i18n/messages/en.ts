@@ -703,6 +703,22 @@ export const en = {
   'todo.campaigns.errorWindow': '{id}: invalid window {detail}',
   'todo.campaigns.errorDependency': '{id} depends on {detail}, which does not exist',
   'todo.campaigns.errorCycle': 'Cycle: {detail}',
+  'todo.sourceLabel': 'List source',
+  'todo.sourceActiveCampaign': 'Active campaign',
+  'todo.sourceHint':
+    'Without a campaign registry in the project, the list always shows your personal todos.',
+  'todo.campaignAddPlaceholder': 'Add a task to {id}…',
+  'todo.campaignEmpty': 'No tasks here.',
+  'todo.campaignWrite.title': 'Campaign registry',
+  'todo.campaignWrite.done': '{id} marked done.',
+  'todo.campaignWrite.undo': 'Undo',
+  'todo.campaignWrite.conflict':
+    'The registry changed since it was read. The list was reloaded; try again.',
+  'todo.campaignWrite.failed': 'Could not write the registry: {message}',
+  'todo.campaignWrite.badTitle':
+    'A task title has 1 to 140 characters, with no line break or control character.',
+  'todo.campaignWrite.duplicate': '{campaign} already has this task: {id}',
+  'todo.campaignWrite.invalid': 'The registry would become invalid; nothing was written.',
   'gsdActivity.loading': 'Loading activity…',
   'gsdActivity.tokens': '{count} tokens',
   'gsdActivity.roleUser': 'Instruction',

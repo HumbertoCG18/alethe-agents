@@ -714,6 +714,22 @@ export const ptBR: Record<MessageKey, string> = {
   'todo.campaigns.errorWindow': '{id}: janela inválida {detail}',
   'todo.campaigns.errorDependency': '{id} depende de {detail}, que não existe',
   'todo.campaigns.errorCycle': 'Ciclo: {detail}',
+  'todo.sourceLabel': 'Fonte da lista',
+  'todo.sourceActiveCampaign': 'Campanha ativa',
+  'todo.sourceHint':
+    'Sem registro de campanhas no projeto, a lista mostra sempre os seus todos pessoais.',
+  'todo.campaignAddPlaceholder': 'Adicionar uma tarefa a {id}…',
+  'todo.campaignEmpty': 'Nenhuma tarefa aqui.',
+  'todo.campaignWrite.title': 'Registro de campanhas',
+  'todo.campaignWrite.done': '{id} marcada como concluída.',
+  'todo.campaignWrite.undo': 'Desfazer',
+  'todo.campaignWrite.conflict':
+    'O registro mudou desde a leitura. A lista foi recarregada; tente de novo.',
+  'todo.campaignWrite.failed': 'Não foi possível gravar o registro: {message}',
+  'todo.campaignWrite.badTitle':
+    'O título de uma tarefa tem de 1 a 140 caracteres, sem quebra de linha nem caractere de controle.',
+  'todo.campaignWrite.duplicate': '{campaign} já tem essa tarefa: {id}',
+  'todo.campaignWrite.invalid': 'O registro ficaria inválido; nada foi gravado.',
   'gsdActivity.loading': 'Carregando atividade…',
   'gsdActivity.tokens': '{count} tokens',
   'gsdActivity.roleUser': 'Instrução',

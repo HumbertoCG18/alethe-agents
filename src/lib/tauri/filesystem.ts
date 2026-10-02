@@ -49,6 +49,18 @@ export async function writeTextFile(path: string, content: string): Promise<void
   await invoke('write_text_file', { path, content })
 }
 
+/**
+ * Replaces `.workflow/campanhas.json` under campanhas.py's lock while it is still exactly
+ * `expectedContent` (the text `readTextFile` returned); rejects with `'conflict'` otherwise.
+ */
+export async function campaignRegistryWrite(
+  path: string,
+  expectedContent: string,
+  content: string,
+): Promise<void> {
+  await invoke('campaign_registry_write', { path, expectedContent, content })
+}
+
 export async function writeProjectMarker(projectDir: string, content: string): Promise<void> {
   await invoke('write_project_marker', { projectDir, content })
 }

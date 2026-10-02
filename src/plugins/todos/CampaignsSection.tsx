@@ -1,37 +1,22 @@
 import { ChevronDown, Play } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 
 import {
-  activeCampaign,
   type Campaign,
   campaignActivity,
   campaignCwd,
-  type CampaignRegistry,
   type CampaignSituation,
-  type CampaignTab,
   type CampaignWindow,
-  parseCampaigns,
   type RegistryError,
-  registryPath,
   resumePrompt,
-  type TaskState,
 } from '../../lib/campaigns'
 import { intlLocale, type MessageKey, type TFunction, useT } from '../../lib/i18n'
-import {
-  findRelativePath,
-  type GitCheckouts,
-  listenFileChanged,
-  readTextFile,
-  unwatchFile,
-  watchFile,
-  worktreeCheckouts,
-} from '../../lib/tauri'
-import { getProjectDefaultCwd } from '../../lib/terminalFactory'
+import { findRelativePath, type GitCheckouts } from '../../lib/tauri'
 import { AGENT_TYPE_LABELS, type SubTab } from '../../lib/types'
-import { selectActiveProject, useProjectsStore } from '../../stores/projectsStore'
+import { useProjectsStore } from '../../stores/projectsStore'
 import { useUiStore } from '../../stores/uiStore'
 import styles from './CampaignsSection.module.css'
-import { useTodosStore } from './store'
+import { type CampaignView, type Registry, STATE_KEYS, TASK_LANES } from './campaignView'
 import sidebarStyles from './TodoSidebar.module.css'
 
 const AGENTS = ['claude', 'codex'] as const
@@ -41,15 +26,6 @@ const WINDOW_KEYS: Record<CampaignWindow, MessageKey> = {
   assistida: 'todo.campaigns.windowAssisted',
   noite: 'todo.campaigns.windowNight',
   qualquer: 'todo.campaigns.windowAny',
-}
-
-const STATE_KEYS: Record<TaskState, MessageKey> = {
-  proposta: 'todo.campaigns.stateProposed',
-  pronta: 'todo.campaigns.stateReady',
-  'em execução': 'todo.campaigns.stateRunning',
-  bloqueada: 'todo.campaigns.stateBlocked',
-  reservada: 'todo.campaigns.stateReserved',
-  concluída: 'todo.campaigns.stateDone',
 }
 
 const ERROR_KEYS: Record<RegistryError['kind'], MessageKey> = {
@@ -70,15 +46,6 @@ const SITUATION_LANES: Record<CampaignSituation['kind'], string> = {
   done: 'finished',
 }
 
-const TASK_LANES: Record<TaskState, string> = {
-  proposta: 'idle',
-  pronta: 'queued',
-  'em execução': 'running',
-  bloqueada: 'blocked',
-  reservada: 'idle',
-  concluída: 'finished',
-}
-
 function situationLabel(t: TFunction, situation: CampaignSituation): string {
   switch (situation.kind) {
     case 'done':
@@ -92,85 +59,6 @@ function situationLabel(t: TFunction, situation: CampaignSituation): string {
     case 'blocked':
       return t('todo.campaigns.blocked')
   }
-}
-
-type Registry = CampaignRegistry & {
-  projectId: string
-  /** Absolute path of `.workflow/campanhas.json` in the main checkout. */
-  path: string
-  main: string
-  checkouts: GitCheckouts
-}
-
-/** Reads the registry in the main checkout of `projectPath` and re-reads it when the file changes. */
-function useCampaignRegistry(projectId: string | null, projectPath: string): Registry | null {
-  const [registry, setRegistry] = useState<Registry | null>(null)
-
-  useEffect(() => {
-    if (!projectId || !projectPath) return
-    let cancelled = false
-    let latest = 0
-    let target: string | null = null
-    let watched: string | null = null
-    let watching: string | null = null
-    // The path counts as watched only once the watch is in place; it fails while `.workflow`
-    // does not exist, and `retry` tries again when the user comes back to the window.
-    const watch = async (path: string) => {
-      if (watched === path || watching === path) return
-      watching = path
-      const ok = await watchFile(path).then(
-        () => true,
-        () => false,
-      )
-      if (watching === path) watching = null
-      if (!ok) return
-      if (cancelled || target !== path) {
-        void unwatchFile(path).catch(() => {})
-        return
-      }
-      if (watched) void unwatchFile(watched).catch(() => {})
-      watched = path
-    }
-    const reload = async () => {
-      // Reloads overlap (file events, focus); only the newest one may publish.
-      const request = ++latest
-      const stale = () => cancelled || request !== latest
-      const checkouts = await worktreeCheckouts(projectPath).catch(() => null)
-      if (stale()) return
-      const main = checkouts?.main
-      if (!checkouts || !main) {
-        setRegistry(null)
-        return
-      }
-      const path = registryPath(main)
-      target = path
-      await watch(path)
-      const text = await readTextFile(path).catch(() => null)
-      if (stale()) return
-      const parsed = text === null ? null : parseCampaigns(text)
-      setRegistry(parsed ? { ...parsed, projectId, path, main, checkouts } : null)
-    }
-    const retry = () => {
-      if (target && watched !== target && document.visibilityState !== 'hidden') void reload()
-    }
-    void reload()
-    const unlisten = listenFileChanged((path) => {
-      if (path === watched) void reload()
-    })
-    window.addEventListener('focus', retry)
-    document.addEventListener('visibilitychange', retry)
-    return () => {
-      cancelled = true
-      window.removeEventListener('focus', retry)
-      document.removeEventListener('visibilitychange', retry)
-      if (watched) void unwatchFile(watched).catch(() => {})
-      void unlisten.then((stop) => stop()).catch(() => {})
-    }
-  }, [projectId, projectPath])
-
-  // Keyed by project, not path: opening a terminal moves the project's default cwd to another
-  // worktree of the same repository, and the panel should not blink while it re-reads.
-  return registry?.projectId === projectId ? registry : null
 }
 
 /**
@@ -244,41 +132,16 @@ function continueCampaign(projectId: string, campaign: Campaign): boolean {
   return terminalId !== null
 }
 
-/** The focused terminal tab, when it belongs to the active project. */
-function useFocusedTab(): CampaignTab | null {
-  const target = useUiStore((state) => state.activeTerminal)
-  const terminal = useProjectsStore((state) =>
-    target && target.projectId === state.activeProjectId
-      ? state.projects
-          .find((project) => project.id === target.projectId)
-          ?.terminals.find((item) => item.id === target.terminalId)
-      : undefined,
-  )
-  if (!terminal || (terminal.kind ?? 'terminal') !== 'terminal') return null
-  const tab = terminal.tabs.find((item) => item.id === terminal.activeTabId)
-  return tab ? { campaignId: tab.campaignId, cwd: tab.cwd || terminal.cwd } : null
-}
-
-export function CampaignsSection() {
+/** The campaigns map below the list; choosing a campaign makes it the list's source. */
+export function CampaignsSection({
+  view: { projectId, registry, activeId },
+  onSelect,
+}: {
+  view: CampaignView
+  onSelect: (campaignId: string) => void
+}) {
   const t = useT()
-  const projectId = useProjectsStore((state) => state.activeProjectId)
-  const projectPath = useProjectsStore((state) =>
-    getProjectDefaultCwd(selectActiveProject(state), state.projects),
-  )
-  const registry = useCampaignRegistry(projectId, projectPath)
   const [collapsed, setCollapsed] = useState(true)
-  const focused = useFocusedTab()
-  const remembered = useTodosStore((state) =>
-    projectId ? (state.activeCampaigns[projectId] ?? null) : null,
-  )
-  const rememberCampaign = useTodosStore((state) => state.rememberCampaign)
-  const activeId = registry
-    ? activeCampaign(registry.campaigns, registry.checkouts, focused, remembered)
-    : null
-
-  useEffect(() => {
-    if (projectId && activeId && activeId !== remembered) rememberCampaign(projectId, activeId)
-  }, [projectId, activeId, remembered, rememberCampaign])
 
   if (!registry || !projectId) return null
   // Stable sort: the active campaign first, the rest in priority order.
@@ -325,6 +188,7 @@ export function CampaignsSection() {
               campaign={campaign}
               checkouts={registry.checkouts}
               active={campaign.id === activeId}
+              onSelect={() => onSelect(campaign.id)}
               onOpen={(agent) => void openCampaign(projectId, campaign, agent, registry)}
               onContinue={() => continueCampaign(projectId, campaign)}
             />
@@ -339,12 +203,14 @@ function CampaignRow({
   campaign,
   checkouts,
   active,
+  onSelect,
   onOpen,
   onContinue,
 }: {
   campaign: Campaign
   checkouts: GitCheckouts
   active: boolean
+  onSelect: () => void
   onOpen: (agent: CampaignAgent) => void
   /** Focuses the campaign's open tab; false when it has none. */
   onContinue: () => boolean
@@ -377,7 +243,10 @@ function CampaignRow({
       <button
         type="button"
         className={styles.toggle}
-        onClick={() => setExpanded((current) => !current)}
+        onClick={() => {
+          setExpanded((current) => !current)
+          onSelect()
+        }}
         aria-expanded={expanded}
         title={campaign.title || campaign.id}
       >

@@ -13,12 +13,17 @@ import type { TodoItem } from '../../lib/types'
 const TODOS_KEY = 'todos'
 const STORAGE_PATH_KEY = 'storagePath'
 const ACTIVE_CAMPAIGNS_KEY = 'activeCampaigns'
+const LIST_SOURCE_KEY = 'listSource'
+
+/** Where the list opens: the active campaign when the project has a registry, or the personal list. */
+export type ListSource = 'campaign' | 'mine'
 
 type TodosState = {
   todos: TodoItem[]
   storagePath: string
   /** The last active campaign of each project, by project id. */
   activeCampaigns: Record<string, string>
+  listSource: ListSource
   hydrated: boolean
   createTodo: (title: string, tags?: string[], projectId?: string) => TodoItem | null
   createTodoFromPullRequest: (
@@ -34,6 +39,7 @@ type TodosState = {
   resetTodosToDefault: () => void
   setStoragePath: (path: string) => void
   rememberCampaign: (projectId: string, campaignId: string) => void
+  setListSource: (source: ListSource) => void
 }
 
 let storage: PluginStorage | null = null
@@ -52,6 +58,7 @@ export const useTodosStore = create<TodosState>((set, get) => {
     todos: [],
     storagePath: '',
     activeCampaigns: {},
+    listSource: 'campaign',
     hydrated: false,
 
     createTodo: (rawTitle, rawTags = [], projectId) => {
@@ -148,6 +155,11 @@ export const useTodosStore = create<TodosState>((set, get) => {
       void storage?.set(ACTIVE_CAMPAIGNS_KEY, activeCampaigns)
       set({ activeCampaigns })
     },
+
+    setListSource: (listSource) => {
+      void storage?.set(LIST_SOURCE_KEY, listSource)
+      set({ listSource })
+    },
   }
 })
 
@@ -174,7 +186,9 @@ export async function hydrateTodos(
   const activeCampaigns =
     typeof saved === 'object' && saved !== null ? (saved as Record<string, string>) : {}
 
-  useTodosStore.setState({ todos, storagePath, activeCampaigns, hydrated: true })
+  const listSource: ListSource = record[LIST_SOURCE_KEY] === 'mine' ? 'mine' : 'campaign'
+
+  useTodosStore.setState({ todos, storagePath, activeCampaigns, listSource, hydrated: true })
 
   if (!stored && legacy.todos.length > 0) await pluginStorage.set(TODOS_KEY, legacy.todos)
   if (record[STORAGE_PATH_KEY] === undefined && legacy.storagePath) {
@@ -184,5 +198,11 @@ export async function hydrateTodos(
 
 export function resetTodosStoreForTests(): void {
   storage = null
-  useTodosStore.setState({ todos: [], storagePath: '', activeCampaigns: {}, hydrated: false })
+  useTodosStore.setState({
+    todos: [],
+    storagePath: '',
+    activeCampaigns: {},
+    listSource: 'campaign',
+    hydrated: false,
+  })
 }

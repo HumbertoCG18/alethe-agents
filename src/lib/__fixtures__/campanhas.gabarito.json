@@ -4,6 +4,7 @@
   "campanhas": [
     {
       "id": "BASE",
+      "proxima_tarefa": "BASE-03",
       "concluidas": 2,
       "total": 2,
       "decomposta": true,
@@ -32,6 +33,7 @@
     },
     {
       "id": "OITO",
+      "proxima_tarefa": "OITO-09",
       "concluidas": 1,
       "total": 8,
       "decomposta": true,
@@ -96,6 +98,7 @@
     },
     {
       "id": "ABERTA",
+      "proxima_tarefa": "ABERTA-02",
       "concluidas": 1,
       "total": 1,
       "decomposta": false,
@@ -118,6 +121,7 @@
     },
     {
       "id": "DEPOIS",
+      "proxima_tarefa": "DEPOIS-02",
       "concluidas": 0,
       "total": 1,
       "decomposta": true,
@@ -144,6 +148,7 @@
     },
     {
       "id": "NOTURNA",
+      "proxima_tarefa": "NOTURNA-03",
       "concluidas": 0,
       "total": 2,
       "decomposta": true,
@@ -176,6 +181,7 @@
     },
     {
       "id": "PARADA",
+      "proxima_tarefa": "PARADA-02",
       "concluidas": 0,
       "total": 1,
       "decomposta": true,

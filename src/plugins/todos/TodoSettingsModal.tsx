@@ -9,7 +9,7 @@ import { ensureTodoTemplate } from '../../lib/tauri'
 import { useProjectsStore } from '../../stores/projectsStore'
 import { useUiStore } from '../../stores/uiStore'
 import { TODO_SETTINGS_MODAL_ID } from './manifest'
-import { useTodosStore } from './store'
+import { type ListSource, useTodosStore } from './store'
 
 export function TodoSettingsModal() {
   const t = useT()
@@ -18,6 +18,8 @@ export function TodoSettingsModal() {
   const savedPath = useTodosStore((state) => state.storagePath)
   const setStoragePath = useTodosStore((state) => state.setStoragePath)
   const resetTodosToDefault = useTodosStore((state) => state.resetTodosToDefault)
+  const savedSource = useTodosStore((state) => state.listSource)
+  const setListSource = useTodosStore((state) => state.setListSource)
   const savedWorkMinutes = useProjectsStore((state) => state.preferences.pomodoroWorkMinutes)
   const savedShortBreakMinutes = useProjectsStore(
     (state) => state.preferences.pomodoroShortBreakMinutes,
@@ -27,6 +29,7 @@ export function TodoSettingsModal() {
   )
   const setPreferences = useProjectsStore((state) => state.setPreferences)
   const [path, setPath] = useState('')
+  const [source, setSource] = useState<ListSource>(savedSource)
   const [saving, setSaving] = useState(false)
   const [workMinutes, setWorkMinutes] = useState(savedWorkMinutes)
   const [shortBreakMinutes, setShortBreakMinutes] = useState(savedShortBreakMinutes)
@@ -35,6 +38,10 @@ export function TodoSettingsModal() {
   useEffect(() => {
     if (open) setPath(savedPath)
   }, [open, savedPath])
+
+  useEffect(() => {
+    if (open) setSource(savedSource)
+  }, [open, savedSource])
 
   useEffect(() => {
     if (!open) return
@@ -58,6 +65,7 @@ export function TodoSettingsModal() {
         await ensureTodoTemplate(finalPath)
       }
       setStoragePath(finalPath)
+      setListSource(source)
       setPreferences({
         pomodoroWorkMinutes: clampMinutes(workMinutes),
         pomodoroShortBreakMinutes: clampMinutes(shortBreakMinutes),
@@ -99,6 +107,23 @@ export function TodoSettingsModal() {
         </>
       }
     >
+      <div className={controls.field}>
+        <span className={controls.label}>{t('todo.sourceLabel')}</span>
+        <div className={controls.pillRow}>
+          {(['campaign', 'mine'] as const).map((value) => (
+            <button
+              key={value}
+              type="button"
+              className={`${controls.pill} ${source === value ? controls.pillActive : ''}`}
+              aria-pressed={source === value}
+              onClick={() => setSource(value)}
+            >
+              {t(value === 'campaign' ? 'todo.sourceActiveCampaign' : 'todo.personalTitle')}
+            </button>
+          ))}
+        </div>
+        <span className={controls.hint}>{t('todo.sourceHint')}</span>
+      </div>
       <div className={controls.field}>
         <label className={controls.label}>{t('todo.pathLabel')}</label>
         <div className={controls.cwdRow}>

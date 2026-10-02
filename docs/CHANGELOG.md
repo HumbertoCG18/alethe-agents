@@ -140,6 +140,9 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ### Fixed
 
+- Codex terminals get the orchestrator tools again. Codex no longer reports that the `alethe` MCP
+  server timed out after 30 seconds, a request Alethe cannot serve now fails at once with an
+  error instead of hanging, and accented text in delegation briefs and replies stays intact.
 - The title bar Claude, Codex and Antigravity usage pills now refresh as soon as the window
   regains focus, instead of staying hidden for minutes after a start with the window unfocused.
 - Alethe no longer closes by itself while a delegated worker streams a long reply with accented

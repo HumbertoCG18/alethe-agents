@@ -188,10 +188,13 @@ fn write_codex_hook_forwarder(port: u16) -> Result<PathBuf, String> {
     let endpoint = listener_endpoint(port);
     let token = init_token();
     let script = format!(
-        "$body = [Console]::In.ReadToEnd()\r\n\
-         $planner = $env:ALETHE_PLANNER\r\n\
+        "$utf8 = New-Object System.Text.UTF8Encoding $false\r\n\
+         $in = New-Object System.IO.StreamReader([Console]::OpenStandardInput(), $utf8)\r\n\
+         $body = $in.ReadToEnd()\r\n\
+         $headers = @{{ 'X-Alethe-Token' = '{token}'; 'X-Alethe-Agent' = 'codex' }}\r\n\
+         if ($env:ALETHE_PLANNER) {{ $headers['X-Alethe-Planner'] = $env:ALETHE_PLANNER }}\r\n\
          try {{\r\n\
-         \x20\x20Invoke-RestMethod -Uri '{endpoint}/hook' -Method Post -Body $body -ContentType 'application/json' -Headers @{{ 'X-Alethe-Token' = '{token}'; 'X-Alethe-Planner' = $planner; 'X-Alethe-Agent' = 'codex' }} | Out-Null\r\n\
+         \x20\x20Invoke-RestMethod -Uri '{endpoint}/hook' -Method Post -Body ($utf8.GetBytes($body)) -ContentType 'application/json; charset=utf-8' -Headers $headers | Out-Null\r\n\
          }} catch {{}}\r\n",
         endpoint = endpoint,
         token = ps_escape(token),
@@ -207,28 +210,55 @@ const CODEX_MCP_MARK_END: &str = "# alethe-managed-mcp-end";
 /// Codex's MCP client only declares servers via `command`/`args` (stdio), unlike Claude Code's
 /// remote `http` support — this script bridges stdin/stdout JSON-RPC to Alethe's `/mcp` endpoint.
 fn write_codex_mcp_bridge(port: u16) -> Result<PathBuf, String> {
-    let endpoint = listener_endpoint(port);
-    let token = init_token();
-    let script = format!(
-        "$planner = $env:ALETHE_PLANNER\r\n\
-         while ($line = [Console]::In.ReadLine()) {{\r\n\
+    let script = codex_mcp_bridge_script(&listener_endpoint(port), init_token());
+    let path = std::env::temp_dir().join(format!("alethe-codex-mcp-bridge-{}.ps1", install_tag()));
+    std::fs::write(&path, script).map_err(|e| format!("write_failed:{e}"))?;
+    Ok(path)
+}
+
+fn codex_mcp_bridge_script(endpoint: &str, token: &str) -> String {
+    format!(
+        // Windows PowerShell 5.1 defaults to the console code page on stdin/stdout and to
+        // non-UTF-8 request and response bodies, so every boundary is pinned to UTF-8. stdin and
+        // stdout are opened as raw streams because the [Console] encoding setters would change
+        // the code page of a console the bridge may share with Codex. A $null header value
+        // makes Invoke-WebRequest throw, so the planner header is added only when set. A failed request with an id (even null) still gets a JSON-RPC error, so the
+        // client fails at once instead of waiting for its timeout.
+        "$utf8 = New-Object System.Text.UTF8Encoding $false\r\n\
+         $in = New-Object System.IO.StreamReader([Console]::OpenStandardInput(), $utf8)\r\n\
+         $out = New-Object System.IO.StreamWriter([Console]::OpenStandardOutput(), $utf8)\r\n\
+         $out.AutoFlush = $true\r\n\
+         $headers = @{{ 'X-Alethe-Token' = '{token}' }}\r\n\
+         if ($env:ALETHE_PLANNER) {{ $headers['X-Alethe-Planner'] = $env:ALETHE_PLANNER }}\r\n\
+         while ($null -ne ($line = $in.ReadLine())) {{\r\n\
          \x20\x20if ([string]::IsNullOrWhiteSpace($line)) {{ continue }}\r\n\
          \x20\x20try {{\r\n\
-         \x20\x20\x20\x20$resp = Invoke-WebRequest -UseBasicParsing -ErrorAction Stop -Uri '{endpoint}/mcp' -Method Post -Body $line -ContentType 'application/json' -Headers @{{ 'X-Alethe-Token' = '{token}'; 'X-Alethe-Planner' = $planner }}\r\n\
-         \x20\x20\x20\x20if ($resp.Content) {{\r\n\
-         \x20\x20\x20\x20\x20\x20[Console]::Out.WriteLine($resp.Content)\r\n\
-         \x20\x20\x20\x20\x20\x20[Console]::Out.Flush()\r\n\
-         \x20\x20\x20\x20}}\r\n\
+         \x20\x20\x20\x20$resp = Invoke-WebRequest -UseBasicParsing -ErrorAction Stop -Uri '{endpoint}/mcp' -Method Post -Body ($utf8.GetBytes($line)) -ContentType 'application/json; charset=utf-8' -Headers $headers\r\n\
+         \x20\x20\x20\x20$text = $utf8.GetString($resp.RawContentStream.ToArray())\r\n\
+         \x20\x20\x20\x20if ($text) {{ $out.WriteLine($text) }}\r\n\
          \x20\x20}} catch {{\r\n\
-         \x20\x20\x20\x20[Console]::Error.WriteLine('[alethe-mcp] request failed: ' + $_.Exception.Message)\r\n\
+         \x20\x20\x20\x20$message = $_.Exception.Message\r\n\
+         \x20\x20\x20\x20[Console]::Error.WriteLine('[alethe-mcp] request failed: ' + $message)\r\n\
+         \x20\x20\x20\x20$req = $null\r\n\
+         \x20\x20\x20\x20try {{ $req = $line | ConvertFrom-Json }} catch {{ [Console]::Error.WriteLine('[alethe-mcp] unparsable request') }}\r\n\
+         \x20\x20\x20\x20if ($req -and $req.PSObject.Properties['id']) {{\r\n\
+         \x20\x20\x20\x20\x20\x20$err = @{{ jsonrpc = '2.0'; id = $req.id; error = @{{ code = -32603; message = 'alethe bridge: ' + $message }} }}\r\n\
+         \x20\x20\x20\x20\x20\x20$out.WriteLine(($err | ConvertTo-Json -Compress -Depth 5))\r\n\
+         \x20\x20\x20\x20}}\r\n\
          \x20\x20}}\r\n\
          }}\r\n",
         endpoint = endpoint,
         token = ps_escape(token),
-    );
-    let path = std::env::temp_dir().join(format!("alethe-codex-mcp-bridge-{}.ps1", install_tag()));
-    std::fs::write(&path, script).map_err(|e| format!("write_failed:{e}"))?;
-    Ok(path)
+    )
+}
+
+/// Codex starts stdio MCP servers with a filtered environment: only the variables named in
+/// `env_vars` reach the bridge, and it needs ALETHE_PLANNER to identify the terminal.
+fn codex_mcp_server_block(script_path: &str) -> String {
+    let script_toml = toml_string(script_path);
+    format!(
+        "\n{CODEX_MCP_MARK_START}\n[mcp_servers.alethe]\ncommand = \"powershell.exe\"\nargs = [\"-NoProfile\", \"-ExecutionPolicy\", \"Bypass\", \"-File\", {script_toml}]\nenv_vars = [\"ALETHE_PLANNER\"]\n{CODEX_MCP_MARK_END}\n",
+    )
 }
 
 fn codex_mcp_config_write_inner(repo: String, _planner_id: String) -> Result<(), String> {
@@ -268,10 +298,7 @@ fn codex_mcp_config_write_inner(repo: String, _planner_id: String) -> Result<(),
         body.push('\n');
     }
 
-    let script_toml = toml_string(&script_path.to_string_lossy());
-    body.push_str(&format!(
-        "\n{CODEX_MCP_MARK_START}\n[mcp_servers.alethe]\ncommand = \"powershell.exe\"\nargs = [\"-NoProfile\", \"-ExecutionPolicy\", \"Bypass\", \"-File\", {script_toml}]\n{CODEX_MCP_MARK_END}\n",
-    ));
+    body.push_str(&codex_mcp_server_block(&script_path.to_string_lossy()));
 
     std::fs::write(&path, body).map_err(|e| format!("write_failed:{e}"))
 }
@@ -626,5 +653,233 @@ mod tests {
             "bridge script should report request failures on stderr"
         );
         removed.expect("generated bridge script should be removable");
+    }
+
+    #[test]
+    fn codex_mcp_server_block_forwards_planner_env() {
+        // Codex starts stdio MCP servers with a filtered environment.
+        let block = super::codex_mcp_server_block(r"C:\Temp\bridge.ps1");
+        let document = block
+            .parse::<toml_edit::DocumentMut>()
+            .expect("generated block should be valid TOML");
+        let env_vars = document["mcp_servers"]["alethe"]
+            .get("env_vars")
+            .and_then(|item| item.as_array())
+            .expect("block should list env_vars");
+        let names: Vec<_> = env_vars.iter().filter_map(|v| v.as_str()).collect();
+        assert_eq!(names, ["ALETHE_PLANNER"]);
+    }
+
+    /// Runs the rendered bridge with `input` (one or more request lines) and returns up to `count`
+    /// non-empty stdout lines that arrive within 15 s. stdin stays open, as it does under Codex.
+    #[cfg(windows)]
+    fn bridge_replies(
+        endpoint: &str,
+        planner: Option<&str>,
+        input: &str,
+        count: usize,
+        creation_flags: u32,
+    ) -> Vec<String> {
+        use std::io::{BufRead, Write};
+        use std::os::windows::process::CommandExt;
+        use std::process::{Command, Stdio};
+        use std::time::{Duration, Instant};
+
+        let script = super::codex_mcp_bridge_script(endpoint, "test-token");
+        let path = std::env::temp_dir().join(format!(
+            "alethe-bridge-test-{}-{}.ps1",
+            std::process::id(),
+            nanoid::nanoid!(8)
+        ));
+        std::fs::write(&path, script).expect("test bridge script should be written");
+
+        let mut command = Command::new("powershell.exe");
+        command
+            .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"])
+            .arg(&path)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .env_remove("ALETHE_PLANNER")
+            .creation_flags(creation_flags);
+        if let Some(planner) = planner {
+            command.env("ALETHE_PLANNER", planner);
+        }
+        let mut child = command.spawn().expect("powershell should start");
+        let mut stdin = child.stdin.take().expect("stdin is piped");
+        // The leading empty line must not end the bridge's read loop.
+        write!(stdin, "\r\n{input}\r\n").expect("bridge stdin should accept input");
+        stdin.flush().expect("bridge stdin should flush");
+
+        let stdout = child.stdout.take().expect("stdout is piped");
+        let (tx, rx) = std::sync::mpsc::channel();
+        // Ends when the child is killed and its stdout closes.
+        std::thread::spawn(move || {
+            let mut reader = std::io::BufReader::new(stdout);
+            loop {
+                let mut line = Vec::new();
+                match reader.read_until(b'\n', &mut line) {
+                    Ok(0) | Err(_) => break,
+                    Ok(_) if line.iter().all(u8::is_ascii_whitespace) => continue,
+                    Ok(_) => {
+                        if tx.send(line).is_err() {
+                            break;
+                        }
+                    }
+                }
+            }
+        });
+        let deadline = Instant::now() + Duration::from_secs(15);
+        let mut replies = Vec::new();
+        while replies.len() < count {
+            match rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+                Ok(line) => replies.push(line),
+                Err(_) => break,
+            }
+        }
+
+        drop(stdin);
+        let _ = child.kill();
+        let _ = child.wait();
+        let _ = std::fs::remove_file(&path);
+        replies
+            .into_iter()
+            .map(|line| {
+                let line = String::from_utf8(line).expect("bridge stdout should be valid UTF-8");
+                line.trim_end_matches(['\r', '\n']).to_string()
+            })
+            .collect()
+    }
+
+    #[cfg(windows)]
+    fn reply_json(reply: &str) -> serde_json::Value {
+        serde_json::from_str(reply).expect("bridge reply should be JSON")
+    }
+
+    /// Serves one request on a free port, answering `reply` as charset-less JSON like the real
+    /// listener. The handle yields the planner header and raw body, or None after 15 s.
+    #[cfg(windows)]
+    fn stub_once(
+        reply: &'static str,
+    ) -> (String, std::thread::JoinHandle<Option<(String, Vec<u8>)>>) {
+        let server = tiny_http::Server::http("127.0.0.1:0").expect("stub should bind");
+        let port = server
+            .server_addr()
+            .to_ip()
+            .expect("stub listens on TCP")
+            .port();
+        let handle = std::thread::spawn(move || {
+            let mut request = server
+                .recv_timeout(std::time::Duration::from_secs(15))
+                .ok()
+                .flatten()?;
+            let planner = request
+                .headers()
+                .iter()
+                .find(|h| h.field.equiv("X-Alethe-Planner"))
+                .map(|h| h.value.to_string())
+                .unwrap_or_default();
+            let mut body = Vec::new();
+            request.as_reader().read_to_end(&mut body).ok()?;
+            let header = tiny_http::Header::from_bytes("Content-Type", "application/json")
+                .expect("static header is valid");
+            let _ = request.respond(tiny_http::Response::from_data(reply).with_header(header));
+            Some((planner, body))
+        });
+        (super::listener_endpoint(port), handle)
+    }
+
+    #[cfg(windows)]
+    fn closed_endpoint() -> String {
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .and_then(|listener| listener.local_addr())
+            .expect("a free port should be available")
+            .port();
+        super::listener_endpoint(port)
+    }
+
+    const INITIALIZE: &str = r#"{"jsonrpc":"2.0","id":7,"method":"initialize","params":{}}"#;
+    const INITIALIZE_RESULT: &str = r#"{"jsonrpc":"2.0","id":7,"result":{}}"#;
+
+    #[cfg(windows)]
+    #[test]
+    fn codex_mcp_bridge_answers_jsonrpc_error_when_listener_is_down() {
+        let replies = bridge_replies(&closed_endpoint(), None, INITIALIZE, 1, 0);
+        let reply = replies
+            .first()
+            .expect("bridge should answer a failed request instead of staying silent");
+        let value = reply_json(reply);
+
+        assert_eq!(value["jsonrpc"], "2.0");
+        assert_eq!(value["id"], 7);
+        assert_eq!(value["error"]["code"], -32603);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn codex_mcp_bridge_answers_null_id_but_not_notifications() {
+        let input = [
+            r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+            r#"{"jsonrpc":"2.0","id":null,"method":"ping"}"#,
+            INITIALIZE,
+        ]
+        .join("\r\n");
+        let replies = bridge_replies(&closed_endpoint(), None, &input, 2, 0);
+        let ids: Vec<_> = replies
+            .iter()
+            .map(|reply| reply_json(reply).get("id").cloned())
+            .collect();
+
+        assert_eq!(
+            ids,
+            [Some(serde_json::Value::Null), Some(serde_json::json!(7))],
+            "only the two requests should be answered, in order: {replies:?}"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn codex_mcp_bridge_relays_response_with_and_without_planner() {
+        for planner in [None, Some("planner-1")] {
+            let (endpoint, stub) = stub_once(INITIALIZE_RESULT);
+            let replies = bridge_replies(&endpoint, planner, INITIALIZE, 1, 0);
+            let (seen, _) = stub
+                .join()
+                .expect("stub thread should not panic")
+                .unwrap_or_else(|| panic!("stub should get the request (planner {planner:?})"));
+
+            assert_eq!(replies, [INITIALIZE_RESULT], "planner {planner:?}");
+            assert_eq!(seen, planner.unwrap_or(""));
+        }
+    }
+
+    /// Codex may start the bridge in its own console or in a hidden one. With no console at all
+    /// (DETACHED_PROCESS), powershell.exe exits 0 without running anything, so there is no such
+    /// case to cover.
+    #[cfg(windows)]
+    #[test]
+    fn codex_mcp_bridge_keeps_utf8_in_both_directions() {
+        const REQUEST: &str =
+            r#"{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"brief":"ação ü 🚀"}}"#;
+        const RESPONSE: &str = r#"{"jsonrpc":"2.0","id":8,"result":{"text":"ação ü 🚀"}}"#;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        for (mode, flags) in [
+            ("inherited console", 0),
+            ("CREATE_NO_WINDOW", CREATE_NO_WINDOW),
+        ] {
+            let (endpoint, stub) = stub_once(RESPONSE);
+            let replies = bridge_replies(&endpoint, None, REQUEST, 1, flags);
+            let (_, body) = stub
+                .join()
+                .expect("stub thread should not panic")
+                .unwrap_or_else(|| panic!("stub should get the request ({mode})"));
+
+            assert_eq!(
+                String::from_utf8(body).as_deref(),
+                Ok(REQUEST),
+                "request body should reach the listener as the same UTF-8 ({mode})"
+            );
+            assert_eq!(replies, [RESPONSE], "{mode}");
+        }
     }
 }

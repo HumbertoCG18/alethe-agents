@@ -38,6 +38,7 @@ vi.mock('../../lib/tauri', async (importOriginal) => ({
 
 import { findRelativePath, readTextFile, watchFile } from '../../lib/tauri'
 import { CampaignsSection } from './CampaignsSection'
+import { resetTodosStoreForTests, useTodosStore } from './store'
 import { TodoSidebar } from './TodoSidebar'
 
 const REGISTRY = 'C:\\repo\\.workflow\\campanhas.json'
@@ -55,6 +56,8 @@ beforeEach(() => {
   fs.files.clear()
   fs.onChange = null
   fs.handoff = null
+  resetTodosStoreForTests()
+  useUiStore.setState({ activeTerminal: null })
   useProjectsStore.setState({ ...structuredClone(EMPTY_PROJECTS_FILE), hydrated: false })
   const project = useProjectsStore.getState().createProject({ name: 'App', defaultCwd: 'C:\\repo' })
   useProjectsStore.setState({ activeProjectId: project.id })
@@ -66,6 +69,23 @@ afterEach(() => {
 
 async function expandSection() {
   fireEvent.click(await screen.findByRole('button', { name: /Campaigns/ }))
+}
+
+const IDS = new RegExp(`^(${exemplo.campanhas.map((campaign) => campaign.id).join('|')})$`)
+/** Campaign ids in the order the rows show them. */
+const rowOrder = () => screen.getAllByText(IDS).map((element) => element.textContent)
+const activeRow = () => document.querySelector('[aria-current="true"]')
+
+function openTerminal(cwd: string, type: 'shell' | 'claude', campaignId?: string) {
+  const projectId = useProjectsStore.getState().projects[0].id
+  return useProjectsStore
+    .getState()
+    .createTerminal(projectId, { name: cwd, cwd, firstTab: { type, cwd, campaignId } })
+}
+
+function focusTerminal(terminalId: string) {
+  const projectId = useProjectsStore.getState().projects[0].id
+  act(() => useUiStore.getState().setActiveTerminal(projectId, terminalId))
 }
 
 describe('CampaignsSection', () => {
@@ -108,6 +128,101 @@ describe('CampaignsSection', () => {
     expect(screen.getByText('Nothing on your list').compareDocumentPosition(toggle)).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING,
     )
+    // The heading names the personal list, so it does not read as covering the campaigns.
+    expect(screen.getByText('My todos')).toBeInTheDocument()
+  })
+
+  it('puts the campaign of the focused terminal first, highlighted, and follows the focus', async () => {
+    fs.files.set(REGISTRY, JSON.stringify(withOito(exemplo, { worktrees: ['repo-feature'] })))
+    const tagged = openTerminal('C:\\repo', 'shell', 'PARADA')
+    const inWorktree = openTerminal('C:\\repo-feature', 'claude')
+    render(<CampaignsSection />)
+    await expandSection()
+    expect(rowOrder()[0]).toBe('BASE')
+    expect(activeRow()).toBeNull()
+
+    // The tab opened for PARADA wins, although it sits in the main checkout.
+    focusTerminal(tagged.id)
+    expect(rowOrder()).toEqual(['PARADA', 'BASE', 'OITO', 'ABERTA', 'DEPOIS', 'NOTURNA'])
+    expect(activeRow()).toHaveTextContent('PARADA')
+
+    // Any other terminal counts by the worktree its cwd is in.
+    focusTerminal(inWorktree.id)
+    expect(rowOrder()[0]).toBe('OITO')
+    expect(activeRow()).toHaveTextContent('OITO')
+
+    // With no campaign terminal focused, the last active campaign of the project stays on top.
+    act(() => useUiStore.setState({ activeTerminal: null }))
+    expect(rowOrder()[0]).toBe('OITO')
+    expect(useTodosStore.getState().activeCampaigns).toEqual({
+      [useProjectsStore.getState().projects[0].id]: 'OITO',
+    })
+
+    // Continue never takes over a terminal opened by hand: it offers the agents and starts a tab
+    // tagged for OITO, even though a Claude tab already runs in its worktree.
+    fireEvent.click(screen.getByRole('button', { name: 'Continue campaign OITO' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Claude Code' }))
+    await waitFor(() => expect(useProjectsStore.getState().projects[0].terminals).toHaveLength(3))
+    const created = useProjectsStore.getState().projects[0].terminals[2]
+    expect(created.tabs[0]).toMatchObject({
+      type: 'claude',
+      cwd: 'C:\\repo-feature',
+      campaignId: 'OITO',
+    })
+    expect(useUiStore.getState().activeTerminal?.terminalId).toBe(created.id)
+  })
+
+  it('opens a new tab for a campaign whose checkout another campaign tab already uses', async () => {
+    fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    // PARADA and OITO list no worktree: both resume in the main checkout.
+    openTerminal('C:\\repo', 'claude', 'PARADA')
+    render(<CampaignsSection />)
+    await expandSection()
+    fireEvent.click(screen.getByRole('button', { name: 'Open campaign OITO' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Claude Code' }))
+    await waitFor(() => expect(useProjectsStore.getState().projects[0].terminals).toHaveLength(2))
+    const created = useProjectsStore.getState().projects[0].terminals[1]
+    expect(created.tabs[0]).toMatchObject({
+      type: 'claude',
+      cwd: 'C:\\repo',
+      campaignId: 'OITO',
+      initialInput: expect.stringMatching(/^Retome a campanha OITO /),
+    })
+    expect(useUiStore.getState().activeTerminal?.terminalId).toBe(created.id)
+    expect(activeRow()).toHaveTextContent('OITO')
+  })
+
+  it('continues the active campaign in its terminal; only the active row has Continue', async () => {
+    fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    const tagged = openTerminal('C:\\repo', 'claude', 'PARADA')
+    const other = openTerminal('D:\\notes', 'shell')
+    focusTerminal(tagged.id)
+    render(<CampaignsSection />)
+    await expandSection()
+    expect(screen.getAllByRole('button', { name: /^Continue campaign/ })).toHaveLength(1)
+    expect(screen.queryByRole('button', { name: 'Open campaign PARADA' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Open campaign OITO' })).toBeInTheDocument()
+
+    focusTerminal(other.id)
+    fireEvent.click(screen.getByRole('button', { name: 'Continue campaign PARADA' }))
+    expect(useUiStore.getState().activeTerminal?.terminalId).toBe(tagged.id)
+    expect(useProjectsStore.getState().projects[0].terminals).toHaveLength(2)
+  })
+
+  it('opens a terminal for the remembered campaign when none is open, like Open', async () => {
+    fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    const projectId = useProjectsStore.getState().projects[0].id
+    useTodosStore.setState({ activeCampaigns: { [projectId]: 'PARADA' } })
+    render(<CampaignsSection />)
+    await expandSection()
+    expect(rowOrder()[0]).toBe('PARADA')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Continue campaign PARADA' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Codex' }))
+    await waitFor(() => expect(useProjectsStore.getState().projects[0].terminals).toHaveLength(1))
+    const [terminal] = useProjectsStore.getState().projects[0].terminals
+    expect(terminal.tabs[0]).toMatchObject({ type: 'codex', cwd: 'C:\\repo', campaignId: 'PARADA' })
+    expect(useUiStore.getState().activeTerminal?.terminalId).toBe(terminal.id)
   })
 
   it('opens the chosen agent in the campaign worktree once, then focuses it', async () => {
@@ -133,14 +248,17 @@ describe('CampaignsSection', () => {
     expect(terminal.tabs[0]).toMatchObject({
       type: 'claude',
       cwd: 'C:\\repo-feature',
+      campaignId: 'OITO',
       initialInput:
         'Retome a campanha OITO (Uma de oito feitas: 12,5% arredonda para 13) pelo registro ' +
         `${REGISTRY} e pelo handoff C:\\repo\\docs\\handoff.md.`,
     })
     expect(useUiStore.getState().activeTerminal?.terminalId).toBe(terminal.id)
+    // Its tab is focused now, so OITO became the active campaign and continues there.
+    expect(rowOrder()[0]).toBe('OITO')
 
-    useUiStore.setState({ activeTerminal: null })
-    open()
+    act(() => useUiStore.setState({ activeTerminal: null }))
+    fireEvent.click(screen.getByRole('button', { name: 'Continue campaign OITO' }))
     await waitFor(() => expect(useUiStore.getState().activeTerminal?.terminalId).toBe(terminal.id))
     expect(useProjectsStore.getState().projects[0].terminals).toHaveLength(1)
   })

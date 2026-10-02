@@ -8,6 +8,7 @@ import exemplo from './__fixtures__/campanhas.exemplo.json'
 import gabarito from './__fixtures__/campanhas.gabarito.json'
 import gptTutor from './__fixtures__/campanhas.gpt-tutor.json'
 import {
+  activeCampaign,
   type Campaign,
   campaignActivity,
   campaignCwd,
@@ -249,5 +250,71 @@ describe('campaign checkouts', () => {
       'Retome a campanha X (a b [201~c) pelo registro /repo/.workflow/campanhas.json ' +
         'e pelo handoff h .md (relativo ao checkout principal).',
     )
+  })
+
+  describe('activeCampaign', () => {
+    const campaigns = parse(gptTutor)
+    const active = (tab: { campaignId?: string; cwd: string } | null, remembered: string | null) =>
+      activeCampaign(campaigns, checkouts, tab, remembered)
+
+    it('takes the campaign a tab was opened for over the one its cwd belongs to', () => {
+      expect(active({ campaignId: 'REGUA', cwd: 'C:\\repo\\GPT-Tutor-Generator-p1' }, null)).toBe(
+        'REGUA',
+      )
+      // A tag naming a campaign no longer in the registry falls back to the cwd.
+      expect(active({ campaignId: 'GONE', cwd: 'C:\\repo\\GPT-Tutor-Generator-p1' }, null)).toBe(
+        'MOTOR',
+      )
+    })
+
+    it('matches a cwd through the checkouts git lists, from any folder inside one', () => {
+      expect(active({ cwd: 'c:/repo/GPT-Tutor-Generator-cru05/src/' }, 'VOCAB')).toBe('MOTOR')
+      // Same folder name, but not a checkout of this repository.
+      expect(active({ cwd: 'D:\\elsewhere\\GPT-Tutor-Generator-p1' }, null)).toBeNull()
+    })
+
+    it('matches the main checkout only to campaigns that list it, preferring the remembered one', () => {
+      const main = { cwd: 'C:\\repo\\GPT-Tutor-Generator' }
+      expect(active(main, null)).toBe('MOODLE-V1')
+      expect(active(main, 'VOCAB')).toBe('VOCAB')
+      // REGUA lists no worktree and resumes in the main checkout, but does not claim it.
+      expect(active(main, 'REGUA')).toBe('MOODLE-V1')
+    })
+
+    it('falls back to the remembered campaign, and to none when nothing matches', () => {
+      expect(active(null, 'REGUA')).toBe('REGUA')
+      expect(active({ cwd: 'D:\\notes' }, 'REGUA')).toBe('REGUA')
+      expect(active({ cwd: 'D:\\notes' }, null)).toBeNull()
+      expect(active(null, 'GONE')).toBeNull()
+    })
+
+    it('compares whole folder names, ignoring case and separators on Windows', () => {
+      const listed = parse({
+        campanhas: [
+          { id: 'MAIN', prioridade: 1, janela: 'assistida', worktrees: ['repo'], tarefas: [] },
+          {
+            id: 'FEAT',
+            prioridade: 2,
+            janela: 'assistida',
+            worktrees: ['REPO-FEATURE/'],
+            tarefas: [],
+          },
+        ],
+      })
+      // git lists Windows checkouts with forward slashes.
+      const git: GitCheckouts = {
+        main: 'C:/repo',
+        worktrees: [
+          { path: 'C:/repo', branch: 'dev', lastCommitMs: null },
+          { path: 'C:/repo-feature', branch: 'feature', lastCommitMs: null },
+        ],
+      }
+      const inFeature = { cwd: 'C:\\repo-feature\\src' }
+      expect(activeCampaign(listed, git, inFeature, null)).toBe('FEAT')
+      // `repo` names the main checkout only, not a folder whose name starts with it.
+      expect(activeCampaign(listed, git, inFeature, 'MAIN')).toBe('FEAT')
+      expect(activeCampaign(listed, git, { cwd: 'c:\\REPO\\src' }, null)).toBe('MAIN')
+      expect(campaignCwd(byId(listed, 'FEAT'), git)).toBe('C:/repo-feature')
+    })
   })
 })

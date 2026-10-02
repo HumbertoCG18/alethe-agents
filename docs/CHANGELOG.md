@@ -18,7 +18,13 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
   done), window, worktree and last update, and expands into its tasks with their state, level and
   unmet prerequisites. It is read-only and refreshes when the file changes. **Open** starts Claude
   Code or Codex in the campaign's worktree with a prompt to resume it from the registry and its
-  handoff, or focuses the tab already running there.
+  handoff, or focuses the tab it already opened for that campaign. A terminal you opened yourself,
+  or one opened for another campaign, is never taken over.
+- **The campaign you are working on comes first.** The campaign of the focused terminal (the tab
+  that Open started for it, or any terminal in one of its worktrees) is the first row of the
+  Campaigns section, highlighted, with a **Continue** button that goes back to the tab opened for
+  it or opens one. When no campaign terminal is focused, the last one active in that project stays on
+  top.
 - **Orchestration settings with named worker roles.** A new Orchestration category in Preferences
   holds roles such as a reviewer: each sets the agent, model, effort, read-only mode and time
   budget, with the models and efforts listed from the installed Codex (and Codex's common efforts
@@ -137,9 +143,16 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 - **The voice command UI is fully localized.** Every string in the command bar, the plan summary,
   the block and warning reasons, and the Jev history now goes through i18n in English and pt-BR,
   so nothing in the voice flow is hardcoded to a single language anymore.
+- Campaign rows look like the orchestration board's: a status dot in the board's colours, the id
+  and title on one line, and progress and situation on a quiet second line. Window, worktree and
+  last update moved to the expanded view.
+- The Todo List tab now names your own list "My todos", and its settings say the storage folder
+  is only for your personal todos; campaigns come from the project's `.workflow/campanhas.json`.
 
 ### Fixed
 
+- The Todo List settings in Portuguese have their accents back ("Configurações", "Pasta padrão",
+  "Não foi possível").
 - Codex terminals get the orchestrator tools again. Codex no longer reports that the `alethe` MCP
   server timed out after 30 seconds, a request Alethe cannot serve now fails at once with an
   error instead of hanging, and accented text in delegation briefs and replies stays intact.

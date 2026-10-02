@@ -1,8 +1,13 @@
+/*
+ * Campaign rows are siblings of the orchestration rail rows (OrchestratorPane .railRow, .dot and
+ * its lanes) and of the Todo rows: same dot, type scale, hover and selected treatment.
+ */
 .campaign {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 5px 5px 6px 1px;
+  display: grid;
+  grid-template-columns: 9px minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 9px;
+  padding: 2px 5px 2px 8px;
   border-radius: var(--radius-md);
   color: var(--fg);
   transition: background-color 140ms ease;
@@ -13,39 +18,113 @@
   background: var(--panel-hover);
 }
 
-.campaignHead {
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 4px;
+.campaign[data-active='true'] {
+  background: var(--accent-bg-soft);
 }
 
-.campaignToggle {
+.dot {
+  box-sizing: border-box;
+  justify-self: center;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--status-idle);
+}
+
+.campaign[data-lane='running'] .dot {
+  background: var(--status-working);
+}
+
+.campaign[data-lane='queued'] .dot {
+  background: var(--status-waiting);
+}
+
+.campaign[data-lane='interrupted'] .dot {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--status-waiting);
+}
+
+/* Blocked waits on a decision of yours: the one dot that breathes, as on the board. */
+.campaign[data-lane='blocked'] .dot {
+  background: var(--status-waiting);
+  animation: block-pulse 1.8s ease-in-out infinite;
+}
+
+.campaign[data-lane='finished'] .dot {
+  background: var(--status-stopped);
+}
+
+/* The active campaign is the one being worked on. */
+.campaign[data-active='true'] .dot {
+  background: var(--status-working);
+  box-shadow: none;
+  animation: none;
+}
+
+@keyframes block-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 var(--status-waiting-soft);
+  }
+
+  55% {
+    box-shadow: 0 0 0 3px var(--status-waiting-soft);
+  }
+}
+
+.toggle {
   min-width: 0;
-  flex: 1;
   display: flex;
-  align-items: center;
-  gap: 5px;
-  padding: 2px 4px;
-  border-radius: var(--radius-sm);
-  color: var(--fg-faint);
+  flex-direction: column;
+  gap: 1px;
+  padding: 4px 0;
+  color: inherit;
   text-align: left;
   cursor: pointer;
 }
 
-.campaignToggle:hover {
-  color: var(--fg-muted);
+.line {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 1.35;
 }
 
-.campaignTitle {
+.id {
+  flex: none;
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.title {
   min-width: 0;
   overflow: hidden;
-  color: var(--fg);
-  font-size: 12px;
   font-weight: 500;
-  line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.meta {
+  min-width: 0;
+  display: flex;
+  gap: 8px;
+  overflow: hidden;
+  color: var(--fg-faint);
+  font-size: 10px;
+  line-height: 1.4;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.situation {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--fg-muted);
+  text-overflow: ellipsis;
 }
 
 .openButton {
@@ -65,6 +144,7 @@
 
 .campaign:hover .openButton,
 .campaign:focus-within .openButton,
+.campaign[data-active='true'] .openButton,
 .openButton[aria-expanded='true'] {
   opacity: 1;
 }
@@ -75,9 +155,10 @@
 }
 
 .menu {
+  grid-column: 2 / -1;
   display: flex;
   gap: 4px;
-  margin: 2px 0 2px 21px;
+  margin: 2px 0;
 }
 
 .menuItem {
@@ -97,25 +178,18 @@
   border-color: var(--border-strong);
 }
 
-.meta {
+.details {
+  grid-column: 2 / -1;
   min-width: 0;
   display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-bottom: 4px;
+}
+
+.details .meta {
   flex-wrap: wrap;
-  align-items: center;
-  gap: 2px 8px;
-  padding-left: 21px;
-  color: var(--fg-faint);
-  font-size: 10px;
-  line-height: 1.4;
-}
-
-.id {
-  color: var(--fg-muted);
-  font-family: var(--font-mono);
-}
-
-.situation {
-  color: var(--fg-muted);
+  row-gap: 2px;
 }
 
 .worktree {
@@ -130,8 +204,8 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
-  margin: 4px 0 0;
-  padding: 0 0 0 21px;
+  margin: 0;
+  padding: 0;
   list-style: none;
 }
 
@@ -150,10 +224,6 @@
   gap: 1px;
 }
 
-.taskBody .meta {
-  padding-left: 0;
-}
-
 .taskTitle {
   min-width: 0;
   overflow: hidden;
@@ -164,41 +234,34 @@
   white-space: nowrap;
 }
 
+/* Task states in the board's lane colours, shaped like its blocked badge. */
 .chip {
   flex: 0 0 auto;
   min-width: 64px;
   padding: 1px 5px;
-  border-radius: 999px;
+  border-radius: 3px;
+  color: var(--status-stopped);
+  background: var(--status-stopped-soft);
   font-size: 9px;
   line-height: 13px;
   text-align: center;
   white-space: nowrap;
 }
 
-.chipIdle {
-  color: var(--status-stopped);
-  background: var(--status-stopped-soft);
+.chip[data-lane='running'] {
+  color: var(--status-working);
+  background: var(--status-working-soft);
 }
 
-.chipReady {
-  color: var(--fg);
-  background: var(--accent-soft);
-  box-shadow: inset 0 0 0 1px var(--accent-border);
-}
-
-.chipRunning {
+.chip[data-lane='queued'] {
   color: var(--status-waiting);
   background: var(--status-waiting-soft);
 }
 
-.chipBlocked {
-  color: var(--status-offline);
-  background: var(--status-offline-soft);
-}
-
-.chipDone {
-  color: var(--status-working);
-  background: var(--status-working-soft);
+.chip[data-lane='blocked'] {
+  color: var(--bg);
+  background: var(--status-waiting);
+  font-weight: 600;
 }
 
 .invalid {
@@ -221,6 +284,13 @@
   padding-left: 16px;
   font-family: var(--font-mono);
   font-size: 10px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .campaign[data-lane='blocked']:not([data-active='true']) .dot {
+    animation: none;
+    box-shadow: 0 0 0 2px var(--status-waiting-soft);
+  }
 }
 
 :global([data-visual-style='clean']) .campaign {

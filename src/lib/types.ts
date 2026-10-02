@@ -201,6 +201,8 @@ export type SubTab = {
   runtimeProfile?: AgentRuntimeProfile
   /** Route this agent's API traffic through the local 9router proxy. */
   useRouter9?: boolean
+  /** The campaign (`.workflow/campanhas.json`) this tab was opened to work on. */
+  campaignId?: string
 }
 
 export type AgentHandoffBootstrap = {

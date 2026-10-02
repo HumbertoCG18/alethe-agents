@@ -1353,7 +1353,7 @@
 }
 
 .composerTarget[data-status='done'] .dot {
-  background: var(--status-active);
+  background: var(--status-stopped);
 }
 
 .composerTarget[data-status='interrupted'] .dot {
@@ -1699,7 +1699,7 @@
 }
 
 .worker[data-status='done'] .dot {
-  background: var(--status-active);
+  background: var(--status-stopped);
 }
 
 .worker[data-status='failed'] .dot {
@@ -1725,7 +1725,7 @@
 }
 
 .railRow[data-status='done'] .dot {
-  background: var(--status-active);
+  background: var(--status-stopped);
 }
 
 .railRow[data-status='failed'] .dot {

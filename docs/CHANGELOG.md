@@ -218,6 +218,8 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 - Closing the app no longer leaves the window frozen on screen for up to four seconds while the
   terminals' processes are stopped. The window disappears as soon as the close is confirmed, and
   how long the teardown took is written to `app-events.log`.
+- A finished worker on the orchestration board showed the same green dot as a running one. Its dot
+  now uses the finished colour from the legend, in the run list, on its card and in the composer.
 
 - On Linux, closing a terminal could end every process of your user session instead of only that
   terminal's processes, depending on the process ID it got. Terminals are now stopped directly

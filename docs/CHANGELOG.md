@@ -12,6 +12,13 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ### Added
 
+- **Campaigns in the Todo List tab.** When the active project's main checkout has
+  `.workflow/campanhas.json`, a collapsed Campaigns section below your todos lists each campaign
+  with its progress, situation (in progress, ready, waiting on another campaign or task, blocked,
+  done), window, worktree and last update, and expands into its tasks with their state, level and
+  unmet prerequisites. It is read-only and refreshes when the file changes. **Open** starts Claude
+  Code or Codex in the campaign's worktree with a prompt to resume it from the registry and its
+  handoff, or focuses the tab already running there.
 - **Orchestration settings with named worker roles.** A new Orchestration category in Preferences
   holds roles such as a reviewer: each sets the agent, model, effort, read-only mode and time
   budget, with the models and efforts listed from the installed Codex (and Codex's common efforts
@@ -136,6 +143,8 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 - Codex terminals get the orchestrator tools again. Codex no longer reports that the `alethe` MCP
   server timed out after 30 seconds, a request Alethe cannot serve now fails at once with an
   error instead of hanging, and accented text in delegation briefs and replies stays intact.
+- The title bar Claude, Codex and Antigravity usage pills now refresh as soon as the window
+  regains focus, instead of staying hidden for minutes after a start with the window unfocused.
 - Alethe no longer closes by itself while a delegated worker streams a long reply with accented
   or other non-ASCII text. Trimming the live reply to its last 16,000 bytes could cut a character
   in half, which crashed the whole app

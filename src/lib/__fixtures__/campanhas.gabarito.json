@@ -1,0 +1,200 @@
+{
+  "projeto": "exemplo",
+  "tronco": "dev",
+  "campanhas": [
+    {
+      "id": "BASE",
+      "concluidas": 2,
+      "total": 2,
+      "decomposta": true,
+      "percentual": 100,
+      "situacao": {
+        "tipo": "concluida",
+        "prontas": 0,
+        "espera": []
+      },
+      "janela": "assistida",
+      "noite": false,
+      "tarefas": [
+        {
+          "id": "BASE-01",
+          "estado": "concluída",
+          "janela": "assistida",
+          "faltam": []
+        },
+        {
+          "id": "BASE-02",
+          "estado": "concluída",
+          "janela": "assistida",
+          "faltam": []
+        }
+      ]
+    },
+    {
+      "id": "OITO",
+      "concluidas": 1,
+      "total": 8,
+      "decomposta": true,
+      "percentual": 13,
+      "situacao": {
+        "tipo": "em_execucao",
+        "prontas": 4,
+        "espera": []
+      },
+      "janela": "assistida",
+      "noite": true,
+      "tarefas": [
+        {
+          "id": "OITO-01",
+          "estado": "concluída",
+          "janela": "assistida",
+          "faltam": []
+        },
+        {
+          "id": "OITO-02",
+          "estado": "em execução",
+          "janela": "assistida",
+          "faltam": []
+        },
+        {
+          "id": "OITO-03",
+          "estado": "pronta",
+          "janela": "assistida",
+          "faltam": []
+        },
+        {
+          "id": "OITO-04",
+          "estado": "pronta",
+          "janela": "assistida",
+          "faltam": []
+        },
+        {
+          "id": "OITO-05",
+          "estado": "pronta",
+          "janela": "assistida",
+          "faltam": []
+        },
+        {
+          "id": "OITO-06",
+          "estado": "proposta",
+          "janela": "assistida",
+          "faltam": []
+        },
+        {
+          "id": "OITO-07",
+          "estado": "bloqueada",
+          "janela": "assistida",
+          "faltam": []
+        },
+        {
+          "id": "OITO-08",
+          "estado": "pronta",
+          "janela": "noite",
+          "faltam": []
+        }
+      ]
+    },
+    {
+      "id": "ABERTA",
+      "concluidas": 1,
+      "total": 1,
+      "decomposta": false,
+      "percentual": 100,
+      "situacao": {
+        "tipo": "bloqueada",
+        "prontas": 0,
+        "espera": []
+      },
+      "janela": "assistida",
+      "noite": false,
+      "tarefas": [
+        {
+          "id": "ABERTA-01",
+          "estado": "concluída",
+          "janela": "assistida",
+          "faltam": []
+        }
+      ]
+    },
+    {
+      "id": "DEPOIS",
+      "concluidas": 0,
+      "total": 1,
+      "decomposta": true,
+      "percentual": 0,
+      "situacao": {
+        "tipo": "espera",
+        "prontas": 0,
+        "espera": [
+          "ABERTA"
+        ]
+      },
+      "janela": "assistida",
+      "noite": false,
+      "tarefas": [
+        {
+          "id": "DEPOIS-01",
+          "estado": "pronta",
+          "janela": "assistida",
+          "faltam": [
+            "ABERTA"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "NOTURNA",
+      "concluidas": 0,
+      "total": 2,
+      "decomposta": true,
+      "percentual": 0,
+      "situacao": {
+        "tipo": "espera",
+        "prontas": 0,
+        "espera": [
+          "OITO-02"
+        ]
+      },
+      "janela": "noite",
+      "noite": true,
+      "tarefas": [
+        {
+          "id": "NOTURNA-01",
+          "estado": "proposta",
+          "janela": "noite",
+          "faltam": [
+            "OITO-02"
+          ]
+        },
+        {
+          "id": "NOTURNA-02",
+          "estado": "bloqueada",
+          "janela": "assistida",
+          "faltam": []
+        }
+      ]
+    },
+    {
+      "id": "PARADA",
+      "concluidas": 0,
+      "total": 1,
+      "decomposta": true,
+      "percentual": 0,
+      "situacao": {
+        "tipo": "bloqueada",
+        "prontas": 0,
+        "espera": []
+      },
+      "janela": "qualquer",
+      "noite": false,
+      "tarefas": [
+        {
+          "id": "PARADA-01",
+          "estado": "bloqueada",
+          "janela": "qualquer",
+          "faltam": []
+        }
+      ]
+    }
+  ]
+}

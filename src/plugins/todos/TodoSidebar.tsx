@@ -28,6 +28,7 @@ import { TODO_TITLE_MAX_LENGTH } from '../../lib/todos'
 import type { Terminal, TodoItem } from '../../lib/types'
 import { selectActiveProject, useProjectsStore } from '../../stores/projectsStore'
 import { useUiStore } from '../../stores/uiStore'
+import { CampaignsSection } from './CampaignsSection'
 import { TODO_SETTINGS_MODAL_ID } from './manifest'
 import { useTodosStore } from './store'
 import styles from './TodoSidebar.module.css'
@@ -628,6 +629,7 @@ export function TodoSidebar() {
             ) : null}
           </>
         )}
+        <CampaignsSection />
       </div>
     </aside>
   )

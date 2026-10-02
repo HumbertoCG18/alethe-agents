@@ -127,6 +127,7 @@ export function TodoSettingsModal() {
             <RotateCcw size={14} />
           </button>
         </div>
+        <span className={controls.hint}>{t('todo.pathHint')}</span>
       </div>
       <div className={controls.field}>
         <label className={controls.label}>{t('pomodoro.settingsWorkMinutes')}</label>

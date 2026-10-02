@@ -5,6 +5,7 @@
  * this module against that script's `listar --json` output. Field and state names stay in the
  * registry's own language (Portuguese), since they are the file format.
  */
+import { normalizeCwd } from './platform'
 import type { GitCheckout, GitCheckouts } from './tauri/git'
 
 const DONE = 'concluída'
@@ -242,8 +243,20 @@ const basename = (path: string) =>
     .split(/[\\/]/)
     .pop() ?? ''
 
+/**
+ * Whether a registry worktree entry names the checkout at `path`: the whole folder name, trailing
+ * separators ignored, case-insensitive for Windows paths as the file system there is.
+ */
+function namesCheckout(name: string, path: string): boolean {
+  const entry = name.replace(/[\\/]+$/, '')
+  const folder = basename(path)
+  return /^([a-z]:|\\\\)/i.test(path)
+    ? entry.toLowerCase() === folder.toLowerCase()
+    : entry === folder
+}
+
 function checkoutNamed(name: string, checkouts: GitCheckout[]): GitCheckout | undefined {
-  return checkouts.find((checkout) => basename(checkout.path) === name)
+  return checkouts.find((checkout) => namesCheckout(name, checkout.path))
 }
 
 /**
@@ -256,6 +269,56 @@ export function campaignCwd(campaign: Campaign, checkouts: GitCheckouts): string
     if (checkout) return checkout.path
   }
   return checkouts.main
+}
+
+/** A terminal tab as the active-campaign rule sees it: its tag and its effective cwd. */
+export type CampaignTab = { campaignId?: string; cwd: string }
+
+/**
+ * The campaign a tab works on: the one it was opened for, else one whose worktrees list the
+ * checkout holding its cwd, resolved through git's list (so the main checkout counts only for
+ * campaigns that list it). Among several, `prefer` wins when it is one of them.
+ */
+function tabCampaign(
+  campaigns: Campaign[],
+  checkouts: GitCheckouts,
+  tab: CampaignTab,
+  prefer: string | null,
+): string | null {
+  if (tab.campaignId && campaigns.some((campaign) => campaign.id === tab.campaignId)) {
+    return tab.campaignId
+  }
+  const cwd = normalizeCwd(tab.cwd)
+  // The deepest checkout holding the cwd: a worktree may sit inside the main checkout.
+  let holder: { path: string; depth: number } | null = null
+  for (const checkout of checkouts.worktrees) {
+    const path = normalizeCwd(checkout.path)
+    const holds = cwd === path || cwd.startsWith(`${path}\\`) || cwd.startsWith(`${path}/`)
+    if (holds && (!holder || path.length > holder.depth)) {
+      holder = { path: checkout.path, depth: path.length }
+    }
+  }
+  if (!holder) return null
+  const { path } = holder
+  const matches = campaigns.filter((campaign) =>
+    campaign.worktrees.some((name) => namesCheckout(name, path)),
+  )
+  return (matches.find((campaign) => campaign.id === prefer) ?? matches[0])?.id ?? null
+}
+
+/**
+ * The campaign shown as active: the focused tab's, else the one last active in the project
+ * (`remembered`), else none.
+ */
+export function activeCampaign(
+  campaigns: Campaign[],
+  checkouts: GitCheckouts,
+  focused: CampaignTab | null,
+  remembered: string | null,
+): string | null {
+  const fromTab = focused ? tabCampaign(campaigns, checkouts, focused, remembered) : null
+  if (fromTab) return fromTab
+  return campaigns.some((campaign) => campaign.id === remembered) ? remembered : null
 }
 
 /** `atualizado_em` is a calendar date; read it as local midnight, like Python's fromisoformat. */

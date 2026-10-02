@@ -12,10 +12,13 @@ import type { TodoItem } from '../../lib/types'
 
 const TODOS_KEY = 'todos'
 const STORAGE_PATH_KEY = 'storagePath'
+const ACTIVE_CAMPAIGNS_KEY = 'activeCampaigns'
 
 type TodosState = {
   todos: TodoItem[]
   storagePath: string
+  /** The last active campaign of each project, by project id. */
+  activeCampaigns: Record<string, string>
   hydrated: boolean
   createTodo: (title: string, tags?: string[], projectId?: string) => TodoItem | null
   createTodoFromPullRequest: (
@@ -30,6 +33,7 @@ type TodosState = {
   reorderTodo: (draggedId: string, targetId: string) => void
   resetTodosToDefault: () => void
   setStoragePath: (path: string) => void
+  rememberCampaign: (projectId: string, campaignId: string) => void
 }
 
 let storage: PluginStorage | null = null
@@ -47,6 +51,7 @@ export const useTodosStore = create<TodosState>((set, get) => {
   return {
     todos: [],
     storagePath: '',
+    activeCampaigns: {},
     hydrated: false,
 
     createTodo: (rawTitle, rawTags = [], projectId) => {
@@ -137,6 +142,12 @@ export const useTodosStore = create<TodosState>((set, get) => {
       void storage?.set(STORAGE_PATH_KEY, path)
       set({ storagePath: path })
     },
+
+    rememberCampaign: (projectId, campaignId) => {
+      const activeCampaigns = { ...get().activeCampaigns, [projectId]: campaignId }
+      void storage?.set(ACTIVE_CAMPAIGNS_KEY, activeCampaigns)
+      set({ activeCampaigns })
+    },
   }
 })
 
@@ -158,8 +169,12 @@ export async function hydrateTodos(
     typeof record[STORAGE_PATH_KEY] === 'string'
       ? (record[STORAGE_PATH_KEY] as string)
       : legacy.storagePath
+  // An id that is not a campaign of the registry is ignored when read, so no deeper check here.
+  const saved = record[ACTIVE_CAMPAIGNS_KEY]
+  const activeCampaigns =
+    typeof saved === 'object' && saved !== null ? (saved as Record<string, string>) : {}
 
-  useTodosStore.setState({ todos, storagePath, hydrated: true })
+  useTodosStore.setState({ todos, storagePath, activeCampaigns, hydrated: true })
 
   if (!stored && legacy.todos.length > 0) await pluginStorage.set(TODOS_KEY, legacy.todos)
   if (record[STORAGE_PATH_KEY] === undefined && legacy.storagePath) {
@@ -169,5 +184,5 @@ export async function hydrateTodos(
 
 export function resetTodosStoreForTests(): void {
   storage = null
-  useTodosStore.setState({ todos: [], storagePath: '', hydrated: false })
+  useTodosStore.setState({ todos: [], storagePath: '', activeCampaigns: {}, hydrated: false })
 }

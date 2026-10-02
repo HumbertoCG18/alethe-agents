@@ -482,7 +482,7 @@ export function TodoSidebar() {
         <div className={styles.headerTop}>
           <div className={styles.heading}>
             <ListTodo size={17} />
-            <span>{t('todo.title')}</span>
+            <span>{t('todo.personalTitle')}</span>
           </div>
           <button
             type="button"

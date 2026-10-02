@@ -643,6 +643,7 @@ export const en = {
 
   /* ---- global todo sidebar ---- */
   'todo.title': 'Todo',
+  'todo.personalTitle': 'My todos',
   'todo.pendingCount': '{count} open',
   'todo.addPlaceholder': 'Add a task…',
   'todo.add': 'Add task',
@@ -661,9 +662,11 @@ export const en = {
   'todo.drag': 'Drag to reorder',
   'todo.closeSidebar': 'Close Todo sidebar',
   'todo.openSidebar': 'Open Todo sidebar',
-  'todo.openSettings': 'Todo settings',
-  'todo.settingsTitle': 'Todo settings',
-  'todo.pathLabel': 'Storage folder',
+  'todo.openSettings': 'Todo List settings',
+  'todo.settingsTitle': 'Todo List settings',
+  'todo.pathLabel': 'Folder for your personal todos',
+  'todo.pathHint':
+    "Campaigns are not affected: they come from the project's .workflow/campanhas.json.",
   'todo.pathPlaceholder': 'Default app data folder',
   'todo.choosePath': 'Choose Todo folder',
   'todo.clearPath': 'Use default folder',
@@ -691,6 +694,8 @@ export const en = {
   'todo.campaigns.updated': 'Updated {when}',
   'todo.campaigns.open': 'Open',
   'todo.campaigns.openLabel': 'Open campaign {id}',
+  'todo.campaigns.continue': 'Continue',
+  'todo.campaigns.continueLabel': 'Continue campaign {id}',
   'todo.campaigns.invalid': 'Invalid campaign registry: no campaign is shown until it is fixed.',
   'todo.campaigns.errorMalformed': '{id}: malformed entry',
   'todo.campaigns.errorDuplicate': 'Repeated id: {id}',

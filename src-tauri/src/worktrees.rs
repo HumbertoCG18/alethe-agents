@@ -176,6 +176,90 @@ pub(crate) fn worktree_list_inner(repo: String) -> Result<Vec<WorktreeInfo>, Str
     Ok(result)
 }
 
+/// One checkout from `git worktree list`, whoever created it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitCheckout {
+    pub path: String,
+    pub branch: Option<String>,
+    pub last_commit_ms: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitCheckouts {
+    /// The first `git worktree list` entry; `None` for a bare repository.
+    pub main: Option<String>,
+    /// Every checkout whose folder exists, the main one included.
+    pub worktrees: Vec<GitCheckout>,
+}
+
+#[tauri::command]
+pub async fn worktree_checkouts(path: String) -> Result<GitCheckouts, String> {
+    tokio::task::spawn_blocking(move || worktree_checkouts_inner(&path))
+        .await
+        .map_err(|error| format!("worktree_checkouts: blocking task failed: {error}"))?
+}
+
+pub(crate) fn worktree_checkouts_inner(path: &str) -> Result<GitCheckouts, String> {
+    let cwd = Path::new(path.trim());
+    let output = checked_output(cwd, &["worktree", "list", "--porcelain"])?;
+    let text = String::from_utf8_lossy(&output.stdout);
+    // (path, HEAD, branch, bare) per porcelain block; each block starts with `worktree`.
+    let mut entries: Vec<(PathBuf, Option<&str>, Option<String>, bool)> = Vec::new();
+    for line in text.lines() {
+        if let Some(listed) = line.strip_prefix("worktree ") {
+            // Collecting the components turns git's `C:/...` into native separators.
+            entries.push((Path::new(listed).components().collect(), None, None, false));
+        } else if let Some(entry) = entries.last_mut() {
+            if let Some(head) = line.strip_prefix("HEAD ") {
+                entry.1 = Some(head);
+            } else if let Some(branch) = line.strip_prefix("branch ") {
+                let short = branch.strip_prefix("refs/heads/").unwrap_or(branch);
+                entry.2 = Some(short.to_string());
+            } else if line == "bare" {
+                entry.3 = true;
+            }
+        }
+    }
+
+    let heads: Vec<&str> = entries
+        .iter()
+        .filter_map(|entry| entry.1)
+        .filter(|head| head.bytes().any(|byte| byte != b'0'))
+        .collect();
+    let mut commit_ms = std::collections::HashMap::new();
+    if !heads.is_empty() {
+        let mut args = vec!["show", "-s", "--format=%H %ct"];
+        args.extend(&heads);
+        // One process for every worktree; a failure only leaves the times unknown.
+        if let Ok(shown) = checked_output(cwd, &args) {
+            for line in String::from_utf8_lossy(&shown.stdout).lines() {
+                if let Some((sha, seconds)) = line.split_once(' ') {
+                    if let Ok(seconds) = seconds.trim().parse::<i64>() {
+                        commit_ms.insert(sha.to_string(), seconds * 1000);
+                    }
+                }
+            }
+        }
+    }
+
+    let main = entries
+        .first()
+        .filter(|entry| !entry.3)
+        .map(|entry| entry.0.to_string_lossy().into_owned());
+    let worktrees = entries
+        .iter()
+        .filter(|entry| !entry.3 && entry.0.is_dir())
+        .map(|(dir, head, branch, _)| GitCheckout {
+            path: dir.to_string_lossy().into_owned(),
+            branch: branch.clone(),
+            last_commit_ms: head.and_then(|sha| commit_ms.get(sha).copied()),
+        })
+        .collect();
+    Ok(GitCheckouts { main, worktrees })
+}
+
 #[tauri::command]
 pub async fn worktree_remove(repo: String, agent_id: String, force: bool) -> Result<(), String> {
     tokio::task::spawn_blocking(move || worktree_remove_inner(repo, agent_id, force))
@@ -491,6 +575,58 @@ mod tests {
         assert!(sanitize_id("has space").is_err());
         assert!(sanitize_id("").is_err());
         assert!(sanitize_id("agent-01_x").is_ok());
+    }
+
+    #[test]
+    fn checkouts_list_the_main_checkout_and_every_linked_worktree() {
+        let root = temp_repo();
+        let name = root.file_name().unwrap().to_string_lossy().into_owned();
+        let sibling = |suffix: &str| root.with_file_name(format!("{name}-{suffix}"));
+        let same = |listed: &str, expected: &Path| {
+            fs::canonicalize(listed).unwrap() == fs::canonicalize(expected).unwrap()
+        };
+        let git = |cwd: &Path, args: &[&str]| checked_output(cwd, args).unwrap();
+        let linked = sibling("feature");
+        let linked_arg = git_arg(&linked);
+        git(&root, &["worktree", "add", "-b", "feature", &linked_arg]);
+        fs::write(linked.join("file.txt"), "two\n").unwrap();
+        git(&linked, &["commit", "-am", "feature work"]);
+        let committed = git(&linked, &["log", "-1", "--format=%ct"]);
+        let committed_ms = String::from_utf8_lossy(&committed.stdout)
+            .trim()
+            .parse::<i64>()
+            .unwrap()
+            * 1000;
+
+        // Asked from the linked worktree, the main checkout is still the first entry.
+        let found = worktree_checkouts_inner(&linked.to_string_lossy()).unwrap();
+        assert!(same(found.main.as_deref().unwrap(), &root));
+        assert_eq!(found.worktrees.len(), 2);
+        let feature = found
+            .worktrees
+            .iter()
+            .find(|checkout| same(&checkout.path, &linked))
+            .unwrap();
+        assert_eq!(feature.branch.as_deref(), Some("feature"));
+        assert_eq!(feature.last_commit_ms, Some(committed_ms));
+        #[cfg(windows)]
+        assert!(!feature.path.contains('/'), "{}", feature.path);
+
+        // A bare repository has no main checkout, only its linked worktrees.
+        let bare = sibling("bare.git");
+        let bare_linked = sibling("bare-wt");
+        let (root_arg, bare_arg) = (git_arg(&root), git_arg(&bare));
+        let bare_linked_arg = git_arg(&bare_linked);
+        git(&root, &["clone", "--bare", &root_arg, &bare_arg]);
+        git(&bare, &["worktree", "add", &bare_linked_arg, "feature"]);
+        let from_bare = worktree_checkouts_inner(&bare_linked.to_string_lossy()).unwrap();
+        assert_eq!(from_bare.main, None);
+        assert_eq!(from_bare.worktrees.len(), 1);
+        assert!(same(&from_bare.worktrees[0].path, &bare_linked));
+
+        for dir in [&linked, &bare, &bare_linked, &root] {
+            let _ = fs::remove_dir_all(dir);
+        }
     }
 
     #[test]

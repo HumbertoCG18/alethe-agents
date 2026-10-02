@@ -7,7 +7,19 @@ export const TODOS_MANIFEST: PluginManifest = {
   kind: 'ui',
   apiVersion: 1,
   description: 'A checklist in the right sidebar, with tags and per-project assignment.',
-  capabilities: ['ui.sidebarTab', 'ui.command', 'ui.modal', 'invoke:ensure_todo_template'],
+  capabilities: [
+    'ui.sidebarTab',
+    'ui.command',
+    'ui.modal',
+    'invoke:ensure_todo_template',
+    // Campaigns section: reads and watches .workflow/campanhas.json, lists the git worktrees,
+    // and locates a campaign's handoff file.
+    'invoke:read_text_file',
+    'invoke:watch_file',
+    'invoke:unwatch_file',
+    'invoke:worktree_checkouts',
+    'invoke:find_relative_path',
+  ],
   activation: ['onView:todos', 'onCommand:todos.reveal'],
   contributes: {
     views: [

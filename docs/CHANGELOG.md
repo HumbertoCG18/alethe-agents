@@ -12,6 +12,13 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ### Added
 
+- **Campaigns in the Todo List tab.** When the active project's main checkout has
+  `.workflow/campanhas.json`, a collapsed Campaigns section below your todos lists each campaign
+  with its progress, situation (in progress, ready, waiting on another campaign or task, blocked,
+  done), window, worktree and last update, and expands into its tasks with their state, level and
+  unmet prerequisites. It is read-only and refreshes when the file changes. **Open** starts Claude
+  Code or Codex in the campaign's worktree with a prompt to resume it from the registry and its
+  handoff, or focuses the tab already running there.
 - **Orchestration settings with named worker roles.** A new Orchestration category in Preferences
   holds roles such as a reviewer: each sets the agent, model, effort, read-only mode and time
   budget, with the models and efforts listed from the installed Codex (and Codex's common efforts

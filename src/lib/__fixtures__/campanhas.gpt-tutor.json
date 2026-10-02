@@ -1,0 +1,574 @@
+{
+  "versao": 1,
+  "projeto": "GPT-Tutor-Generator",
+  "tronco": "dev",
+  "campanhas": [
+    {
+      "id": "MOODLE-V1",
+      "titulo": "Campanha MOODLE-V1",
+      "prioridade": 1,
+      "janela": "assistida",
+      "depende_de": [],
+      "worktrees": [
+        "GPT-Tutor-Generator-moodle-v1",
+        "GPT-Tutor-Generator"
+      ],
+      "handoff": "GPT-Tutor-Generator-moodle-v1/docs/reports/2026-10-01-correcao-moodle-v1/relatorio.md",
+      "atualizado_em": "2026-10-01",
+      "tarefas": [
+        {
+          "id": "MOODLE-V1-01",
+          "titulo": "Tarefa MOODLE-V1-01",
+          "nivel": "T2",
+          "estado": "em execução",
+          "depende_de": []
+        },
+        {
+          "id": "MOODLE-V1-02",
+          "titulo": "Tarefa MOODLE-V1-02",
+          "nivel": "T1",
+          "estado": "pronta",
+          "depende_de": [
+            "MOODLE-V1-01"
+          ]
+        },
+        {
+          "id": "MOODLE-V1-03",
+          "titulo": "Tarefa MOODLE-V1-03",
+          "nivel": "T2",
+          "estado": "proposta",
+          "depende_de": [
+            "MOODLE-V1-01"
+          ]
+        },
+        {
+          "id": "MOODLE-V1-04",
+          "titulo": "Tarefa MOODLE-V1-04",
+          "nivel": "T1",
+          "estado": "bloqueada",
+          "depende_de": [
+            "MOODLE-V1-02",
+            "MOODLE-V1-03"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "MOTOR",
+      "titulo": "Campanha MOTOR",
+      "prioridade": 2,
+      "janela": "assistida",
+      "depende_de": [],
+      "worktrees": [
+        "GPT-Tutor-Generator-p1",
+        "GPT-Tutor-Generator-cru05"
+      ],
+      "handoff": "docs/reports/2026-09-23-handoff-motor-wz-waa-claude.md",
+      "atualizado_em": "2026-10-02",
+      "tarefas": [
+        {
+          "id": "MOTOR-00",
+          "titulo": "Tarefa MOTOR-00",
+          "nivel": "T1",
+          "estado": "pronta",
+          "depende_de": []
+        },
+        {
+          "id": "MOTOR-01",
+          "titulo": "Tarefa MOTOR-01",
+          "nivel": "T2",
+          "estado": "em execução",
+          "depende_de": [
+            "MOTOR-00"
+          ]
+        },
+        {
+          "id": "MOTOR-02",
+          "titulo": "Tarefa MOTOR-02",
+          "nivel": "T2",
+          "estado": "concluída"
+        },
+        {
+          "id": "MOTOR-03",
+          "titulo": "Tarefa MOTOR-03",
+          "nivel": "T2",
+          "estado": "concluída"
+        },
+        {
+          "id": "MOTOR-04",
+          "titulo": "Tarefa MOTOR-04",
+          "nivel": "T2",
+          "estado": "bloqueada"
+        },
+        {
+          "id": "MOTOR-05",
+          "titulo": "Tarefa MOTOR-05",
+          "nivel": "T2",
+          "estado": "proposta",
+          "depende_de": [
+            "MOTOR-04"
+          ]
+        },
+        {
+          "id": "MOTOR-06",
+          "titulo": "Tarefa MOTOR-06",
+          "nivel": "T2",
+          "estado": "bloqueada"
+        },
+        {
+          "id": "MOTOR-07",
+          "titulo": "Tarefa MOTOR-07",
+          "nivel": "T2",
+          "estado": "bloqueada"
+        },
+        {
+          "id": "MOTOR-08",
+          "titulo": "Tarefa MOTOR-08",
+          "nivel": "T2",
+          "estado": "proposta",
+          "depende_de": [
+            "MOTOR-07"
+          ]
+        },
+        {
+          "id": "MOTOR-09",
+          "titulo": "Tarefa MOTOR-09",
+          "nivel": "T1",
+          "estado": "pronta",
+          "depende_de": []
+        }
+      ]
+    },
+    {
+      "id": "REGUA",
+      "titulo": "Campanha REGUA",
+      "prioridade": 3,
+      "janela": "assistida",
+      "depende_de": [],
+      "worktrees": [],
+      "atualizado_em": "2026-09-23",
+      "tarefas": [
+        {
+          "id": "REGUA-01",
+          "titulo": "Tarefa REGUA-01",
+          "nivel": "T1",
+          "estado": "pronta"
+        },
+        {
+          "id": "REGUA-02",
+          "titulo": "Tarefa REGUA-02",
+          "nivel": "T1",
+          "estado": "pronta"
+        },
+        {
+          "id": "REGUA-03",
+          "titulo": "Tarefa REGUA-03",
+          "nivel": "T1",
+          "estado": "proposta"
+        },
+        {
+          "id": "REGUA-04",
+          "titulo": "Tarefa REGUA-04",
+          "nivel": "T1",
+          "estado": "pronta"
+        },
+        {
+          "id": "REGUA-05",
+          "titulo": "Tarefa REGUA-05",
+          "nivel": "T1",
+          "estado": "pronta"
+        }
+      ]
+    },
+    {
+      "id": "VOCAB",
+      "titulo": "Campanha VOCAB",
+      "prioridade": 4,
+      "janela": "assistida",
+      "depende_de": [],
+      "worktrees": [
+        "GPT-Tutor-Generator"
+      ],
+      "handoff": "docs/reports/2026-09-26-handoff-regime-vocab-claude.md",
+      "atualizado_em": "2026-10-01",
+      "tarefas": [
+        {
+          "id": "VOCAB-01",
+          "titulo": "Tarefa VOCAB-01",
+          "nivel": "T1",
+          "estado": "pronta",
+          "depende_de": []
+        },
+        {
+          "id": "VOCAB-02",
+          "titulo": "Tarefa VOCAB-02",
+          "nivel": "T2",
+          "estado": "pronta"
+        },
+        {
+          "id": "VOCAB-03",
+          "titulo": "Tarefa VOCAB-03",
+          "nivel": "T2",
+          "estado": "bloqueada",
+          "janela": "noite",
+          "depende_de": [
+            "VOCAB-02",
+            "MOODLE-V1-04"
+          ]
+        },
+        {
+          "id": "VOCAB-04",
+          "titulo": "Tarefa VOCAB-04",
+          "nivel": "T3",
+          "estado": "proposta",
+          "depende_de": [
+            "VOCAB-03"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "PRODUTO",
+      "titulo": "Campanha PRODUTO",
+      "prioridade": 5,
+      "janela": "assistida",
+      "depende_de": [],
+      "worktrees": [],
+      "atualizado_em": "2026-09-23",
+      "decomposta": false,
+      "tarefas": [
+        {
+          "id": "PRODUTO-01",
+          "titulo": "Tarefa PRODUTO-01",
+          "nivel": "T2",
+          "estado": "proposta"
+        },
+        {
+          "id": "PRODUTO-02",
+          "titulo": "Tarefa PRODUTO-02",
+          "nivel": "T2",
+          "estado": "proposta"
+        },
+        {
+          "id": "PRODUTO-03",
+          "titulo": "Tarefa PRODUTO-03",
+          "nivel": "T1",
+          "estado": "pronta"
+        },
+        {
+          "id": "PRODUTO-04",
+          "titulo": "Tarefa PRODUTO-04",
+          "nivel": "T1",
+          "estado": "proposta"
+        },
+        {
+          "id": "PRODUTO-05",
+          "titulo": "Tarefa PRODUTO-05",
+          "nivel": "T2",
+          "estado": "proposta"
+        },
+        {
+          "id": "PRODUTO-06",
+          "titulo": "Tarefa PRODUTO-06",
+          "nivel": "T1",
+          "estado": "proposta"
+        }
+      ]
+    },
+    {
+      "id": "INTEGRACAO",
+      "titulo": "Campanha INTEGRACAO",
+      "prioridade": 6,
+      "janela": "assistida",
+      "depende_de": [],
+      "worktrees": [],
+      "atualizado_em": "2026-10-02",
+      "tarefas": [
+        {
+          "id": "INTEGRACAO-01",
+          "titulo": "Tarefa INTEGRACAO-01",
+          "nivel": "T1",
+          "estado": "concluída"
+        },
+        {
+          "id": "INTEGRACAO-02",
+          "titulo": "Tarefa INTEGRACAO-02",
+          "nivel": "T1",
+          "estado": "concluída",
+          "depende_de": [
+            "INTEGRACAO-01"
+          ]
+        },
+        {
+          "id": "INTEGRACAO-03",
+          "titulo": "Tarefa INTEGRACAO-03",
+          "nivel": "T3",
+          "estado": "pronta"
+        },
+        {
+          "id": "INTEGRACAO-04",
+          "titulo": "Tarefa INTEGRACAO-04",
+          "nivel": "T2",
+          "estado": "proposta"
+        },
+        {
+          "id": "INTEGRACAO-05",
+          "titulo": "Tarefa INTEGRACAO-05",
+          "nivel": "T3",
+          "estado": "bloqueada",
+          "depende_de": [
+            "INTEGRACAO-03",
+            "INTEGRACAO-04"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "WEB",
+      "titulo": "Campanha WEB",
+      "prioridade": 7,
+      "janela": "assistida",
+      "depende_de": [
+        "INTEGRACAO",
+        "MOTOR"
+      ],
+      "worktrees": [],
+      "atualizado_em": "2026-09-22",
+      "decomposta": false,
+      "tarefas": [
+        {
+          "id": "WEB-01",
+          "titulo": "Tarefa WEB-01",
+          "nivel": "T2",
+          "estado": "proposta"
+        },
+        {
+          "id": "WEB-02",
+          "titulo": "Tarefa WEB-02",
+          "nivel": "T2",
+          "estado": "proposta",
+          "depende_de": [
+            "WEB-01"
+          ]
+        },
+        {
+          "id": "WEB-03",
+          "titulo": "Tarefa WEB-03",
+          "nivel": "T3",
+          "estado": "bloqueada",
+          "depende_de": [
+            "WEB-02"
+          ]
+        },
+        {
+          "id": "WEB-04",
+          "titulo": "Tarefa WEB-04",
+          "nivel": "T2",
+          "estado": "proposta"
+        }
+      ]
+    },
+    {
+      "id": "WORKFLOW",
+      "titulo": "Campanha WORKFLOW",
+      "prioridade": 8,
+      "janela": "assistida",
+      "depende_de": [],
+      "worktrees": [
+        "GPT-Tutor-Generator-campaign-43",
+        "GPT-Tutor-Generator-memory-replay-45",
+        "auditoria-enxame-codex-skill",
+        "GPT-Tutor-Generator-codexhooks",
+        "GPT-Tutor-Generator-validacao"
+      ],
+      "atualizado_em": "2026-10-02",
+      "tarefas": [
+        {
+          "id": "WORKFLOW-01",
+          "titulo": "Tarefa WORKFLOW-01",
+          "nivel": "T2",
+          "estado": "em execução"
+        },
+        {
+          "id": "WORKFLOW-02",
+          "titulo": "Tarefa WORKFLOW-02",
+          "nivel": "T1",
+          "estado": "pronta",
+          "depende_de": [
+            "WORKFLOW-01"
+          ]
+        },
+        {
+          "id": "WORKFLOW-03",
+          "titulo": "Tarefa WORKFLOW-03",
+          "nivel": "T1",
+          "estado": "bloqueada"
+        },
+        {
+          "id": "WORKFLOW-04",
+          "titulo": "Tarefa WORKFLOW-04",
+          "nivel": "T1",
+          "estado": "pronta"
+        },
+        {
+          "id": "WORKFLOW-05",
+          "titulo": "Tarefa WORKFLOW-05",
+          "nivel": "T0",
+          "estado": "pronta"
+        },
+        {
+          "id": "WORKFLOW-06",
+          "titulo": "Tarefa WORKFLOW-06",
+          "nivel": "T2",
+          "estado": "proposta"
+        },
+        {
+          "id": "WORKFLOW-07",
+          "titulo": "Tarefa WORKFLOW-07",
+          "nivel": "T1",
+          "estado": "proposta"
+        }
+      ]
+    },
+    {
+      "id": "NOITE",
+      "titulo": "Campanha NOITE",
+      "prioridade": 9,
+      "janela": "assistida",
+      "depende_de": [],
+      "worktrees": [
+        "GPT-Tutor-Generator-night-42",
+        "GPT-Tutor-Generator-noite-20260930"
+      ],
+      "atualizado_em": "2026-10-01",
+      "tarefas": [
+        {
+          "id": "NOITE-01",
+          "titulo": "Tarefa NOITE-01",
+          "nivel": "T1",
+          "estado": "pronta"
+        },
+        {
+          "id": "NOITE-02",
+          "titulo": "Tarefa NOITE-02",
+          "nivel": "T1",
+          "estado": "pronta"
+        },
+        {
+          "id": "NOITE-03",
+          "titulo": "Tarefa NOITE-03",
+          "nivel": "T2",
+          "estado": "proposta",
+          "depende_de": [
+            "WORKFLOW-01"
+          ]
+        },
+        {
+          "id": "NOITE-04",
+          "titulo": "Tarefa NOITE-04",
+          "nivel": "T2",
+          "estado": "proposta",
+          "depende_de": [
+            "NOITE-03"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "REPLAY-NOTURNO",
+      "titulo": "Campanha REPLAY-NOTURNO",
+      "prioridade": 10,
+      "janela": "noite",
+      "depende_de": [],
+      "worktrees": [],
+      "atualizado_em": "2026-10-02",
+      "tarefas": [
+        {
+          "id": "REPLAY-01",
+          "titulo": "Tarefa REPLAY-01",
+          "nivel": "T2",
+          "estado": "proposta",
+          "depende_de": [
+            "MOTOR-00",
+            "INTEGRACAO-02"
+          ],
+          "recorrente": true
+        },
+        {
+          "id": "REPLAY-02",
+          "titulo": "Tarefa REPLAY-02",
+          "nivel": "T3",
+          "estado": "bloqueada",
+          "depende_de": [
+            "NOITE-03"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "AUDITORIA",
+      "titulo": "Campanha AUDITORIA",
+      "prioridade": 11,
+      "janela": "noite",
+      "depende_de": [],
+      "worktrees": [],
+      "atualizado_em": "2026-10-02",
+      "tarefas": [
+        {
+          "id": "AUDITORIA-01",
+          "titulo": "Tarefa AUDITORIA-01",
+          "nivel": "T2",
+          "estado": "proposta",
+          "depende_de": [
+            "WORKFLOW-04"
+          ],
+          "recorrente": true
+        },
+        {
+          "id": "AUDITORIA-02",
+          "titulo": "Tarefa AUDITORIA-02",
+          "nivel": "T1",
+          "estado": "proposta"
+        }
+      ]
+    },
+    {
+      "id": "LIMPEZA",
+      "titulo": "Campanha LIMPEZA",
+      "prioridade": 12,
+      "janela": "assistida",
+      "depende_de": [],
+      "worktrees": [
+        "workflow-claude-code",
+        "GPT-Tutor-Generator-issue-14",
+        "GPT-Tutor-Generator-seguranca"
+      ],
+      "atualizado_em": "2026-10-02",
+      "tarefas": [
+        {
+          "id": "LIMPEZA-01",
+          "titulo": "Tarefa LIMPEZA-01",
+          "nivel": "T1",
+          "estado": "pronta"
+        },
+        {
+          "id": "LIMPEZA-02",
+          "titulo": "Tarefa LIMPEZA-02",
+          "nivel": "T0",
+          "estado": "pronta"
+        },
+        {
+          "id": "LIMPEZA-03",
+          "titulo": "Tarefa LIMPEZA-03",
+          "nivel": "T1",
+          "estado": "bloqueada",
+          "depende_de": [
+            "MOTOR-00",
+            "VOCAB-01",
+            "NOITE-01"
+          ]
+        }
+      ]
+    }
+  ]
+}

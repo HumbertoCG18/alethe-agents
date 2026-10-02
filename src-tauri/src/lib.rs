@@ -470,6 +470,7 @@ pub fn run() {
             quit_app,
             worktrees::worktree_provision,
             worktrees::worktree_list,
+            worktrees::worktree_checkouts,
             worktrees::worktree_remove,
             worktrees::worktree_cleanup,
             worktrees::worktree_fetch_branch,

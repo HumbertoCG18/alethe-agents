@@ -101,6 +101,15 @@ export async function worktreeList(repo: string): Promise<WorktreeInfo[]> {
   return invoke<WorktreeInfo[]>('worktree_list', { repo })
 }
 
+export type GitCheckout = { path: string; branch: string | null; lastCommitMs: number | null }
+/** `main` is null for a bare repository; `worktrees` includes the main checkout. */
+export type GitCheckouts = { main: string | null; worktrees: GitCheckout[] }
+
+/** Every checkout `git worktree list` knows for the repository holding `path`. */
+export async function worktreeCheckouts(path: string): Promise<GitCheckouts> {
+  return invoke<GitCheckouts>('worktree_checkouts', { path })
+}
+
 export async function worktreeRemove(repo: string, agentId: string, force: boolean): Promise<void> {
   await invoke('worktree_remove', { repo, agentId, force })
 }

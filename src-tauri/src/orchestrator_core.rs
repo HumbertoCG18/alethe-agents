@@ -111,6 +111,20 @@ pub struct Role {
     /// The role to run instead while this one's provider is running out of quota (#268).
     #[serde(default)]
     pub fallback: Option<String>,
+    /// The planner agent this row is for ("claude" or "codex"); None serves any planner (#276).
+    #[serde(default)]
+    pub orchestrator: Option<String>,
+}
+
+/// The row a role name means for a planner on `orchestrator` (#276): the row for that orchestrator,
+/// else the row for any. No planner, or one Alethe does not know, only reaches the rows for any.
+fn role_for<'a>(roles: &'a [Role], name: &str, orchestrator: Option<&str>) -> Option<&'a Role> {
+    let row = |wanted: Option<&str>| {
+        roles
+            .iter()
+            .find(|role| role.name == name && role.orchestrator.as_deref() == wanted)
+    };
+    row(orchestrator).or_else(|| row(None))
 }
 
 /// What the Orchestration settings in Preferences hand to the orchestrator.
@@ -897,17 +911,16 @@ fn codex_models(result: &Value) -> Value {
 }
 
 /// The role to run instead of `role` while its provider is running out (#268): the one it names,
-/// when that one's provider has room and it does not make read-only work writable. One level only,
-/// and the note says why, for the worker card.
+/// for the same orchestrator, when that one's provider has room and it does not make read-only work
+/// writable. One level only, and the note says why, for the worker card.
 fn fallback_of<'a>(
     fitness: &HashMap<String, Value>,
     roles: &'a [Role],
     role: &Role,
+    orchestrator: Option<&str>,
 ) -> Option<(&'a Role, Value)> {
     let name = role.fallback.as_deref()?;
-    let fallback = roles
-        .iter()
-        .find(|other| other.name == name && other.name != role.name)?;
+    let fallback = role_for(roles, name, orchestrator).filter(|other| other.name != role.name)?;
     if role.read_only && !fallback.read_only {
         return None;
     }
@@ -932,10 +945,12 @@ fn fallback_of<'a>(
 
 /// A delegate call that names a role gets that role's settings and nothing else, so a planner can
 /// neither run a read-only role writable nor switch its model. Unknown roles are refused. A role
-/// whose provider is running out runs as its fallback, with a routing note that says so.
+/// whose provider is running out runs as its fallback, with a routing note that says so. The row
+/// used is the one for the calling planner's agent, if there is one (#276).
 fn resolve_role(
     core: &Core,
     arguments: &Map<String, Value>,
+    planner: Option<&str>,
 ) -> Result<Option<(Map<String, Value>, Option<Value>)>, String> {
     let name = match arguments.get("role") {
         None | Some(Value::Null) => return Ok(None),
@@ -951,8 +966,19 @@ fn resolve_role(
         ));
     }
     let inner = guard(&core.inner);
-    let Some(asked) = inner.roles.iter().find(|role| &role.name == name) else {
-        let known: Vec<&str> = inner.roles.iter().map(|role| role.name.as_str()).collect();
+    let orchestrator = planner
+        .and_then(|id| inner.planners.get(id))
+        .map(|planner| planner.agent.as_str());
+    let Some(asked) = role_for(&inner.roles, name, orchestrator) else {
+        // The names this planner can ask for, each once.
+        let mut known: Vec<&str> = Vec::new();
+        for role in &inner.roles {
+            let reachable =
+                role.orchestrator.is_none() || role.orchestrator.as_deref() == orchestrator;
+            if reachable && !known.contains(&role.name.as_str()) {
+                known.push(&role.name);
+            }
+        }
         return Err(format!(
             "unknown role {name}; configured roles: {}",
             if known.is_empty() {
@@ -962,7 +988,7 @@ fn resolve_role(
             }
         ));
     };
-    let (role, note) = match fallback_of(&guard(&core.fitness), &inner.roles, asked) {
+    let (role, note) = match fallback_of(&guard(&core.fitness), &inner.roles, asked, orchestrator) {
         Some((fallback, note)) => (fallback, Some(note)),
         None => (asked, None),
     };
@@ -2212,7 +2238,7 @@ pub fn tools() -> Value {
                     },
                     "role": {
                         "type": "string",
-                        "description": "A role the person configured in Alethe's Orchestration settings, such as a reviewer. alethe_status lists the roles and what each one runs on. The role sets agent, model, effort, readOnly and the time budget, so do not pass any of those with it. Prefer a role over spelling those out when one fits the work."
+                        "description": "A role the person configured in Alethe's Orchestration settings, such as a reviewer. alethe_status lists the roles and what each one runs on; a row whose orchestrator is your own agent wins over the row with no orchestrator of the same name. The role sets agent, model, effort, readOnly and the time budget, so do not pass any of those with it. Prefer a role over spelling those out when one fits the work."
                     }
                 },
                 "required": ["tasks"]
@@ -2583,7 +2609,7 @@ fn dispatch_tool(
         "alethe_delegate" => {
             // A role becomes ordinary arguments, so it goes through the same checks as a call
             // that spells them out.
-            let resolved = resolve_role(core, arguments)?;
+            let resolved = resolve_role(core, arguments, planner)?;
             let fallback_note = resolved.as_ref().and_then(|(_, note)| note.clone());
             let arguments = resolved
                 .as_ref()

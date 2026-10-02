@@ -211,4 +211,36 @@ describe('OrchestrationPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Remove reviewer-c' }))
     expect(orchestration().roles[0].fallback ?? null).toBeNull()
   })
+
+  // A role row for one orchestrator (#276).
+  it('gives a role one row per orchestrator under the same name', () => {
+    withRoles([
+      { ...reviewer, name: 'lead', fallback: 'reviewer' },
+      reviewer,
+      { ...reviewer, name: 'reviewer-b' },
+    ])
+    render(<OrchestrationPage />)
+
+    choose('Orchestrator for reviewer', 'Codex')
+    expect(orchestration().roles[1]).toMatchObject({ name: 'reviewer', orchestrator: 'codex' })
+
+    // The same name for another orchestrator is a second row, not a clash, and a fallback that
+    // names it stays where it was.
+    fireEvent.change(screen.getByRole('textbox', { name: 'Name of role reviewer-b' }), {
+      target: { value: 'reviewer' },
+    })
+    expect(orchestration().roles[2].name).toBe('reviewer')
+    expect(orchestration().roles[2].orchestrator).toBeUndefined()
+    // The fallback options list each name once.
+    fireEvent.click(screen.getByRole('button', { name: 'Fallback for lead' }))
+    expect(screen.getAllByRole('option', { name: 'reviewer' })).toHaveLength(1)
+    fireEvent.click(screen.getByRole('button', { name: 'Fallback for lead' }))
+
+    // That row cannot become a second Codex row of reviewer.
+    fireEvent.click(screen.getByRole('button', { name: 'Orchestrator for reviewer' }))
+    expect(screen.getByRole('option', { name: 'Codex' })).toBeDisabled()
+    fireEvent.click(screen.getByRole('option', { name: 'Claude Code' }))
+    expect(orchestration().roles[2]).toMatchObject({ name: 'reviewer', orchestrator: 'claude' })
+    expect(orchestration().roles[0].fallback).toBe('reviewer')
+  })
 })

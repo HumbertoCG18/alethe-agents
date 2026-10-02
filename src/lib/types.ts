@@ -567,6 +567,11 @@ export type OrchestrationRole = {
    * role only falls back to a read-only one.
    */
   fallback?: string | null
+  /**
+   * The planner agent this row is for; absent serves any planner. A row for the planner's own agent
+   * wins over the row for any with the same name.
+   */
+  orchestrator?: 'claude' | 'codex'
 }
 
 export type OrchestrationSettings = {

@@ -17,17 +17,27 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 
-use orchestrator_core::{handle_mcp_body, Core, Launcher, OrchestrationSettings};
+use orchestrator_core::{handle_mcp_body, Core, Launcher, OrchestrationSettings, Planner};
 
 fn rpc(core: &Core, id: u32, method: &str, params: Value) -> Value {
+    rpc_as(core, None, id, method, params)
+}
+
+/// The request as the agent terminal registered as `planner` sends it.
+fn rpc_as(core: &Core, planner: Option<&str>, id: u32, method: &str, params: Value) -> Value {
     let body = json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params });
-    let raw = handle_mcp_body(core, &body.to_string(), None).expect("a response");
+    let raw = handle_mcp_body(core, &body.to_string(), planner).expect("a response");
     serde_json::from_str(&raw).expect("valid json")
 }
 
 fn call(core: &Core, name: &str, arguments: Value) -> Value {
-    let response = rpc(
+    call_as(core, None, name, arguments)
+}
+
+fn call_as(core: &Core, planner: Option<&str>, name: &str, arguments: Value) -> Value {
+    let response = rpc_as(
         core,
+        planner,
         10,
         "tools/call",
         json!({ "name": name, "arguments": arguments }),
@@ -2069,8 +2079,18 @@ fn quota(core: &Core, claude: u32, codex: u32) {
 }
 
 fn delegate_role(core: &Core, dir: &std::path::Path, role: &str) -> (Value, Value) {
-    let delegated = call(
+    delegate_role_as(core, dir, role, None)
+}
+
+fn delegate_role_as(
+    core: &Core,
+    dir: &std::path::Path,
+    role: &str,
+    planner: Option<&str>,
+) -> (Value, Value) {
+    let delegated = call_as(
         core,
+        planner,
         "alethe_delegate",
         json!({ "tasks": ["do the work"], "cwd": dir.to_string_lossy(), "role": role }),
     );
@@ -2177,6 +2197,223 @@ fn the_headroom_hint_reads_the_agent_a_role_runs_on() {
         "the hint has to be about claude, the agent this role runs on: {delegated}"
     );
     assert_eq!(job["routing"]["verdict"], "ignored", "{job}");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// A role name means the row for the orchestrator that delegates, else the row for any (#276).
+fn roles_per_orchestrator() -> OrchestrationSettings {
+    settings(json!({
+        "roles": [
+            {
+                "name": "executor-t2",
+                "orchestrator": "claude",
+                "agent": "claude",
+                "model": "claude-opus-5-5",
+                "fallback": "spare"
+            },
+            {
+                "name": "executor-t2",
+                "orchestrator": "codex",
+                "agent": "codex",
+                "model": "gpt-6.1-sol",
+                "fallback": "spare"
+            },
+            { "name": "reviewer", "agent": "codex", "model": "gpt-6-astra", "readOnly": true },
+            {
+                "name": "scout",
+                "orchestrator": "claude",
+                "agent": "claude",
+                "model": "claude-sonnet-5-5"
+            },
+            { "name": "scout", "agent": "codex", "model": "gpt-6-astra" },
+            { "name": "spare", "orchestrator": "claude", "agent": "codex", "model": "gpt-6-spare" },
+            {
+                "name": "spare",
+                "orchestrator": "codex",
+                "agent": "claude",
+                "model": "claude-haiku-5"
+            }
+        ],
+        "maxConcurrent": 4,
+        "defaultTimeoutSeconds": 900
+    }))
+}
+
+fn with_planners(core: &Core) {
+    for agent in ["claude", "codex"] {
+        core.register_planner(Planner {
+            id: format!("{agent}-pane"),
+            label: agent.to_string(),
+            agent: agent.to_string(),
+        });
+    }
+}
+
+#[test]
+fn a_role_runs_as_the_row_for_the_orchestrator_that_delegates() {
+    let dir = workspace("role-per-orchestrator");
+    let core = Core::default();
+    core.apply_settings(roles_per_orchestrator());
+    with_planners(&core);
+
+    let (_, claude) = delegate_role_as(&core, &dir, "executor-t2", Some("claude-pane"));
+    assert_eq!(claude["agent"], "claude", "{claude}");
+    assert_eq!(claude["model"], "claude-opus-5-5", "{claude}");
+    let (_, codex) = delegate_role_as(&core, &dir, "executor-t2", Some("codex-pane"));
+    assert_eq!(codex["agent"], "codex", "{codex}");
+    assert_eq!(codex["model"], "gpt-6.1-sol", "{codex}");
+
+    // A role with only a row for any orchestrator is the same for every planner.
+    for planner in [Some("claude-pane"), Some("codex-pane"), None] {
+        let (_, job) = delegate_role_as(&core, &dir, "reviewer", planner);
+        assert_eq!(job["model"], "gpt-6-astra", "{planner:?}: {job}");
+    }
+
+    // A row for another orchestrator is not this planner's: it gets the row for any.
+    let (_, scout) = delegate_role_as(&core, &dir, "scout", Some("codex-pane"));
+    assert_eq!(scout["agent"], "codex", "{scout}");
+    assert_eq!(scout["model"], "gpt-6-astra", "{scout}");
+    let (_, scout) = delegate_role_as(&core, &dir, "scout", Some("claude-pane"));
+    assert_eq!(scout["model"], "claude-sonnet-5-5", "{scout}");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_role_with_no_row_for_the_planner_is_refused() {
+    let dir = workspace("role-per-orchestrator-refused");
+    let core = Core::default();
+    core.apply_settings(roles_per_orchestrator());
+    with_planners(&core);
+    let cwd = dir.to_string_lossy().into_owned();
+
+    // No planner, or one Alethe does not know, only reaches the rows for any orchestrator.
+    for planner in [None, Some("unregistered-pane")] {
+        let refused = call_as(
+            &core,
+            planner,
+            "alethe_delegate",
+            json!({ "tasks": ["anything"], "cwd": cwd, "role": "executor-t2" }),
+        );
+        assert_eq!(
+            refused["error"], "error: unknown role executor-t2; configured roles: reviewer, scout",
+            "{planner:?}"
+        );
+    }
+    let unknown = call_as(
+        &core,
+        Some("claude-pane"),
+        "alethe_delegate",
+        json!({ "tasks": ["anything"], "cwd": cwd, "role": "auditor" }),
+    );
+    assert_eq!(
+        unknown["error"],
+        "error: unknown role auditor; configured roles: executor-t2, reviewer, scout, spare",
+        "each name once"
+    );
+    assert_eq!(core.snapshot()["jobs"].as_array().map(Vec::len), Some(0));
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_fallback_name_resolves_for_the_orchestrator_that_delegates() {
+    let dir = workspace("role-fallback-per-orchestrator");
+    let core = Core::default();
+    core.apply_settings(roles_per_orchestrator());
+    with_planners(&core);
+
+    quota(&core, 90, 10);
+    let (_, claude) = delegate_role_as(&core, &dir, "executor-t2", Some("claude-pane"));
+    assert_eq!(claude["agent"], "codex", "{claude}");
+    assert_eq!(claude["model"], "gpt-6-spare", "{claude}");
+    assert_eq!(claude["routing"]["to"], "spare", "{claude}");
+
+    quota(&core, 10, 90);
+    let (_, codex) = delegate_role_as(&core, &dir, "executor-t2", Some("codex-pane"));
+    assert_eq!(codex["agent"], "claude", "{codex}");
+    assert_eq!(codex["model"], "claude-haiku-5", "{codex}");
+    assert_eq!(codex["routing"]["to"], "spare", "{codex}");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// Fallbacks between a row for one orchestrator and a row for any (#276).
+fn fallbacks_across_rows() -> OrchestrationSettings {
+    settings(json!({
+        "roles": [
+            {
+                "name": "lead",
+                "orchestrator": "claude",
+                "agent": "claude",
+                "model": "claude-opus-5-5",
+                "fallback": "backup"
+            },
+            { "name": "backup", "agent": "codex", "model": "gpt-6-backup" },
+            { "name": "auditor", "agent": "claude", "model": "claude-sonnet-5-5", "fallback": "helper" },
+            { "name": "helper", "orchestrator": "codex", "agent": "codex", "model": "gpt-6-helper" },
+            { "name": "helper", "agent": "codex", "model": "gpt-6-helper-any" },
+            {
+                "name": "inspector",
+                "orchestrator": "claude",
+                "agent": "codex",
+                "model": "gpt-6-astra",
+                "readOnly": true,
+                "fallback": "writer"
+            },
+            { "name": "writer", "orchestrator": "claude", "agent": "claude", "model": "claude-haiku-5" }
+        ],
+        "maxConcurrent": 4,
+        "defaultTimeoutSeconds": 900
+    }))
+}
+
+#[test]
+fn a_row_for_one_orchestrator_falls_back_to_the_row_for_any() {
+    let dir = workspace("role-fallback-to-any");
+    let core = Core::default();
+    core.apply_settings(fallbacks_across_rows());
+    with_planners(&core);
+    quota(&core, 90, 10);
+
+    let (_, job) = delegate_role_as(&core, &dir, "lead", Some("claude-pane"));
+    assert_eq!(job["agent"], "codex", "{job}");
+    assert_eq!(job["model"], "gpt-6-backup", "{job}");
+    assert_eq!(job["routing"]["to"], "backup", "{job}");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_row_for_any_falls_back_to_the_row_for_the_planner() {
+    let dir = workspace("role-fallback-from-any");
+    let core = Core::default();
+    core.apply_settings(fallbacks_across_rows());
+    with_planners(&core);
+    quota(&core, 90, 10);
+
+    let (_, job) = delegate_role_as(&core, &dir, "auditor", Some("codex-pane"));
+    assert_eq!(job["agent"], "codex", "{job}");
+    assert_eq!(job["model"], "gpt-6-helper", "{job}");
+    assert_eq!(job["routing"]["to"], "helper", "{job}");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_read_only_row_never_falls_back_to_the_planners_writable_row() {
+    let dir = workspace("role-fallback-read-only-row");
+    let core = Core::default();
+    core.apply_settings(fallbacks_across_rows());
+    with_planners(&core);
+    quota(&core, 10, 90);
+
+    let (_, job) = delegate_role_as(&core, &dir, "inspector", Some("claude-pane"));
+    assert_eq!(job["agent"], "codex", "{job}");
+    assert_eq!(job["model"], "gpt-6-astra", "{job}");
+    assert_eq!(job["readOnly"], true, "{job}");
+    assert_ne!(job["routing"]["verdict"], "fallback", "{job}");
 
     let _ = std::fs::remove_dir_all(&dir);
 }

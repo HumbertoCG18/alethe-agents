@@ -9,3 +9,5 @@ package-lock.json
 *.yaml
 .github
 assets
+# Byte-for-byte copies of agent-workflow-lab's campaign fixtures.
+src/lib/__fixtures__

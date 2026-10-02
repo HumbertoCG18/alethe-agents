@@ -1,0 +1,89 @@
+{
+  "versao": 1,
+  "projeto": "exemplo",
+  "tronco": "dev",
+  "campanhas": [
+    {
+      "id": "BASE",
+      "titulo": "Concluída, libera quem depende dela",
+      "prioridade": 1,
+      "janela": "assistida",
+      "depende_de": [],
+      "worktrees": [],
+      "atualizado_em": "2026-10-01",
+      "tarefas": [
+        {"id": "BASE-01", "titulo": "feita", "nivel": "T1", "estado": "concluída"},
+        {"id": "BASE-02", "titulo": "feita", "nivel": "T1", "estado": "concluída"}
+      ]
+    },
+    {
+      "id": "OITO",
+      "titulo": "Uma de oito feitas: 12,5% arredonda para 13",
+      "prioridade": 2,
+      "janela": "assistida",
+      "depende_de": ["BASE"],
+      "worktrees": [],
+      "atualizado_em": "2026-10-01",
+      "tarefas": [
+        {"id": "OITO-01", "titulo": "feita", "nivel": "T1", "estado": "concluída"},
+        {"id": "OITO-02", "titulo": "em andamento", "nivel": "T2", "estado": "em execução"},
+        {"id": "OITO-03", "titulo": "pronta sem dependência", "nivel": "T1", "estado": "pronta"},
+        {"id": "OITO-04", "titulo": "pronta, depende de outra campanha", "nivel": "T1", "estado": "pronta", "depende_de": ["ABERTA-01"]},
+        {"id": "OITO-05", "titulo": "pronta, depende de tarefa feita", "nivel": "T1", "estado": "pronta", "depende_de": ["BASE-01"]},
+        {"id": "OITO-06", "titulo": "proposta", "nivel": "T2", "estado": "proposta"},
+        {"id": "OITO-07", "titulo": "bloqueada", "nivel": "T2", "estado": "bloqueada", "motivo": "Gate 2"},
+        {"id": "OITO-08", "titulo": "só à noite", "nivel": "T2", "estado": "pronta", "janela": "noite"}
+      ]
+    },
+    {
+      "id": "ABERTA",
+      "titulo": "Não decomposta: nunca conta como concluída",
+      "prioridade": 3,
+      "janela": "assistida",
+      "depende_de": [],
+      "worktrees": [],
+      "atualizado_em": "2026-10-01",
+      "decomposta": false,
+      "tarefas": [
+        {"id": "ABERTA-01", "titulo": "única conhecida, feita", "nivel": "T1", "estado": "concluída"}
+      ]
+    },
+    {
+      "id": "DEPOIS",
+      "titulo": "Espera a campanha ABERTA inteira",
+      "prioridade": 4,
+      "janela": "assistida",
+      "depende_de": ["ABERTA"],
+      "worktrees": [],
+      "atualizado_em": "2026-10-01",
+      "tarefas": [
+        {"id": "DEPOIS-01", "titulo": "pronta, mas a campanha espera", "nivel": "T1", "estado": "pronta"}
+      ]
+    },
+    {
+      "id": "NOTURNA",
+      "titulo": "Campanha da noite com uma tarefa assistida",
+      "prioridade": 5,
+      "janela": "noite",
+      "depende_de": [],
+      "worktrees": [],
+      "atualizado_em": "2026-10-01",
+      "tarefas": [
+        {"id": "NOTURNA-01", "titulo": "espera tarefa em andamento", "nivel": "T2", "estado": "proposta", "depende_de": ["OITO-02"]},
+        {"id": "NOTURNA-02", "titulo": "assistida dentro da noturna", "nivel": "T1", "estado": "bloqueada", "janela": "assistida"}
+      ]
+    },
+    {
+      "id": "PARADA",
+      "titulo": "Nada pronto e nada para esperar",
+      "prioridade": 6,
+      "janela": "qualquer",
+      "depende_de": [],
+      "worktrees": [],
+      "atualizado_em": "2026-10-01",
+      "tarefas": [
+        {"id": "PARADA-01", "titulo": "bloqueada por decisão", "nivel": "T1", "estado": "bloqueada", "motivo": "decisão sua"}
+      ]
+    }
+  ]
+}

@@ -47,6 +47,11 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
   result, summary and evidence; evidence that names a file in one of the repository's checkouts
   opens it. It refreshes when a diary changes or a new one is written, and stays hidden when there
   is none.
+- **Findings card in the Todo List.** When the main checkout has `.workflow/achados.json`, a
+  read-only, collapsed "Findings (N)" card next to the night card counts the findings still marked
+  new. Opened, it lists each with a dot by type (bug, risk, idea, debt), its title, the task it came
+  from and its date; the detail shows as a tooltip. It refreshes when the file changes and stays
+  hidden when the file is missing or nothing is new.
 - **Orchestration settings with named worker roles.** A new Orchestration category in Preferences
   holds roles such as a reviewer: each sets the agent, model, effort, read-only mode and time
   budget, with the models and efforts listed from the installed Codex (and Codex's common efforts

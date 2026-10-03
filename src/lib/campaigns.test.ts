@@ -21,6 +21,7 @@ import {
   nextTaskId,
   nightDiaryFiles,
   parseCampaigns,
+  parseFindings,
   parseNightDiary,
   pathInside,
   registryPath,
@@ -697,5 +698,110 @@ describe('night diary', () => {
     for (const text of ['a1b2c3d', 'https://github.com/x/y/pull/4', 'PR 12', '', 'see docs/x.md']) {
       expect(evidenceIsPath(text), text).toBe(false)
     }
+  })
+})
+
+describe('parseFindings', () => {
+  const finding = (fields: Record<string, unknown>) => ({
+    id: 'ACH-0001',
+    data: '2026-10-03',
+    tipo: 'bug',
+    titulo: 'Title',
+    origem: 'MOTOR-01',
+    detalhe: 'docs/x.md',
+    estado: 'novo',
+    ...fields,
+  })
+  const file = (achados: unknown[]) => JSON.stringify({ versao: 1, achados })
+
+  it('reads a valid finding', () => {
+    expect(parseFindings(file([finding({})]))).toEqual([
+      {
+        id: 'ACH-0001',
+        date: '2026-10-03',
+        type: 'bug',
+        title: 'Title',
+        origin: 'MOTOR-01',
+        detail: 'docs/x.md',
+      },
+    ])
+  })
+
+  it('returns nothing for text that is not a findings file', () => {
+    for (const source of ['', '{', 'null', '[]', '{"achados": 3}', '{"versao":1}']) {
+      expect(parseFindings(source), source).toEqual([])
+    }
+  })
+
+  it('ignores malformed entries and keeps the valid ones', () => {
+    const list = parseFindings(
+      file([
+        null,
+        'x',
+        finding({ id: '' }),
+        finding({ id: 'ACH-0002', tipo: 'talvez' }),
+        finding({ id: 'ACH-0003', titulo: '' }),
+        finding({ id: 'ACH-0004', data: 'ontem' }),
+        finding({ id: 'ACH-0005', origem: undefined, detalhe: 7 }),
+      ]),
+    )
+    expect(list).toEqual([
+      {
+        id: 'ACH-0005',
+        date: '2026-10-03',
+        type: 'bug',
+        title: 'Title',
+        origin: '',
+        detail: '',
+      },
+    ])
+  })
+
+  it('keeps only new findings', () => {
+    const list = parseFindings(
+      file([
+        finding({ id: 'ACH-0001', estado: 'virou-tarefa' }),
+        finding({ id: 'ACH-0002', estado: 'descartado' }),
+        finding({ id: 'ACH-0003' }),
+        finding({ id: 'ACH-0004', estado: 'other' }),
+      ]),
+    )
+    expect(list.map((item) => item.id)).toEqual(['ACH-0003'])
+  })
+
+  it('orders newest date first, then by id', () => {
+    const list = parseFindings(
+      file([
+        finding({ id: 'ACH-0003', data: '2026-10-01' }),
+        finding({ id: 'ACH-0002', data: '2026-10-03' }),
+        finding({ id: 'ACH-0001', data: '2026-10-02' }),
+        finding({ id: 'ACH-0004', data: '2026-10-03' }),
+      ]),
+    )
+    expect(list.map((item) => item.id)).toEqual(['ACH-0002', 'ACH-0004', 'ACH-0001', 'ACH-0003'])
+  })
+})
+
+describe('untrusted findings and diary input', () => {
+  it('drops impossible calendar dates', () => {
+    const finding = (data: string) => ({
+      id: 'ACH-0001',
+      data,
+      tipo: 'bug',
+      titulo: 'T',
+      estado: 'novo',
+    })
+    expect(parseFindings(JSON.stringify({ achados: [finding('2026-02-31')] }))).toEqual([])
+    expect(parseFindings(JSON.stringify({ achados: [finding('2026-13-01')] }))).toEqual([])
+    expect(parseFindings(JSON.stringify({ achados: [finding('2028-02-29')] }))).toHaveLength(1)
+    expect(parseNightDiary('{"data":"2026-02-31","entradas":[]}')).toBeNull()
+    expect(parseNightDiary('{"data":"2026-02-28","entradas":[]}')).not.toBeNull()
+  })
+
+  it('does not parse a file over 1 MB', () => {
+    const entry = { id: 'ACH-0001', data: '2026-10-03', tipo: 'bug', titulo: 'T', estado: 'novo' }
+    const small = JSON.stringify({ achados: [entry] })
+    expect(parseFindings(small)).toHaveLength(1)
+    expect(parseFindings(small.replace('"T"', `"${'x'.repeat(1_000_001)}"`))).toEqual([])
   })
 })

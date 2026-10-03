@@ -40,6 +40,7 @@ import {
   useTaskWorkers,
   workersLabel,
 } from './campaignView'
+import { FindingsCard } from './FindingsCard'
 import { TODO_SETTINGS_MODAL_ID } from './manifest'
 import { NightCard } from './NightCard'
 import { useTodosStore } from './store'
@@ -656,6 +657,7 @@ export function TodoSidebar() {
 
       <div className={styles.content}>
         <NightCard registry={view.registry} />
+        <FindingsCard registry={view.registry} />
         {filter !== 'completed' ? <GsdSyncSection /> : null}
         {campaign ? (
           <CampaignTaskRows campaign={campaign} filter={filter} edits={edits} workers={workers} />

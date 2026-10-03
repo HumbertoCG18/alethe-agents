@@ -491,7 +491,13 @@ export function activeCampaign(
 /** `atualizado_em` is a calendar date; read it as local midnight, like Python's fromisoformat. */
 function localDate(value: string): number | null {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)
-  return match ? new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3])).getTime() : null
+  if (!match) return null
+  const [year, month, day] = [Number(match[1]), Number(match[2]), Number(match[3])]
+  const date = new Date(year, month - 1, day)
+  // 2026-02-31 would roll over to March.
+  return date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day
+    ? date.getTime()
+    : null
 }
 
 /**
@@ -621,6 +627,51 @@ export function nightDiaryFiles(
     .map((entry) => entry.path)
 }
 
+/** Agents write the file; a larger one is not parsed. */
+const MAX_FINDINGS_FILE = 1_000_000
+
+export const FINDING_TYPES = ['bug', 'risco', 'ideia', 'divida'] as const
+export type FindingType = (typeof FINDING_TYPES)[number]
+export type Finding = {
+  id: string
+  date: string
+  type: FindingType
+  title: string
+  origin: string
+  detail: string
+}
+
+/**
+ * The new findings of `.workflow/achados.json`, written by `campanhas.py achado`: newest date
+ * first, then by id. A malformed file gives none and malformed entries are left out.
+ */
+export function parseFindings(source: string): Finding[] {
+  if (source.length > MAX_FINDINGS_FILE) return []
+  let data: unknown
+  try {
+    data = JSON.parse(source)
+  } catch {
+    return []
+  }
+  if (!isRecord(data) || !Array.isArray(data.achados)) return []
+  const findings: Finding[] = []
+  for (const raw of data.achados as unknown[]) {
+    if (!isRecord(raw) || raw.estado !== 'novo') continue
+    if (!isId(raw.id) || !isId(raw.titulo) || !FINDING_TYPES.includes(raw.tipo as FindingType)) {
+      continue
+    }
+    if (typeof raw.data !== 'string' || localDate(raw.data) === null) continue
+    findings.push({
+      id: raw.id,
+      date: raw.data,
+      type: raw.tipo as FindingType,
+      title: raw.titulo,
+      origin: text(raw.origem),
+      detail: text(raw.detalhe),
+    })
+  }
+  return findings.sort((a, b) => b.date.localeCompare(a.date) || a.id.localeCompare(b.id))
+}
 /** Evidence that reads as a file path: one word, not a URL, with a folder or an extension. */
 export const evidenceIsPath = (evidence: string) =>
   !/\s/.test(evidence) &&

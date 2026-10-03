@@ -798,3 +798,177 @@ describe('Night card', () => {
     })
   })
 })
+
+describe('Findings card', () => {
+  const FILE = 'C:\\repo\\.workflow\\achados.json'
+  const finding = (id: string, fields: Record<string, unknown> = {}) => ({
+    id,
+    data: '2026-10-03',
+    tipo: 'bug',
+    titulo: `${id} title`,
+    origem: 'MOTOR-01',
+    detalhe: '',
+    estado: 'novo',
+    ...fields,
+  })
+  const file = (...achados: unknown[]) => JSON.stringify({ versao: 1, achados })
+  const card = () => screen.queryByRole('button', { name: /^Findings/ })
+
+  it('is hidden without the file or without new findings', async () => {
+    fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    render(<TodoSidebar />)
+    await waitFor(() => expect(watchFile).toHaveBeenCalledWith(FILE))
+    expect(card()).toBeNull()
+  })
+
+  it('counts new findings, collapsed, and lists them as plain text when opened', async () => {
+    fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    fs.files.set(
+      FILE,
+      file(
+        finding('ACH-0001', { tipo: 'risco', data: '2026-10-02' }),
+        finding('ACH-0002', {
+          tipo: 'ideia',
+          detalhe: 'docs/x.md',
+          titulo: '<b>bold</b> [a](http://x)',
+        }),
+        finding('ACH-0003', { estado: 'descartado' }),
+        finding('ACH-0004', { tipo: 'divida', origem: '' }),
+        { id: 'ACH-0005', tipo: 'nope' },
+      ),
+    )
+    render(<TodoSidebar />)
+    const toggle = await screen.findByRole('button', { name: 'Findings (3)' })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByText('ACH-0001 title')).toBeNull()
+
+    fireEvent.click(toggle)
+    const rows = [...document.querySelectorAll('[data-finding]')]
+    expect(rows.map((row) => row.getAttribute('data-finding'))).toEqual([
+      'ACH-0002',
+      'ACH-0004',
+      'ACH-0001',
+    ])
+    expect(rows[0]).toHaveAttribute('title', 'docs/x.md')
+    expect(rows[0].querySelector('[role="img"]')).toHaveAttribute('aria-label', 'idea')
+    expect(rows[1].querySelector('[role="img"]')).toHaveAttribute('aria-label', 'debt')
+    expect(rows[2].querySelector('[role="img"]')).toHaveAttribute('aria-label', 'risk')
+    expect(screen.getByText('<b>bold</b> [a](http://x)')).toBeInTheDocument()
+    expect(screen.getAllByText('MOTOR-01')).toHaveLength(2)
+    expect(rows[2]).toHaveTextContent('10/02')
+    expect(screen.queryByRole('link')).toBeNull()
+  })
+
+  it('refreshes on a file change, appears when the file is created, and hides when all are triaged', async () => {
+    fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    const { unmount } = render(<TodoSidebar />)
+    await waitFor(() => expect(watchFile).toHaveBeenCalledWith(FILE))
+    // Absent file: the folder is watched too, and its event reports the new file.
+    expect(watchFile).toHaveBeenCalledWith('C:\\repo\\.workflow')
+    expect(card()).toBeNull()
+
+    fs.files.set(FILE, file(finding('ACH-0001')))
+    act(() => fs.onChange?.(FILE))
+    expect(await screen.findByRole('button', { name: 'Findings (1)' })).toBeInTheDocument()
+
+    fs.files.set(FILE, file(finding('ACH-0001'), finding('ACH-0002')))
+    act(() => fs.onChange?.(FILE))
+    expect(await screen.findByRole('button', { name: 'Findings (2)' })).toBeInTheDocument()
+
+    fs.files.set(
+      FILE,
+      file(
+        finding('ACH-0001', { estado: 'descartado' }),
+        finding('ACH-0002', { estado: 'virou-tarefa' }),
+      ),
+    )
+    act(() => fs.onChange?.(FILE))
+    await waitFor(() => expect(card()).toBeNull())
+
+    unmount()
+    const unwatched = vi.mocked(unwatchFile).mock.calls.map(([path]) => path)
+    expect(unwatched).toEqual(expect.arrayContaining([FILE, 'C:\\repo\\.workflow']))
+  })
+})
+
+describe('Watch references', () => {
+  const FILE = 'C:\\repo\\.workflow\\achados.json'
+  const FOLDER = 'C:\\repo\\.workflow'
+  const one = JSON.stringify({
+    achados: [
+      { id: 'A-1', data: '2026-10-03', tipo: 'bug', titulo: 'T', origem: '', estado: 'novo' },
+    ],
+  })
+  const calls = (mock: typeof watchFile, path: string) =>
+    vi.mocked(mock).mock.calls.filter(([p]) => p === path).length
+
+  // Every registration stays pending until `settle`, as a slow backend would.
+  async function remountWhilePending(path: string) {
+    const pending: Array<() => void> = []
+    vi.mocked(watchFile).mockImplementation((watched: string) =>
+      watched === path ? new Promise<void>((resolve) => pending.push(resolve)) : Promise.resolve(),
+    )
+    try {
+      fs.files.set(REGISTRY, JSON.stringify(exemplo))
+      fs.files.set(FILE, one)
+      const first = render(<TodoSidebar />)
+      await waitFor(() => expect(calls(watchFile, path)).toBe(1))
+      first.unmount()
+      // Nothing may be released while the registration is still pending.
+      expect(calls(unwatchFile, path)).toBe(0)
+      render(<TodoSidebar />)
+      await waitFor(() => expect(calls(watchFile, path)).toBe(2))
+      await act(async () => {
+        pending.forEach((resolve) => resolve())
+      })
+      await act(async () => {})
+      expect(calls(watchFile, path) - calls(unwatchFile, path)).toBe(1)
+    } finally {
+      vi.mocked(watchFile).mockImplementation(async () => {})
+    }
+  }
+
+  it('keeps one reference to the findings file after a remount', async () => {
+    await remountWhilePending(FILE)
+  })
+
+  it('keeps one reference to the night folder after a remount', async () => {
+    const nights = 'C:\\repo\\.workflow\\local\\noites'
+    fs.files.set(`${nights}\\2026-10-03.json`, JSON.stringify({ data: '2026-10-03', entradas: [] }))
+    await remountWhilePending(nights)
+  })
+
+  it('watches the folder only while the file is absent', async () => {
+    fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    render(<TodoSidebar />)
+    await waitFor(() => expect(calls(watchFile, FOLDER)).toBe(1))
+
+    fs.files.set(FILE, one)
+    act(() => fs.onChange?.(FILE))
+    await screen.findByRole('button', { name: 'Findings (1)' })
+    expect(calls(unwatchFile, FOLDER)).toBe(1)
+    expect(calls(unwatchFile, FILE)).toBe(0)
+
+    fs.files.delete(FILE)
+    act(() => fs.onChange?.(FILE))
+    await waitFor(() => expect(calls(watchFile, FOLDER)).toBe(2))
+    await waitFor(() => expect(screen.queryByRole('button', { name: /^Findings/ })).toBeNull())
+  })
+
+  it('renders at most 200 findings and counts the rest', async () => {
+    const many = Array.from({ length: 205 }, (_, index) => ({
+      id: `A-${String(index).padStart(4, '0')}`,
+      data: '2026-10-03',
+      tipo: 'ideia',
+      titulo: `T${index}`,
+      origem: '',
+      estado: 'novo',
+    }))
+    fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    fs.files.set(FILE, JSON.stringify({ achados: many }))
+    render(<TodoSidebar />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Findings (205)' }))
+    expect(document.querySelectorAll('[data-finding]')).toHaveLength(200)
+    expect(screen.getByText('+5 more')).toBeInTheDocument()
+  })
+})

@@ -18,14 +18,13 @@ import {
   listDirectory,
   listenFileChanged,
   readTextFile,
-  unwatchFile,
-  watchFile,
 } from '../../lib/tauri'
 import { useProjectsStore } from '../../stores/projectsStore'
 import { useUiStore } from '../../stores/uiStore'
 import styles from './CampaignsSection.module.css'
 import type { Registry } from './campaignView'
 import sidebarStyles from './TodoSidebar.module.css'
+import { createWatchSet } from './watchSet'
 
 const COUNT_KEYS: Record<NightResult, MessageKey> = {
   ok: 'todo.night.countOk',
@@ -63,24 +62,13 @@ function useNightDiary(main: string | null): NightDiary | null {
     const folder = workflowPath(main, 'local', 'noites')
     let cancelled = false
     let latest = 0
-    const watched = new Set<string>()
-    const watch = (path: string) => {
-      if (watched.has(path)) return
-      watched.add(path)
-      watchFile(path).then(
-        () => {
-          if (cancelled) void unwatchFile(path).catch(() => {})
-        },
-        // Retried on the next reload.
-        () => watched.delete(path),
-      )
-    }
+    const watches = createWatchSet()
     const reload = async () => {
       const request = ++latest
       const stale = () => cancelled || request !== latest
       const files = await listDirectory(folder).then(nightDiaryFiles, () => null)
       if (stale()) return
-      if (files) for (const path of [folder, ...files]) watch(path)
+      if (files) for (const path of [folder, ...files]) watches.watch(path)
       for (const path of files ?? []) {
         const text = await readTextFile(path).catch(() => null)
         if (stale()) return
@@ -93,7 +81,7 @@ function useNightDiary(main: string | null): NightDiary | null {
     }
     void reload()
     const unlisten = listenFileChanged((path) => {
-      if (watched.has(path)) void reload()
+      if (watches.has(path)) void reload()
     })
     const retry = () => {
       if (document.visibilityState !== 'hidden') void reload()
@@ -104,7 +92,7 @@ function useNightDiary(main: string | null): NightDiary | null {
       cancelled = true
       window.removeEventListener('focus', retry)
       document.removeEventListener('visibilitychange', retry)
-      for (const path of watched) void unwatchFile(path).catch(() => {})
+      watches.clear()
       void unlisten.then((stop) => stop()).catch(() => {})
     }
   }, [main])

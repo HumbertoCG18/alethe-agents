@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 
+import { DEFAULT_NIGHT_SETTINGS } from '../../lib/nightScheduler'
 import type { PluginStorage } from '../../lib/plugins'
 import type { TodoItem } from '../../lib/types'
 import { hydrateTodos, resetTodosStoreForTests, useTodosStore } from './store'
@@ -64,6 +65,55 @@ describe('hydrateTodos', () => {
     resetTodosStoreForTests()
     await hydrateTodos(storage, { todos: [], storagePath: '' })
     expect(useTodosStore.getState().listSource).toBe('mine')
+  })
+
+  it('keeps Modo noite per project and the night run across a restart', async () => {
+    const { storage, snapshot } = fakeStorage({ nightSettings: { broken: 1 } })
+    await hydrateTodos(storage, { todos: [], storagePath: '' })
+    // Off by default: a project without settings, or with unreadable ones, has none.
+    expect(useTodosStore.getState().nightSettings).toEqual({})
+
+    const settings = { ...DEFAULT_NIGHT_SETTINGS, enabled: true, start: '22:00' }
+    useTodosStore.getState().setNightSettings('p1', settings)
+    const current = {
+      projectId: 'p1',
+      campaignId: 'C',
+      taskId: 'C-01',
+      terminalId: null,
+      tabId: null,
+      startedAt: 1,
+      deadline: 2,
+    }
+    const nights = {
+      p1: { night: '2026-10-03', started: 1, failures: 0, stopped: null, attempted: ['C-01'] },
+    }
+    void useTodosStore.getState().setNightRun({ current, nights })
+    await Promise.resolve()
+    expect(snapshot().nightSettings).toEqual({ p1: settings })
+
+    resetTodosStoreForTests()
+    const stored = { ...snapshot(), nightSettings: { p1: { enabled: true } } }
+    await hydrateTodos(fakeStorage(stored).storage, { todos: [], storagePath: '' })
+    // A stored entry reads over the defaults.
+    expect(useTodosStore.getState().nightSettings.p1).toEqual({
+      ...DEFAULT_NIGHT_SETTINGS,
+      enabled: true,
+    })
+    expect(useTodosStore.getState().nightRun).toEqual({ current, nights })
+  })
+
+  it('reconsiders an ended night when its settings change', async () => {
+    await hydrateTodos(fakeStorage().storage, { todos: [], storagePath: '' })
+    const night = {
+      night: '2026-10-03',
+      started: 2,
+      failures: 0,
+      stopped: 'max' as const,
+      attempted: [],
+    }
+    void useTodosStore.getState().setNightRun({ current: null, nights: { p1: night } })
+    useTodosStore.getState().setNightSettings('p1', { ...DEFAULT_NIGHT_SETTINGS, maxTasks: 6 })
+    expect(useTodosStore.getState().nightRun.nights.p1).toEqual({ ...night, stopped: null })
   })
 
   it('treats an emptied list as owned, not as an absent record', async () => {

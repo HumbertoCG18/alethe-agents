@@ -12,6 +12,7 @@ import {
   workflowPath,
 } from '../../lib/campaigns'
 import { intlLocale, type MessageKey, useT } from '../../lib/i18n'
+import { nightDate, type StopReason } from '../../lib/nightScheduler'
 import {
   findRelativePath,
   type GitCheckouts,
@@ -23,6 +24,7 @@ import { useProjectsStore } from '../../stores/projectsStore'
 import { useUiStore } from '../../stores/uiStore'
 import styles from './CampaignsSection.module.css'
 import type { Registry } from './campaignView'
+import { useTodosStore } from './store'
 import sidebarStyles from './TodoSidebar.module.css'
 import { createWatchSet } from './watchSet'
 
@@ -125,6 +127,57 @@ function openFile(projectId: string, filePath: string) {
   const pane = store.createFilePane(projectId, { filePath })
   store.openPane(projectId, pane.id)
   useUiStore.getState().requestPaneFocus(pane.id)
+}
+
+const STOP_KEYS: Record<StopReason, MessageKey> = {
+  window: 'todo.nightMode.stopWindow',
+  none: 'todo.nightMode.stopNone',
+  max: 'todo.nightMode.stopMax',
+  failures: 'todo.nightMode.stopFailures',
+  quota: 'todo.nightMode.stopQuota',
+  diary: 'todo.nightMode.stopDiary',
+}
+
+const hoursMinutes = (ms: number) => {
+  const minutes = Math.max(0, Math.floor(ms / 60_000))
+  return [Math.floor(minutes / 60), minutes % 60]
+    .map((part) => String(part).padStart(2, '0'))
+    .join(':')
+}
+
+/**
+ * The night scheduler in this project: the task running and for how long, or why tonight's night
+ * ended, shown until noon when the night's date changes. Hidden otherwise.
+ */
+export function NightStatus({ projectId }: { projectId: string | null }) {
+  const t = useT()
+  const current = useTodosStore((state) => state.nightRun.current)
+  const night = useTodosStore((state) => (projectId ? state.nightRun.nights[projectId] : undefined))
+  const [now, setNow] = useState(() => Date.now())
+
+  useEffect(() => {
+    setNow(Date.now())
+    const timer = window.setInterval(() => setNow(Date.now()), 30_000)
+    return () => window.clearInterval(timer)
+  }, [current, night])
+
+  if (!projectId) return null
+  let text: string | null = null
+  if (current?.projectId === projectId) {
+    const running = t('todo.nightMode.running', {
+      task: current.taskId,
+      elapsed: hoursMinutes(now - current.startedAt),
+    })
+    // The night goes on when Claude's usage cannot be read; the line says it was not checked.
+    text = current.quotaUnread ? `${running} · ${t('todo.nightMode.quotaUnread')}` : running
+  } else if (night?.stopped && night.night === nightDate(new Date(now))) {
+    text = t('todo.nightMode.ended', { reason: t(STOP_KEYS[night.stopped]) })
+  }
+  return text ? (
+    <p className={styles.nightStatus} role="status">
+      {text}
+    </p>
+  ) : null
 }
 
 /** What the night agent did, from its latest diary; read-only, hidden when there is none. */

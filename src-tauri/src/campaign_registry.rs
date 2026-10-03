@@ -1,22 +1,26 @@
-//! Writes the campaign registry (`.workflow/campanhas.json`) with the protocol of
+//! Writes the campaign registry (`.workflow/campanhas.json`) and its night diaries
+//! (`.workflow/local/noites/<YYYY-MM-DD>.json`) with the protocol of
 //! agent-workflow-lab/bin/campanhas.py, so the Todo panel and the script never lose each other's
-//! updates: the `campanhas.json.lock` file next to the registry, a check that the file is still the
-//! version the panel read, and a temporary file in the same folder renamed over the registry.
+//! updates: a `<file>.lock` file next to it, a check that the file is still the version the panel
+//! read, and a temporary file in the same folder renamed over it.
 
 use std::fs::{self, OpenOptions};
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use serde_json::Value;
+
 /// How long to wait for another writer, and the age after which its lock is taken over.
 const LOCK_TIMEOUT: Duration = Duration::from_secs(10);
 const LOCK_STALE: Duration = Duration::from_secs(60);
 
-/// The error returned when the registry changed since the panel read it.
+/// The error returned when the file changed since the panel read it.
 pub const CONFLICT: &str = "conflict";
 
-/// Replaces the registry at `path` with `content`, formatted like campanhas.py writes it, when the
-/// file is still exactly `expected_content`, the text the panel read; otherwise returns [`CONFLICT`].
+/// Replaces the registry or a night diary at `path` with `content`, formatted like campanhas.py
+/// writes it, when the file is still exactly `expected_content`, the text the panel read (empty
+/// for a diary not written yet); otherwise returns [`CONFLICT`].
 #[tauri::command]
 pub async fn campaign_registry_write(
     path: String,
@@ -48,22 +52,129 @@ fn is_link(meta: &fs::Metadata) -> bool {
     meta.file_type().is_symlink()
 }
 
-/// Only `.workflow/campanhas.json` is writable through this command, and only when neither is a
-/// link: a `.workflow` junction would lead the write to a folder anywhere on disk.
-fn is_registry(path: &Path) -> bool {
-    let Some(folder) = path.parent() else {
-        return false;
+/// The files this command writes.
+#[derive(Clone, Copy, PartialEq)]
+enum Target {
+    /// `.workflow/campanhas.json`
+    Registry,
+    /// `.workflow/local/noites/<YYYY-MM-DD>.json`, written by `campanhas.py noite`.
+    Diary,
+}
+
+const REFUSED: &str =
+    "not a campaign registry or night diary: .workflow/campanhas.json or .workflow/local/noites/<date>.json";
+
+fn named(path: &Path, name: &str) -> bool {
+    path.file_name().is_some_and(|own| own == name)
+}
+
+/// `YYYY-MM-DD.json`
+fn is_diary_name(name: &str) -> bool {
+    let bytes = name.as_bytes();
+    name.len() == 15
+        && name.ends_with(".json")
+        && bytes[..10].iter().enumerate().all(|(index, byte)| {
+            if index == 4 || index == 7 {
+                *byte == b'-'
+            } else {
+                byte.is_ascii_digit()
+            }
+        })
+}
+
+/// What `path` names by its shape alone, with the `.workflow` folder above it.
+fn target_of(path: &Path) -> Option<(Target, &Path)> {
+    if !path.is_absolute() {
+        return None;
+    }
+    let name = path.file_name()?.to_str()?;
+    let folder = path.parent()?;
+    if name == "campanhas.json" && named(folder, ".workflow") {
+        return Some((Target::Registry, folder));
+    }
+    let local = folder.parent()?;
+    let workflow = local.parent()?;
+    (is_diary_name(name)
+        && named(folder, "noites")
+        && named(local, "local")
+        && named(workflow, ".workflow"))
+    .then_some((Target::Diary, workflow))
+}
+
+fn real_dir(path: &Path) -> bool {
+    fs::symlink_metadata(path).is_ok_and(|meta| meta.is_dir() && !is_link(&meta))
+}
+
+/// Creates a diary's `local/noites` folders as campanhas.py does, one level at a time below a real
+/// `.workflow` so a link is never followed; the registry and `.workflow` are never created.
+fn create_folders(path: &Path, target: Target, workflow: &Path) -> Result<(), String> {
+    if target != Target::Diary || !real_dir(workflow) {
+        return Ok(());
+    }
+    let folder = path.parent().ok_or(REFUSED)?;
+    for dir in [folder.parent().ok_or(REFUSED)?, folder] {
+        if let Err(error) = fs::create_dir(dir) {
+            if error.kind() != ErrorKind::AlreadyExists {
+                return Err(error.to_string());
+            }
+        }
+        if !real_dir(dir) {
+            return Err(REFUSED.to_string());
+        }
+    }
+    Ok(())
+}
+
+/// Checks that nothing from `.workflow` down to the file is a link: a junction would lead the write
+/// to a folder anywhere on disk. Made before the lock, again under it, and again before the rename.
+fn checked_path(path: &Path, target: Target, workflow: &Path) -> Result<(), String> {
+    let folder = path.parent().ok_or(REFUSED)?;
+    let folders = match target {
+        Target::Registry => vec![workflow],
+        Target::Diary => vec![workflow, folder.parent().ok_or(REFUSED)?, folder],
     };
-    path.is_absolute()
-        && path
-            .file_name()
-            .is_some_and(|name| name == "campanhas.json")
-        && folder.file_name().is_some_and(|name| name == ".workflow")
-        && [folder, path]
-            .iter()
-            .all(|entry| fs::symlink_metadata(entry).is_ok_and(|meta| !is_link(&meta)))
-        && fs::canonicalize(folder)
-            .is_ok_and(|real| real.file_name().is_some_and(|name| name == ".workflow"))
+    if !folders.into_iter().all(real_dir) {
+        return Err(REFUSED.to_string());
+    }
+    let file = match fs::symlink_metadata(path) {
+        Ok(meta) => meta.is_file() && !is_link(&meta),
+        Err(error) => target == Target::Diary && error.kind() == ErrorKind::NotFound,
+    };
+    let below: PathBuf = match target {
+        Target::Registry => [".workflow"].iter().collect(),
+        Target::Diary => [".workflow", "local", "noites"].iter().collect(),
+    };
+    if file && fs::canonicalize(folder).is_ok_and(|real| real.ends_with(&below)) {
+        Ok(())
+    } else {
+        Err(REFUSED.to_string())
+    }
+}
+
+/// `content` as campanhas.py writes it, when it is the kind of file `path` names: a registry has a
+/// `campanhas` list, a diary an `entradas` list and the date of its file name.
+fn formatted(path: &Path, target: Target, content: &str) -> Result<String, String> {
+    let data: Value =
+        serde_json::from_str(content).map_err(|error| format!("invalid content: {error}"))?;
+    let valid = match target {
+        Target::Registry => data.get("campanhas").is_some_and(Value::is_array),
+        Target::Diary => {
+            data.get("entradas").is_some_and(Value::is_array)
+                && data
+                    .get("data")
+                    .and_then(Value::as_str)
+                    .is_some_and(|day| path.file_stem().is_some_and(|stem| stem == day))
+        }
+    };
+    if !valid {
+        return Err(match target {
+            Target::Registry => "invalid registry: no campanhas list",
+            Target::Diary => "invalid night diary: no entradas list for its date",
+        }
+        .to_string());
+    }
+    // `json.dumps(data, ensure_ascii=False, indent=2) + "\n"`; preserve_order keeps the key order.
+    Ok(serde_json::to_string_pretty(&data).map_err(|error| error.to_string())? + "\n")
 }
 
 /// The lock file, removed when dropped so every exit path releases it.
@@ -75,10 +186,11 @@ impl Drop for RegistryLock {
     }
 }
 
-/// `registry_lock` of campanhas.py: create `campanhas.json.lock` exclusively, retrying until
-/// `timeout`, and take over a lock older than `LOCK_STALE`.
-fn lock(registry: &Path, timeout: Duration) -> Result<RegistryLock, String> {
-    let path = registry.with_file_name("campanhas.json.lock");
+/// `registry_lock` of campanhas.py: create `<file>.lock` exclusively, retrying until `timeout`,
+/// and take over a lock older than `LOCK_STALE`.
+fn lock(file: &Path, timeout: Duration) -> Result<RegistryLock, String> {
+    let name = file.file_name().ok_or(REFUSED)?.to_string_lossy();
+    let path = file.with_file_name(format!("{name}.lock"));
     let deadline = Instant::now() + timeout;
     loop {
         match OpenOptions::new().write(true).create_new(true).open(&path) {
@@ -109,28 +221,27 @@ fn lock(registry: &Path, timeout: Duration) -> Result<RegistryLock, String> {
 }
 
 fn write_registry(
-    registry: &Path,
+    file: &Path,
     expected_content: &str,
     content: &str,
     timeout: Duration,
 ) -> Result<(), String> {
-    if !is_registry(registry) {
-        return Err("not a campaign registry: .workflow/campanhas.json".to_string());
-    }
-    let data: serde_json::Value =
-        serde_json::from_str(content).map_err(|error| format!("invalid registry: {error}"))?;
-    if !data
-        .get("campanhas")
-        .is_some_and(serde_json::Value::is_array)
-    {
-        return Err("invalid registry: no campanhas list".to_string());
-    }
-    // `json.dumps(data, ensure_ascii=False, indent=2) + "\n"`; preserve_order keeps the key order.
-    let text = serde_json::to_string_pretty(&data).map_err(|error| error.to_string())? + "\n";
+    let (target, workflow) = target_of(file).ok_or(REFUSED)?;
+    let text = formatted(file, target, content)?;
+    create_folders(file, target, workflow)?;
+    checked_path(file, target, workflow)?;
 
-    let _lock = lock(registry, timeout)?;
+    let _lock = lock(file, timeout)?;
+    #[cfg(test)]
+    tests::after_lock();
+    // A folder may have been swapped for a link since the first check.
+    checked_path(file, target, workflow)?;
     // Read under the lock: a write from the script after the panel's read is a conflict.
-    let current = fs::read(registry).map_err(|error| error.to_string())?;
+    let current = match fs::read(file) {
+        Ok(bytes) => bytes,
+        Err(error) if target == Target::Diary && error.kind() == ErrorKind::NotFound => Vec::new(),
+        Err(error) => return Err(error.to_string()),
+    };
     if current != expected_content.as_bytes() {
         return Err(CONFLICT.to_string());
     }
@@ -138,13 +249,16 @@ fn write_registry(
         .duration_since(UNIX_EPOCH)
         .map(|elapsed| elapsed.as_nanos())
         .unwrap_or_default();
-    let temporary =
-        registry.with_file_name(format!("campanhas.json.{}.{stamp}.tmp", std::process::id()));
-    let written = fs::write(&temporary, text).and_then(|()| fs::rename(&temporary, registry));
-    if written.is_err() {
+    let name = file.file_name().ok_or(REFUSED)?.to_string_lossy();
+    let temporary = file.with_file_name(format!("{name}.{}.{stamp}.tmp", std::process::id()));
+    let renamed = fs::write(&temporary, text)
+        .map_err(|error| error.to_string())
+        .and_then(|()| checked_path(file, target, workflow))
+        .and_then(|()| fs::rename(&temporary, file).map_err(|error| error.to_string()));
+    if renamed.is_err() {
         let _ = fs::remove_file(&temporary);
     }
-    written.map_err(|error| error.to_string())
+    renamed
 }
 
 #[cfg(test)]
@@ -155,6 +269,74 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     const ORIGINAL: &str = "{\n  \"campanhas\": []\n}\n";
+
+    thread_local! {
+        /// Runs once inside the next write of this thread, right after it takes the lock.
+        static AFTER_LOCK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+            std::cell::RefCell::new(None);
+    }
+
+    pub(super) fn after_lock() {
+        if let Some(hook) = AFTER_LOCK.with(|slot| slot.borrow_mut().take()) {
+            hook();
+        }
+    }
+
+    /// A folder swapped for a junction after the checks and the lock, before the write: the
+    /// junction leads to another `.workflow`, so only a check made under the lock refuses it.
+    #[cfg(windows)]
+    #[test]
+    fn refuses_a_folder_swapped_for_a_junction_while_it_held_the_lock() {
+        let registry = registry();
+        let workflow = registry.parent().unwrap().to_path_buf();
+        let base = workflow.parent().unwrap().to_path_buf();
+        let elsewhere = base.join("elsewhere").join(".workflow");
+        fs::create_dir_all(elsewhere.join("local").join("noites")).unwrap();
+        fs::write(elsewhere.join("campanhas.json"), ORIGINAL).unwrap();
+        let diary = diary_of(&registry);
+        fs::create_dir_all(diary.parent().unwrap()).unwrap();
+
+        // (file, folder swapped, where its junction leads, expected content)
+        let cases = [
+            (
+                registry.clone(),
+                workflow.clone(),
+                elsewhere.clone(),
+                ORIGINAL,
+            ),
+            (
+                diary.clone(),
+                workflow.join("local"),
+                elsewhere.join("local"),
+                "",
+            ),
+        ];
+        for (file, swapped, target, expected) in cases {
+            let (moved, link) = (swapped.with_extension("real"), swapped.clone());
+            AFTER_LOCK.with(|slot| {
+                *slot.borrow_mut() = Some(Box::new(move || {
+                    fs::rename(&link, &moved).unwrap();
+                    let made = std::process::Command::new("cmd")
+                        .args(["/c", "mklink", "/J"])
+                        .arg(&link)
+                        .arg(&target)
+                        .output()
+                        .unwrap();
+                    assert!(made.status.success(), "{made:?}");
+                }))
+            });
+            let content = if expected.is_empty() { DIARY } else { SAMPLE };
+            assert!(write_registry(&file, expected, content, LOCK_TIMEOUT).is_err());
+            fs::remove_dir(&swapped).unwrap();
+            fs::rename(swapped.with_extension("real"), &swapped).unwrap();
+        }
+        assert_eq!(
+            fs::read_to_string(elsewhere.join("campanhas.json")).unwrap(),
+            ORIGINAL
+        );
+        assert!(names_in(&elsewhere.join("local").join("noites")).is_empty());
+        cleanup(&registry);
+    }
 
     /// A fresh `<temp>/<unique>/.workflow/campanhas.json` holding `ORIGINAL`.
     fn registry() -> PathBuf {
@@ -305,6 +487,134 @@ mod tests {
             fs::remove_dir(&junction).unwrap();
         }
         cleanup(&path);
+    }
+
+    const DIARY: &str = r#"{"data":"2026-10-03","entradas":[{"tarefa":"T-01","resultado":"parou","resumo":"tempo esgotado","evidencia":"","hora":"00:40"}]}"#;
+
+    /// `json.dumps(json.loads(DIARY), ensure_ascii=False, indent=2) + "\n"`.
+    const DIARY_PYTHON: &str = "{\n  \"data\": \"2026-10-03\",\n  \"entradas\": [\n    {\n      \"tarefa\": \"T-01\",\n      \"resultado\": \"parou\",\n      \"resumo\": \"tempo esgotado\",\n      \"evidencia\": \"\",\n      \"hora\": \"00:40\"\n    }\n  ]\n}\n";
+
+    /// `<registry folder>/local/noites/2026-10-03.json`, not created.
+    fn diary_of(registry: &Path) -> PathBuf {
+        registry
+            .parent()
+            .unwrap()
+            .join("local")
+            .join("noites")
+            .join("2026-10-03.json")
+    }
+
+    fn names_in(folder: &Path) -> Vec<String> {
+        let mut names: Vec<String> = fs::read_dir(folder)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn writes_a_new_night_diary_and_its_folders_as_campanhas_py_noite() {
+        let registry = registry();
+        let diary = diary_of(&registry);
+        // No file yet: the panel read nothing, so it expects nothing.
+        write_registry(&diary, "", DIARY, LOCK_TIMEOUT).unwrap();
+        assert_eq!(fs::read_to_string(&diary).unwrap(), DIARY_PYTHON);
+        assert_eq!(names_in(diary.parent().unwrap()), ["2026-10-03.json"]);
+        cleanup(&registry);
+    }
+
+    #[test]
+    fn appends_to_a_night_diary_only_while_it_is_the_text_read() {
+        let registry = registry();
+        let diary = diary_of(&registry);
+        fs::create_dir_all(diary.parent().unwrap()).unwrap();
+        let original = "{\"data\": \"2026-10-03\", \"entradas\": []}\n";
+        fs::write(&diary, original).unwrap();
+        assert_eq!(
+            write_registry(&diary, "", DIARY, LOCK_TIMEOUT).unwrap_err(),
+            CONFLICT
+        );
+        assert_eq!(fs::read_to_string(&diary).unwrap(), original);
+        write_registry(&diary, original, DIARY, LOCK_TIMEOUT).unwrap();
+        assert_eq!(fs::read_to_string(&diary).unwrap(), DIARY_PYTHON);
+        cleanup(&registry);
+    }
+
+    #[test]
+    fn a_night_diary_waits_for_its_own_lock() {
+        let registry = registry();
+        let diary = diary_of(&registry);
+        fs::create_dir_all(diary.parent().unwrap()).unwrap();
+        let lock = diary.with_file_name("2026-10-03.json.lock");
+        fs::write(&lock, "").unwrap();
+        let error = write_registry(&diary, "", DIARY, Duration::from_millis(200)).unwrap_err();
+        assert!(error.contains("in use"), "{error}");
+        assert!(!diary.exists());
+        assert!(lock.exists());
+        cleanup(&registry);
+    }
+
+    #[test]
+    fn refuses_what_is_not_a_night_diary() {
+        let registry = registry();
+        let workflow = registry.parent().unwrap().to_path_buf();
+        let base = workflow.parent().unwrap().to_path_buf();
+        for target in [
+            workflow.join("local").join("noites").join("notes.json"),
+            workflow.join("local").join("noites").join("2026-1-03.json"),
+            workflow.join("noites").join("2026-10-03.json"),
+            workflow.join("local").join("other").join("2026-10-03.json"),
+            // No `.workflow` here: never created.
+            base.join("repo")
+                .join(".workflow")
+                .join("local")
+                .join("noites")
+                .join("2026-10-03.json"),
+        ] {
+            assert!(
+                write_registry(&target, "", DIARY, LOCK_TIMEOUT).is_err(),
+                "{target:?}"
+            );
+            assert!(!target.exists());
+        }
+        assert!(!base.join("repo").exists());
+        let diary = diary_of(&registry);
+        for content in [
+            r#"{"data":"2026-10-04","entradas":[]}"#,
+            r#"{"data":"2026-10-03"}"#,
+            ORIGINAL,
+            "{",
+        ] {
+            assert!(
+                write_registry(&diary, "", content, LOCK_TIMEOUT).is_err(),
+                "{content}"
+            );
+        }
+        assert!(!diary.exists());
+        assert!(!workflow.join("local").exists());
+        cleanup(&registry);
+    }
+
+    /// A `local` junction would put the diary anywhere on disk.
+    #[cfg(windows)]
+    #[test]
+    fn refuses_a_night_diary_reached_through_a_junction() {
+        let registry = registry();
+        let workflow = registry.parent().unwrap().to_path_buf();
+        let elsewhere = workflow.parent().unwrap().join("elsewhere");
+        fs::create_dir_all(&elsewhere).unwrap();
+        let made = std::process::Command::new("cmd")
+            .args(["/c", "mklink", "/J"])
+            .arg(workflow.join("local"))
+            .arg(&elsewhere)
+            .output()
+            .unwrap();
+        assert!(made.status.success(), "{made:?}");
+        assert!(write_registry(&diary_of(&registry), "", DIARY, LOCK_TIMEOUT).is_err());
+        assert!(names_in(&elsewhere).is_empty());
+        fs::remove_dir(workflow.join("local")).unwrap();
+        cleanup(&registry);
     }
 
     /// A stale lock that cannot be removed is a failed attempt: the write gives up at the deadline.

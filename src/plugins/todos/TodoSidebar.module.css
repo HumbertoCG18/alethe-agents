@@ -993,3 +993,12 @@
 .prBadge:hover {
   color: var(--fg-muted);
 }
+
+/* A labeled input of the Modo noite settings, sharing its row. */
+.nightField {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}

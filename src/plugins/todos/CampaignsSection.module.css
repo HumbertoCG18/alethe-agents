@@ -372,3 +372,11 @@ button.evidence:hover {
   border-radius: var(--clean-control-radius);
   background: transparent;
 }
+
+.nightStatus {
+  margin: 0 0 8px;
+  color: var(--fg-muted);
+  font-size: 11px;
+  line-height: 1.4;
+  font-variant-numeric: tabular-nums;
+}

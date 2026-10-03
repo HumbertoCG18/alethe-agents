@@ -50,8 +50,9 @@ export async function writeTextFile(path: string, content: string): Promise<void
 }
 
 /**
- * Replaces `.workflow/campanhas.json` under campanhas.py's lock while it is still exactly
- * `expectedContent` (the text `readTextFile` returned); rejects with `'conflict'` otherwise.
+ * Replaces `.workflow/campanhas.json`, or a night diary `.workflow/local/noites/<YYYY-MM-DD>.json`,
+ * under campanhas.py's lock while it is still exactly `expectedContent` (the text `readTextFile`
+ * returned; empty for a diary not written yet); rejects with `'conflict'` otherwise.
  */
 export async function campaignRegistryWrite(
   path: string,

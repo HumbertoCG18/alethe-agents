@@ -79,84 +79,92 @@
       "janela": "assistida",
       "depende_de": [],
       "worktrees": [],
-      "atualizado_em": "2026-10-02",
+      "atualizado_em": "2026-10-03",
       "tarefas": [
         {
           "id": "ELO-01",
           "titulo": "active-task.md ganha campanha e tarefa (laboratório)",
           "nivel": "T1",
-          "estado": "pronta",
+          "estado": "concluída",
           "depende_de": [],
-          "origem": "USER"
+          "origem": "USER",
+          "evidencia": "agent-workflow-lab 77cf19f (hooks registrados em 3a5da7a); revisão independente aplicada"
         },
         {
           "id": "ELO-02",
           "titulo": "delegate-gate bloqueia delegação sem tarefa do registro, com o comando de criação na mensagem (laboratório)",
           "nivel": "T2",
-          "estado": "pronta",
+          "estado": "concluída",
           "depende_de": [
             "ELO-01",
             "TODO-06"
           ],
-          "origem": "USER"
+          "origem": "USER",
+          "evidencia": "agent-workflow-lab 77cf19f (hooks registrados em 3a5da7a); revisão independente aplicada"
         },
         {
           "id": "ELO-03",
           "titulo": "alethe_delegate aceita a tarefa; o quadro mostra tarefa e campanha",
           "nivel": "T2",
-          "estado": "pronta",
+          "estado": "concluída",
           "depende_de": [],
-          "origem": "USER"
+          "origem": "USER",
+          "evidencia": "fork PR #45 (dev); revisão independente aplicada; laboratório 77cf19f para o diário"
         },
         {
           "id": "ELO-04",
           "titulo": "Campanha ativa mostra os workers vivos",
           "nivel": "T1",
-          "estado": "pronta",
+          "estado": "concluída",
           "depende_de": [
             "ELO-03"
           ],
-          "origem": "USER"
+          "origem": "USER",
+          "evidencia": "fork PR #45 (dev); revisão independente aplicada; laboratório 77cf19f para o diário"
         },
         {
           "id": "ELO-05",
           "titulo": "Agente noturno no elo: só tarefas da noite livres, termina em aguarda você",
           "nivel": "T2",
-          "estado": "pronta",
+          "estado": "concluída",
           "depende_de": [
             "ELO-02"
           ],
-          "origem": "USER"
+          "origem": "USER",
+          "evidencia": "agent-workflow-lab 77cf19f (hooks registrados em 3a5da7a); revisão independente aplicada"
         },
         {
           "id": "ELO-06",
           "titulo": "Diário da noite (campanhas.py noite) e cartão Noite de… na Todo List",
           "nivel": "T2",
-          "estado": "pronta",
+          "estado": "concluída",
           "depende_de": [
             "ELO-05"
           ],
-          "origem": "USER"
+          "origem": "USER",
+          "evidencia": "fork PR #45 (dev); revisão independente aplicada; laboratório 77cf19f para o diário"
         },
         {
           "id": "ELO-07",
           "titulo": "Hook PostToolUse espelha active-task.md no registro (estado e evidência; concluir só com gate2 aprovado)",
           "nivel": "T2",
-          "estado": "proposta",
+          "estado": "concluída",
           "depende_de": [
             "ELO-01"
           ],
-          "origem": "USER"
+          "origem": "USER",
+          "evidencia": "agent-workflow-lab 77cf19f (hooks registrados em 3a5da7a); revisão independente aplicada"
         },
         {
           "id": "ELO-08",
           "titulo": "Hook Stop impede encerrar com tarefa concluída no active-task.md e aberta no registro",
           "nivel": "T1",
-          "estado": "proposta",
+          "estado": "concluída",
           "depende_de": [
             "ELO-01"
           ],
-          "origem": "USER"
+          "origem": "USER",
+          "evidencia": "agent-workflow-lab 77cf19f (hooks registrados em 3a5da7a); revisão independente aplicada"
         }
       ]
     },

@@ -9,6 +9,7 @@
  */
 import { normalizeCwd } from './platform'
 import type { GitCheckout, GitCheckouts } from './tauri/git'
+import type { OrchestratorJob } from './tauri/orchestrator'
 
 const DONE = 'concluída'
 export const TASK_STATES = [
@@ -407,6 +408,38 @@ export function campaignCwd(campaign: Campaign, checkouts: GitCheckouts): string
   return checkouts.main
 }
 
+/**
+ * An absolute path with `/` separators and `.` and `..` resolved, case-folded for drive and UNC
+ * paths (Windows file systems ignore case). Null for a relative path or one that climbs above its
+ * root.
+ */
+function canonicalPath(path: string): string | null {
+  const unified = normalizeCwd(path).replace(/\\/g, '/')
+  const windowsRoot = /^(?:[a-z]:|\/\/[^/]+\/[^/]+)(?=\/|$)/i.exec(unified)?.[0]
+  const root = windowsRoot ?? (unified.startsWith('/') ? '' : null)
+  if (root === null) return null
+  const segments: string[] = []
+  for (const segment of unified.slice(root.length).split('/')) {
+    if (segment === '' || segment === '.') continue
+    if (segment !== '..') segments.push(segment)
+    else if (segments.pop() === undefined) return null
+  }
+  const canonical = `${root}/${segments.join('/')}`
+  return windowsRoot ? canonical.toLowerCase() : canonical
+}
+
+/** Whether `path` is the folder `root` or lies under it, comparing whole components. */
+export function pathInside(path: string, root: string): boolean {
+  const target = canonicalPath(path)
+  const folder = canonicalPath(root)
+  if (target === null || folder === null) return false
+  return target === folder || target.startsWith(folder.endsWith('/') ? folder : `${folder}/`)
+}
+
+/** Whether `path` lies in one of the repository's checkouts, as `git worktree list` gives them. */
+export const inCheckouts = (path: string, checkouts: GitCheckouts) =>
+  checkouts.worktrees.some((checkout) => pathInside(path, checkout.path))
+
 /** A terminal tab as the active-campaign rule sees it: its tag and its effective cwd. */
 export type CampaignTab = { campaignId?: string; cwd: string }
 
@@ -424,13 +457,11 @@ function tabCampaign(
   if (tab.campaignId && campaigns.some((campaign) => campaign.id === tab.campaignId)) {
     return tab.campaignId
   }
-  const cwd = normalizeCwd(tab.cwd)
   // The deepest checkout holding the cwd: a worktree may sit inside the main checkout.
   let holder: { path: string; depth: number } | null = null
   for (const checkout of checkouts.worktrees) {
     const path = normalizeCwd(checkout.path)
-    const holds = cwd === path || cwd.startsWith(`${path}\\`) || cwd.startsWith(`${path}/`)
-    if (holds && (!holder || path.length > holder.depth)) {
+    if (pathInside(tab.cwd, checkout.path) && (!holder || path.length > holder.depth)) {
       holder = { path: checkout.path, depth: path.length }
     }
   }
@@ -486,11 +517,115 @@ export function campaignActivity(
   }
 }
 
-/** The registry file inside a main checkout, with the checkout's own separator. */
-export function registryPath(main: string): string {
+/** A path under `.workflow` in a main checkout, with the checkout's own separator. */
+export function workflowPath(main: string, ...parts: string[]): string {
   const separator = main.includes('\\') ? '\\' : '/'
-  return [main.replace(/[\\/]+$/, ''), '.workflow', 'campanhas.json'].join(separator)
+  return [main.replace(/[\\/]+$/, ''), '.workflow', ...parts].join(separator)
 }
+
+/** The registry file inside a main checkout. */
+export const registryPath = (main: string) => workflowPath(main, 'campanhas.json')
+
+/** `campaign · task` when the registry lists the task, else the task alone. */
+export function taskLabel(task: string, campaigns: readonly Campaign[]): string {
+  const campaign = campaigns.find((item) => item.tasks.some((entry) => entry.id === task))
+  return campaign ? `${campaign.id} · ${task}` : task
+}
+
+export type TaskWorkers = { running: number; queued: number }
+
+/**
+ * Orchestrator workers live on each registry task, counting only jobs whose cwd is in one of the
+ * repository's checkouts: another repository's registry may reuse the same ids. A worker stopped
+ * on a question counts as running, since it still holds its slot.
+ */
+export function liveTaskWorkers(
+  jobs: readonly Pick<OrchestratorJob, 'task' | 'status' | 'cwd'>[],
+  checkouts: GitCheckouts,
+): Map<string, TaskWorkers> {
+  const workers = new Map<string, TaskWorkers>()
+  for (const job of jobs) {
+    const queued = job.status === 'queued'
+    if (!job.task || !(queued || job.status === 'running' || job.status === 'blocked')) continue
+    if (!inCheckouts(job.cwd, checkouts)) continue
+    const count = workers.get(job.task) ?? { running: 0, queued: 0 }
+    count[queued ? 'queued' : 'running'] += 1
+    workers.set(job.task, count)
+  }
+  return workers
+}
+
+/** The live workers of a set of tasks, such as a campaign's. */
+export function campaignWorkers(
+  taskIds: readonly string[],
+  workers: ReadonlyMap<string, TaskWorkers>,
+): TaskWorkers {
+  const total = { running: 0, queued: 0 }
+  for (const id of taskIds) {
+    total.running += workers.get(id)?.running ?? 0
+    total.queued += workers.get(id)?.queued ?? 0
+  }
+  return total
+}
+
+export const NIGHT_RESULTS = ['ok', 'aguarda-voce', 'falhou', 'parou'] as const
+export type NightResult = (typeof NIGHT_RESULTS)[number]
+export type NightEntry = {
+  task: string
+  result: NightResult
+  summary: string
+  evidence: string
+  time: string
+}
+/** A night diary, `.workflow/local/noites/<YYYY-MM-DD>.json`, written by `campanhas.py noite`. */
+export type NightDiary = { date: string; entries: NightEntry[] }
+
+/** The diary in `text`; null when the file is malformed. Malformed entries are left out. */
+export function parseNightDiary(source: string): NightDiary | null {
+  let data: unknown
+  try {
+    data = JSON.parse(source)
+  } catch {
+    return null
+  }
+  if (
+    !isRecord(data) ||
+    typeof data.data !== 'string' ||
+    localDate(data.data) === null ||
+    !Array.isArray(data.entradas)
+  ) {
+    return null
+  }
+  const entries: NightEntry[] = []
+  for (const raw of data.entradas as unknown[]) {
+    if (!isRecord(raw) || !isId(raw.tarefa)) continue
+    if (!NIGHT_RESULTS.includes(raw.resultado as NightResult)) continue
+    entries.push({
+      task: raw.tarefa,
+      result: raw.resultado as NightResult,
+      summary: text(raw.resumo),
+      evidence: text(raw.evidencia),
+      time: text(raw.hora),
+    })
+  }
+  return { date: data.data, entries }
+}
+
+/** The `.json` files of a diary folder listing, newest first by their dated names. */
+export function nightDiaryFiles(
+  entries: readonly { name: string; path: string; is_dir: boolean }[],
+): string[] {
+  return entries
+    .filter((entry) => !entry.is_dir && /\.json$/i.test(entry.name))
+    .sort((a, b) => b.name.localeCompare(a.name))
+    .map((entry) => entry.path)
+}
+
+/** Evidence that reads as a file path: one word, not a URL, with a folder or an extension. */
+export const evidenceIsPath = (evidence: string) =>
+  !/\s/.test(evidence) &&
+  !/^[a-z][a-z0-9+.-]*:\/\//i.test(evidence) &&
+  /[\\/]|\.[A-Za-z0-9]{1,12}$/.test(evidence)
 
 /**
  * The prompt typed into the agent. It is agent-facing protocol text, in the registry's language.

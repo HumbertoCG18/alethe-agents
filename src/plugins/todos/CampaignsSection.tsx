@@ -7,8 +7,10 @@ import {
   campaignCwd,
   type CampaignSituation,
   type CampaignWindow,
+  campaignWorkers,
   type RegistryError,
   resumePrompt,
+  type TaskWorkers,
 } from '../../lib/campaigns'
 import { intlLocale, type MessageKey, type TFunction, useT } from '../../lib/i18n'
 import { findRelativePath, type GitCheckouts } from '../../lib/tauri'
@@ -16,7 +18,13 @@ import { AGENT_TYPE_LABELS, type SubTab } from '../../lib/types'
 import { useProjectsStore } from '../../stores/projectsStore'
 import { useUiStore } from '../../stores/uiStore'
 import styles from './CampaignsSection.module.css'
-import { type CampaignView, type Registry, STATE_KEYS, TASK_LANES } from './campaignView'
+import {
+  type CampaignView,
+  type Registry,
+  STATE_KEYS,
+  TASK_LANES,
+  workersLabel,
+} from './campaignView'
 import sidebarStyles from './TodoSidebar.module.css'
 
 const AGENTS = ['claude', 'codex'] as const
@@ -135,9 +143,12 @@ function continueCampaign(projectId: string, campaign: Campaign): boolean {
 /** The campaigns map below the list; choosing a campaign makes it the list's source. */
 export function CampaignsSection({
   view: { projectId, registry, activeId },
+  workers = new Map(),
   onSelect,
 }: {
   view: CampaignView
+  /** Live orchestrator workers per task; the active campaign shows its own. */
+  workers?: ReadonlyMap<string, TaskWorkers>
   onSelect: (campaignId: string) => void
 }) {
   const t = useT()
@@ -188,6 +199,17 @@ export function CampaignsSection({
               campaign={campaign}
               checkouts={registry.checkouts}
               active={campaign.id === activeId}
+              workers={
+                campaign.id === activeId
+                  ? workersLabel(
+                      t,
+                      campaignWorkers(
+                        campaign.tasks.map((task) => task.id),
+                        workers,
+                      ),
+                    )
+                  : null
+              }
               onSelect={() => onSelect(campaign.id)}
               onOpen={(agent) => void openCampaign(projectId, campaign, agent, registry)}
               onContinue={() => continueCampaign(projectId, campaign)}
@@ -203,6 +225,7 @@ function CampaignRow({
   campaign,
   checkouts,
   active,
+  workers,
   onSelect,
   onOpen,
   onContinue,
@@ -210,6 +233,8 @@ function CampaignRow({
   campaign: Campaign
   checkouts: GitCheckouts
   active: boolean
+  /** Its live workers, as "2 running · 1 queued"; null when none or not the active campaign. */
+  workers: string | null
   onSelect: () => void
   onOpen: (agent: CampaignAgent) => void
   /** Focuses the campaign's open tab; false when it has none. */
@@ -259,6 +284,7 @@ function CampaignRow({
             {`${campaign.done}/${campaign.total}${campaign.decomposed ? '' : '+?'} · ${campaign.percent}%`}
           </span>
           <span className={styles.situation}>{situationLabel(t, campaign.situation)}</span>
+          {workers ? <span className={styles.workers}>{workers}</span> : null}
         </span>
       </button>
       {/* The active row continues where its tab is, and offers the agents only when none is open. */}

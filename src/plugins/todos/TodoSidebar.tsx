@@ -21,7 +21,7 @@ import {
   useGsdSyncAvailable,
   useGsdSyncSessions,
 } from '../../hooks/useGsdSyncSessions'
-import { type Campaign, campaignTaskView } from '../../lib/campaigns'
+import { type Campaign, campaignTaskView, type TaskWorkers } from '../../lib/campaigns'
 import { useT } from '../../lib/i18n'
 import { formatShortcut } from '../../lib/platform'
 import { type PlanningStatus, readPlanningStatus } from '../../lib/tauri'
@@ -37,8 +37,11 @@ import {
   TASK_LANES,
   useCampaignEdits,
   useCampaignView,
+  useTaskWorkers,
+  workersLabel,
 } from './campaignView'
 import { TODO_SETTINGS_MODAL_ID } from './manifest'
+import { NightCard } from './NightCard'
 import { useTodosStore } from './store'
 import styles from './TodoSidebar.module.css'
 
@@ -171,6 +174,7 @@ export function TodoSidebar() {
   const addInputRef = useRef<HTMLInputElement>(null)
   const view = useCampaignView()
   const edits = useCampaignEdits(view)
+  const workers = useTaskWorkers(view.registry)
   const listSource = useTodosStore((state) => state.listSource)
   // The source picked in this project (a campaign id, or null for the personal list).
   const [picked, setPicked] = useState<{ projectId: string | null; id: string | null } | null>(null)
@@ -651,9 +655,10 @@ export function TodoSidebar() {
       </form>
 
       <div className={styles.content}>
+        <NightCard registry={view.registry} />
         {filter !== 'completed' ? <GsdSyncSection /> : null}
         {campaign ? (
-          <CampaignTaskRows campaign={campaign} filter={filter} edits={edits} />
+          <CampaignTaskRows campaign={campaign} filter={filter} edits={edits} workers={workers} />
         ) : todos.length === 0 ? (
           <div className={styles.empty}>
             <div className={styles.emptyIcon}>
@@ -687,7 +692,7 @@ export function TodoSidebar() {
             ) : null}
           </>
         )}
-        <CampaignsSection view={view} onSelect={pickSource} />
+        <CampaignsSection view={view} workers={workers} onSelect={pickSource} />
       </div>
     </aside>
   )
@@ -698,10 +703,12 @@ function CampaignTaskRows({
   campaign,
   filter,
   edits,
+  workers,
 }: {
   campaign: Campaign
   filter: 'all' | 'active' | 'completed'
   edits: CampaignEdits
+  workers: ReadonlyMap<string, TaskWorkers>
 }) {
   const t = useT()
   const tasks = campaignTaskView(campaign.tasks, filter)
@@ -715,6 +722,7 @@ function CampaignTaskRows({
         const label = t(
           done ? (undoable ? 'todo.reopen' : STATE_KEYS[task.state]) : 'todo.complete',
         )
+        const live = workersLabel(t, workers.get(task.id))
         return (
           <div
             key={task.id}
@@ -735,6 +743,7 @@ function CampaignTaskRows({
             <div className={styles.todoTitle} title={task.title}>
               <span className={campaignStyles.id}>{task.id}</span>
               <span className={styles.todoTitleText}>{task.title}</span>
+              {live ? <span className={campaignStyles.workers}>{live}</span> : null}
             </div>
             {done ? null : (
               <span className={campaignStyles.chip} data-lane={TASK_LANES[task.state]}>

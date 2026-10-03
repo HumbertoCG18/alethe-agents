@@ -100,6 +100,8 @@ export type OrchestratorJob = {
   worktree: string | null
   /** The Orchestration settings role it was delegated under; null when the call spelled it out. */
   role: string | null
+  /** The campaign registry task it serves (`MOTOR-01`); null or absent when the call named none. */
+  task?: string | null
   /** The model the planner delegated this worker on; null when it runs on the CLI's default. */
   model: string | null
   /** Codex reasoning effort the planner asked for; null keeps the CLI's own setting. */

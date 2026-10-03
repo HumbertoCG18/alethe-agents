@@ -453,6 +453,8 @@ struct Job {
     web_search: bool,
     /// The role it was delegated under, if any; what the role set is in the fields below.
     role: Option<String>,
+    /// The campaign registry task it serves (`MOTOR-01`), when the planner named one.
+    task: Option<String>,
     /// The model the planner asked for; None runs the CLI's own default.
     model: Option<String>,
     /// Codex reasoning effort (`model_reasoning_effort`); None keeps the CLI's own setting.
@@ -494,6 +496,7 @@ impl Job {
             "outcome": self.outcome,
             "seconds": elapsed,
             "role": self.role,
+            "task": self.task,
             "plan": self.plan,
             "tokens": self.tokens,
             "costUsd": self.cost_usd,
@@ -530,6 +533,7 @@ impl Job {
             "sandbox": self.sandbox,
             "webSearch": self.web_search,
             "role": self.role,
+            "task": self.task,
             "model": self.model,
             "effort": self.effort,
             // 0 is "no limit", so a record that lacks the field can still mean the old default.
@@ -602,6 +606,7 @@ impl Job {
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
             role: text("role"),
+            task: text("task"),
             model: text("model"),
             effort: text("effort"),
             pending: None,
@@ -2208,6 +2213,10 @@ pub fn tools() -> Value {
                     },
                     "cwd": { "type": "string", "description": "Working directory. Defaults to the lead's directory." },
                     "label": { "type": "string", "description": "A short name for this batch, in the user's words - what it is for, not how it is done. It is how the person watching tells one round of delegation from another." },
+                    "task": {
+                        "type": "string",
+                        "description": "The id of the campaign registry task this batch works on, such as MOTOR-01, from the project's .workflow/campanhas.json. Pass it whenever you are working on a registry task: the board shows it on every worker, with its campaign, and the Todo List counts the workers live on that task. Upper-case letters, digits and '-', at most 64 characters. Omit it only for work outside the registry."
+                    },
                     "isolate": {
                         "type": "boolean",
                         "description": "Give each worker its own detached git worktree. Use it whenever two units could touch the same files; without it parallel workers share one directory and can overwrite each other. Requires a git repository. The worktree path comes back with the job and is left in place for review."
@@ -2373,6 +2382,28 @@ fn option_name(arguments: &Map<String, Value>, key: &str) -> Result<Option<Strin
     }
 }
 
+/// The campaign registry task a delegation serves, such as `MOTOR-01`: at most 64 characters of
+/// `A-Z`, `0-9` and `-`, not starting with `-`. The board and the Todo List match it against the
+/// registry, so anything else is refused rather than stored.
+fn registry_task(arguments: &Map<String, Value>) -> Result<Option<String>, String> {
+    match arguments.get("task") {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(id))
+            if id.len() <= 64
+                && id.starts_with(|c: char| c.is_ascii_uppercase() || c.is_ascii_digit())
+                && id
+                    .chars()
+                    .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '-') =>
+        {
+            Ok(Some(id.clone()))
+        }
+        Some(other) => Err(format!(
+            "task must be a registry task id such as MOTOR-01: at most 64 characters of A-Z, 0-9 \
+             and '-', not starting with '-'; got {other}"
+        )),
+    }
+}
+
 fn required_str(arguments: &Map<String, Value>, key: &str) -> Result<String, String> {
     arguments
         .get(key)
@@ -2498,6 +2529,9 @@ fn restart_arguments(job: &Job) -> Map<String, Value> {
     );
     if let Some(label) = &job.run_label {
         arguments.insert("label".into(), json!(label));
+    }
+    if let Some(task) = &job.task {
+        arguments.insert("task".into(), json!(task));
     }
     arguments.insert("isolate".into(), json!(job.worktree.is_some()));
     // `approval_policy` holds the JSON the delegate built: a `granular` object when the worker was
@@ -2658,6 +2692,7 @@ fn dispatch_tool(
             };
             let model = option_name(arguments, "model")?;
             let effort = option_name(arguments, "effort")?;
+            let task = registry_task(arguments)?;
             // Not validated here on purpose — an unconfigured agent fails cleanly later, in
             // `spawn_worker`, through the normal delivery path.
             let agent = arguments
@@ -2808,6 +2843,7 @@ fn dispatch_tool(
                             sandbox: sandbox.clone(),
                             web_search,
                             role: role.clone(),
+                            task: task.clone(),
                             model: model.clone(),
                             effort: effort.clone(),
                             pending: None,
@@ -3286,6 +3322,7 @@ mod tests {
             sandbox: "workspace-write".into(),
             web_search: true,
             role: None,
+            task: None,
             model: None,
             effort: None,
             pending: None,
@@ -3332,6 +3369,18 @@ mod tests {
         assert_eq!(arguments["model"], json!("gpt-6-astra"));
         assert_eq!(arguments["effort"], json!("high"));
         assert_eq!(arguments["readOnly"], json!(true));
+    }
+
+    // A restarted worker still serves the registry task it was delegated for (fork #44).
+    #[test]
+    fn restart_keeps_the_registry_task() {
+        let job = Job {
+            task: Some("MOTOR-01".into()),
+            ..finished_job(None, "\"never\"", Some(900_000))
+        };
+        assert_eq!(restart_arguments(&job)["task"], json!("MOTOR-01"));
+        let untasked = restart_arguments(&finished_job(None, "\"never\"", None));
+        assert!(!untasked.contains_key("task"));
     }
 
     // A worker delegated under a role restarts under that role, as the settings now define it (#254).

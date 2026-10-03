@@ -1717,6 +1717,137 @@ fn model_options_that_cannot_hold_are_refused_without_creating_a_job() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+// A delegation names the campaign registry task it serves, and the board keeps it (fork #44).
+#[test]
+fn a_worker_keeps_the_registry_task_it_was_delegated_for() {
+    let dir = workspace("task-kept");
+    let store = dir.join("orchestrator-jobs.json");
+    let core = Core::default();
+    core.set_store(store.clone());
+
+    let delegated = call(
+        &core,
+        "alethe_delegate",
+        json!({ "tasks": ["one", "two"], "cwd": dir.to_string_lossy(), "task": "MOTOR-01" }),
+    );
+    assert_eq!(delegated["accepted"], json!(2), "{delegated}");
+    call(
+        &core,
+        "alethe_check",
+        json!({ "wait": true, "timeoutMs": 5000 }),
+    );
+    for job in core.snapshot()["jobs"].as_array().expect("jobs") {
+        assert_eq!(job["task"], "MOTOR-01", "every job of the call: {job}");
+    }
+
+    let restored = Core::default();
+    restored.set_store(store);
+    restored.restore();
+    let restored_snapshot = restored.snapshot();
+    let jobs = restored_snapshot["jobs"].as_array().expect("jobs");
+    assert_eq!(jobs.len(), 2);
+    for job in jobs {
+        assert_eq!(job["task"], "MOTOR-01", "kept after a restart: {job}");
+    }
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_task_that_is_not_a_registry_id_is_refused_without_creating_a_job() {
+    let dir = workspace("task-refused");
+    let core = Core::default();
+    let cwd = dir.to_string_lossy().into_owned();
+
+    let too_long = format!("A{}", "-1".repeat(32));
+    assert_eq!(too_long.len(), 65);
+    for task in [
+        json!(""),
+        json!("motor-01"),
+        json!("-MOTOR-01"),
+        json!("MOTOR 01"),
+        json!("MOTOR_01"),
+        json!(too_long),
+        json!(42),
+    ] {
+        let result = call(
+            &core,
+            "alethe_delegate",
+            json!({ "tasks": ["anything"], "cwd": cwd, "task": task }),
+        );
+        let error = result["error"].as_str().unwrap_or_default();
+        assert!(error.contains("task"), "{task} must be refused: {result}");
+    }
+    assert_eq!(
+        core.snapshot()["jobs"].as_array().map(Vec::len),
+        Some(0),
+        "a refused call creates no job"
+    );
+
+    // The longest id the registry can hold still passes.
+    let longest = format!("A{}", "-1".repeat(31) + "2");
+    assert_eq!(longest.len(), 64);
+    let accepted = call(
+        &core,
+        "alethe_delegate",
+        json!({ "tasks": ["anything"], "cwd": cwd, "task": longest }),
+    );
+    assert_eq!(accepted["accepted"], json!(1), "{accepted}");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_delegation_without_a_task_and_an_old_record_without_one_work_as_before() {
+    let dir = workspace("task-absent");
+    let store = dir.join("orchestrator-jobs.json");
+    let core = Core::default();
+
+    let delegated = call(
+        &core,
+        "alethe_delegate",
+        json!({ "tasks": ["anything"], "cwd": dir.to_string_lossy() }),
+    );
+    assert_eq!(delegated["accepted"], json!(1), "{delegated}");
+    assert_eq!(core.snapshot()["jobs"][0]["task"], Value::Null);
+
+    // A store written before jobs had a task.
+    std::fs::write(
+        &store,
+        json!({
+            "version": 2,
+            "jobs": [{ "id": "job-07", "runId": "run-03", "spec": "old work", "status": "done" }],
+            "planners": []
+        })
+        .to_string(),
+    )
+    .expect("old store");
+    let restored = Core::default();
+    restored.set_store(store);
+    restored.restore();
+    let snapshot = restored.snapshot();
+    assert_eq!(snapshot["jobs"][0]["spec"], "old work", "{snapshot}");
+    assert_eq!(snapshot["jobs"][0]["task"], Value::Null, "{snapshot}");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn the_delegate_schema_asks_for_the_registry_task() {
+    let core = Core::default();
+    let listed = rpc(&core, 1, "tools/list", json!({}));
+    let task = &listed["result"]["tools"]
+        .as_array()
+        .expect("tools")
+        .iter()
+        .find(|tool| tool["name"] == "alethe_delegate")
+        .expect("alethe_delegate")["inputSchema"]["properties"]["task"];
+    assert_eq!(task["type"], "string", "{task}");
+    let description = task["description"].as_str().expect("a description");
+    assert!(description.contains("MOTOR-01"), "{description}");
+    assert!(description.contains("registry"), "{description}");
+}
+
 // Roles configured in Preferences decide what a delegated worker runs on (#254).
 fn settings(value: Value) -> OrchestrationSettings {
     serde_json::from_value(value).expect("settings in the shape the app sends")

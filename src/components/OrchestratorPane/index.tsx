@@ -34,6 +34,7 @@ import { COST_POLL_MS } from '../../lib/agentCanvasConfig'
 import { startAgentCanvasMirror } from '../../lib/agentCanvasMirror'
 import { formatReset } from '../../lib/agentCanvasUtils'
 import { parseAgentType } from '../../lib/agentProviders'
+import { taskLabel } from '../../lib/campaigns'
 import { fmtUsd } from '../../lib/costFormat'
 import { type MessageKey, type TFunction, useT } from '../../lib/i18n'
 import {
@@ -87,7 +88,9 @@ import {
   worktreeFetchBranch,
   worktreeRemove,
 } from '../../lib/tauri'
+import { getProjectDefaultCwd } from '../../lib/terminalFactory'
 import type { Project, Terminal, Theme } from '../../lib/types'
+import { useCampaignRegistry } from '../../plugins/todos/campaignView'
 import { useAgentCanvasStore } from '../../stores/agentCanvasStore'
 import { useNodeCostStore } from '../../stores/nodeCostStore'
 import { useProjectsStore } from '../../stores/projectsStore'
@@ -389,9 +392,23 @@ type WorkerNodeProps = {
   onToggleDiff: (id: string) => void
   onApply: (job: OrchestratorJob) => void
   detached: boolean
+  /** The registry task it serves, as `campaign · task` when the registry lists it. */
+  task: string | null
   onContextMenu: WorkerMenuFn
   bind: BindNode
   t: TFunction
+}
+
+/** The registry task a run or worker serves, as a small mono chip. */
+function TaskChip({ task, t }: { task: string; t: TFunction }) {
+  return (
+    <span
+      className={`${styles.spendChip} ${styles.taskChip}`}
+      title={t('orchestrator.taskTitle', { task })}
+    >
+      {task}
+    </span>
+  )
 }
 
 function WorkerNode({
@@ -412,6 +429,7 @@ function WorkerNode({
   onToggleDiff,
   onApply,
   detached,
+  task,
   onContextMenu,
   bind,
   t,
@@ -468,6 +486,7 @@ function WorkerNode({
           <span className={styles.metaStatus} title={statusTitle(job.status, t)}>
             {t(`orchestrator.status.${job.status}`)}
           </span>
+          {task && <TaskChip task={task} t={t} />}
           {job.role && (
             <span title={t('orchestrator.roleTitle', { role: job.role })}>{job.role}</span>
           )}
@@ -847,6 +866,8 @@ function RailRow({ job, depth, selected, theme, onSelect, onContextMenu, t }: Ra
 type RunBranchProps = {
   run: OrchestratorRun
   open: boolean
+  /** The registry task its workers serve, as `campaign · task` when the registry lists it. */
+  task: string | null
   selectedId: string | null
   theme: Theme
   onToggle: (id: string) => void
@@ -858,6 +879,7 @@ type RunBranchProps = {
 function RunBranch({
   run,
   open,
+  task,
   selectedId,
   theme,
   onToggle,
@@ -880,6 +902,7 @@ function RunBranch({
         {open ? <ChevronDown size={12} aria-hidden /> : <ChevronRight size={12} aria-hidden />}
         <span className={styles.dot} aria-hidden />
         <span className={styles.branchName}>{run.label}</span>
+        {task && <TaskChip task={task} t={t} />}
         <span className={styles.branchCount}>{run.jobs.length}</span>
         <span className={styles.railValue}>{t(LANE_LABEL[run.state])}</span>
       </button>
@@ -1042,6 +1065,12 @@ export const OrchestratorPane = memo(function OrchestratorPane({
   const project = useMemo(
     () => projects.find((p) => p.id === projectId) ?? null,
     [projects, projectId],
+  )
+  // A run's registry task reads as `campaign · task` when the project's main checkout has one.
+  const { registry } = useCampaignRegistry(projectId, getProjectDefaultCwd(project, projects))
+  const labelTask = useCallback(
+    (task: string | null | undefined) => (task ? taskLabel(task, registry?.campaigns ?? []) : null),
+    [registry],
   )
   const projectPtyIds = useMemo(() => {
     const ids = new Set<string>()
@@ -1679,6 +1708,7 @@ export const OrchestratorPane = memo(function OrchestratorPane({
                           onToggleDiff={(id) => void toggleDiff(id)}
                           onApply={(job) => void applyWorktree(job)}
                           detached={detached}
+                          task={labelTask(job.task)}
                           onContextMenu={openWorkerMenu}
                           bind={bind}
                           t={t}
@@ -1846,6 +1876,7 @@ export const OrchestratorPane = memo(function OrchestratorPane({
                       key={run.id}
                       run={run}
                       open={openRuns[run.id] ?? opensByDefault(run)}
+                      task={labelTask(run.jobs.find((job) => job.task)?.task)}
                       selectedId={selectedId}
                       theme={theme}
                       onToggle={toggleRun}

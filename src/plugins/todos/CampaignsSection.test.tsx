@@ -12,6 +12,14 @@ const fs = vi.hoisted(() => ({
   files: new Map<string, string>(),
   onChange: null as ((path: string) => void) | null,
   handoff: null as string | null,
+  /** What find_relative_path returns per path; anything else gets `handoff`. */
+  found: new Map<string, string>(),
+}))
+
+/** The orchestrator snapshot the board and the Todo tab receive, and its live event. */
+const orchestrator = vi.hoisted(() => ({
+  jobs: [] as Array<{ task?: string | null; status: string; cwd: string }>,
+  emit: null as ((snapshot: { jobs: unknown[] }) => void) | null,
 }))
 
 vi.mock('../../lib/terminalLifecycle', () => ({ cleanupPtys: vi.fn() }))
@@ -35,11 +43,33 @@ vi.mock('../../lib/tauri', async (importOriginal) => ({
   }),
   watchFile: vi.fn(async () => {}),
   unwatchFile: vi.fn(async () => {}),
+  // Every listener hears a change, as the app event reaches them all.
   listenFileChanged: vi.fn(async (handler: (path: string) => void) => {
-    fs.onChange = handler
+    const previous = fs.onChange
+    fs.onChange = previous
+      ? (path) => {
+          previous(path)
+          handler(path)
+        }
+      : handler
     return () => {}
   }),
-  findRelativePath: vi.fn(async () => fs.handoff),
+  findRelativePath: vi.fn(async (_cwd: string, path: string) => fs.found.get(path) ?? fs.handoff),
+  // The files directly in a folder, as the list_directory command returns them.
+  listDirectory: vi.fn(async (folder: string) => {
+    const entries = [...fs.files.keys()]
+      .filter(
+        (path) => path.startsWith(`${folder}\\`) && !path.slice(folder.length + 1).includes('\\'),
+      )
+      .map((path) => ({ name: path.slice(folder.length + 1), path, is_dir: false, size: 1 }))
+    if (entries.length === 0) throw new Error('directory not found')
+    return entries
+  }),
+  orchestratorJobs: vi.fn(async () => ({ jobs: orchestrator.jobs })),
+  listenOrchestratorJobs: vi.fn(async (handler: (snapshot: { jobs: unknown[] }) => void) => {
+    orchestrator.emit = handler
+    return () => {}
+  }),
   // The write command's contract: replace the file only while it is still the text read.
   campaignRegistryWrite: vi.fn(async (path: string, expected: string, content: string) => {
     if (fs.files.get(path) !== expected) throw 'conflict'
@@ -47,7 +77,14 @@ vi.mock('../../lib/tauri', async (importOriginal) => ({
   }),
 }))
 
-import { campaignRegistryWrite, findRelativePath, readTextFile, watchFile } from '../../lib/tauri'
+import {
+  campaignRegistryWrite,
+  findRelativePath,
+  listDirectory,
+  readTextFile,
+  unwatchFile,
+  watchFile,
+} from '../../lib/tauri'
 import { CampaignsSection } from './CampaignsSection'
 import { useCampaignView } from './campaignView'
 import { TODO_SETTINGS_MODAL_ID } from './manifest'
@@ -75,6 +112,9 @@ beforeEach(() => {
   fs.files.clear()
   fs.onChange = null
   fs.handoff = null
+  fs.found.clear()
+  orchestrator.jobs = []
+  orchestrator.emit = null
   resetTodosStoreForTests()
   useUiStore.setState({ activeTerminal: null })
   useProjectsStore.setState({ ...structuredClone(EMPTY_PROJECTS_FILE), hydrated: false })
@@ -578,5 +618,183 @@ describe('Todo list source', () => {
     render(<TodoSidebar />)
     await waitFor(() => expect(source()).toHaveTextContent('My todos'))
     expect(screen.getByText('Nothing on your list')).toBeInTheDocument()
+  })
+
+  it('shows the live workers of the active campaign on its row and on its task rows', async () => {
+    fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    useTodosStore.setState({ activeCampaigns: { [projectId()]: 'OITO' } })
+    orchestrator.jobs = [
+      { task: 'OITO-02', status: 'running', cwd: 'C:\\repo-feature' },
+      { task: 'OITO-02', status: 'blocked', cwd: 'C:\\repo' },
+      { task: 'OITO-03', status: 'queued', cwd: 'C:\\repo\\.alethe\\worktrees\\job-03' },
+      { task: 'OITO-05', status: 'done', cwd: 'C:\\repo' },
+      { task: 'OITO-06', status: 'running', cwd: 'C:\\other' },
+      { task: 'BASE-01', status: 'running', cwd: 'C:\\repo' },
+      { task: null, status: 'running', cwd: 'C:\\repo' },
+    ]
+    render(<TodoSidebar />)
+    await waitFor(() => expect(row('OITO-02')).toHaveTextContent('2 running'))
+    expect(row('OITO-03')).toHaveTextContent('1 queued')
+    for (const id of ['OITO-05', 'OITO-06']) {
+      expect(row(id)).not.toHaveTextContent(/running|queued/)
+    }
+    await expandSection()
+    expect(activeRow()).toHaveTextContent('2 running · 1 queued')
+    expect(screen.getByText('BASE').closest('[data-lane]')).not.toHaveTextContent('running')
+
+    // The board's event updates the counts; a settled worker leaves them.
+    act(() =>
+      orchestrator.emit?.({
+        jobs: [{ task: 'OITO-03', status: 'running', cwd: 'C:\\repo', summary: 'streaming' }],
+      }),
+    )
+    expect(activeRow()).toHaveTextContent('1 running')
+    expect(activeRow()).not.toHaveTextContent('queued')
+    expect(row('OITO-02')).not.toHaveTextContent('running')
+    expect(row('OITO-03')).toHaveTextContent('1 running')
+  })
+})
+
+describe('Night card', () => {
+  const NIGHTS = 'C:\\repo\\.workflow\\local\\noites'
+  const diary = (date: string, entradas: unknown[]) => JSON.stringify({ data: date, entradas })
+  const entry = (tarefa: string, resultado: string, evidencia = '') => ({
+    tarefa,
+    resultado,
+    resumo: `${tarefa} resumo`,
+    evidencia,
+    hora: '03:41',
+  })
+  const card = () => screen.queryByRole('button', { name: /^Night of/ })
+
+  it('is hidden without a diary', async () => {
+    fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    render(<TodoSidebar />)
+    await waitFor(() => expect(listDirectory).toHaveBeenCalledWith(NIGHTS))
+    await act(async () => {})
+    expect(card()).toBeNull()
+  })
+
+  it('shows the latest diary on one line with its non-zero counts, and its entries when opened', async () => {
+    fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    fs.files.set(`${NIGHTS}\\2026-10-02.json`, diary('2026-10-02', [entry('OLD-01', 'ok')]))
+    fs.files.set(
+      `${NIGHTS}\\2026-10-03.json`,
+      diary('2026-10-03', [
+        entry('MOTOR-01', 'aguarda-voce', 'docs/motor.md'),
+        entry('MOTOR-02', 'ok', 'a1b2c3d'),
+        entry('MOTOR-03', 'ok'),
+        entry('MOTOR-04', 'parou'),
+        { tarefa: 'MOTOR-05', resultado: 'talvez' },
+      ]),
+    )
+    fs.handoff = 'C:\\repo-feature\\docs\\motor.md'
+    render(<TodoSidebar />)
+    const toggle = await screen.findByRole('button', { name: /^Night of 10\/03/ })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(toggle).toHaveTextContent('2 ok')
+    expect(toggle).toHaveTextContent('1 waiting on you')
+    expect(toggle).toHaveTextContent('1 stopped')
+    expect(toggle).not.toHaveTextContent('failed')
+    expect(screen.queryByText('MOTOR-01')).toBeNull()
+    // Above the list.
+    expect(toggle.compareDocumentPosition(document.querySelector('[data-task]')!)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    )
+
+    fireEvent.click(toggle)
+    await screen.findByRole('button', { name: 'docs/motor.md' })
+    const entries = document.querySelectorAll('[data-lane] > [role="img"]')
+    expect([...entries].map((dot) => dot.getAttribute('aria-label'))).toEqual([
+      'waiting on you',
+      'ok',
+      'ok',
+      'stopped',
+    ])
+    expect(screen.getByText('MOTOR-01 resumo')).toBeInTheDocument()
+    expect(screen.queryByText('MOTOR-05')).toBeNull()
+    // A commit is plain text; a path opens through the file pane.
+    expect(screen.getByText('a1b2c3d').tagName).toBe('SPAN')
+    fireEvent.click(screen.getByRole('button', { name: 'docs/motor.md' }))
+    await waitFor(() =>
+      expect(useProjectsStore.getState().projects[0].terminals.at(-1)).toMatchObject({
+        filePath: 'C:\\repo-feature\\docs\\motor.md',
+      }),
+    )
+    expect(findRelativePath).toHaveBeenCalledWith('C:\\repo', 'docs/motor.md')
+  })
+
+  it('watches the folder and every diary, so fixing a malformed newest one shows it', async () => {
+    fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    const older = `${NIGHTS}\\2026-10-02.json`
+    const newest = `${NIGHTS}\\2026-10-03.json`
+    fs.files.set(older, diary('2026-10-02', [entry('OLD-01', 'falhou')]))
+    fs.files.set(newest, '{"data": "2026-10-03", "entradas": [')
+    const { unmount } = render(<TodoSidebar />)
+    expect(await screen.findByRole('button', { name: /^Night of 10\/02/ })).toHaveTextContent(
+      '1 failed',
+    )
+    const watchedNights = () =>
+      new Set(
+        vi
+          .mocked(watchFile)
+          .mock.calls.map(([path]) => path)
+          .filter((path) => path.startsWith(NIGHTS)),
+      )
+    expect(watchedNights()).toEqual(new Set([NIGHTS, newest, older]))
+
+    // The script fixes the newest diary: its own change event reloads the card.
+    fs.files.set(newest, diary('2026-10-03', [entry('MOTOR-01', 'ok')]))
+    act(() => fs.onChange?.(newest))
+    expect(await screen.findByRole('button', { name: /^Night of 10\/03/ })).toHaveTextContent(
+      '1 ok',
+    )
+
+    // A new night: the folder's event lists it again, and the new diary is watched too.
+    const next = `${NIGHTS}\\2026-10-04.json`
+    fs.files.set(next, diary('2026-10-04', [entry('MOTOR-02', 'ok'), entry('MOTOR-03', 'ok')]))
+    act(() => fs.onChange?.(NIGHTS))
+    expect(await screen.findByRole('button', { name: /^Night of 10\/04/ })).toHaveTextContent(
+      '2 ok',
+    )
+    expect(watchedNights()).toEqual(new Set([NIGHTS, newest, older, next]))
+
+    unmount()
+    const unwatched = vi.mocked(unwatchFile).mock.calls.map(([path]) => path)
+    expect(unwatched).toEqual(expect.arrayContaining([NIGHTS, newest, older, next]))
+  })
+
+  it('links evidence only when it resolves inside one of the checkouts', async () => {
+    fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    fs.files.set(
+      `${NIGHTS}\\2026-10-03.json`,
+      diary('2026-10-03', [
+        entry('MOTOR-01', 'ok', '../outside/private.md'),
+        entry('MOTOR-02', 'ok', 'C:\\secret\\notes.md'),
+        entry('MOTOR-03', 'ok', '\\\\server\\share\\notes.md'),
+        entry('MOTOR-04', 'ok', 'docs/ok.md'),
+        entry('MOTOR-05', 'ok', 'C:\\repo-feature\\docs\\abs.md'),
+      ]),
+    )
+    // find_relative_path joins without any containment check.
+    fs.found.set('../outside/private.md', 'C:\\repo\\..\\outside\\private.md')
+    render(<TodoSidebar />)
+    fireEvent.click(await screen.findByRole('button', { name: /^Night of 10\/03/ }))
+
+    expect(await screen.findByRole('button', { name: 'docs/ok.md' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'C:\\repo-feature\\docs\\abs.md' })).toBeTruthy()
+    for (const text of [
+      '../outside/private.md',
+      'C:\\secret\\notes.md',
+      '\\\\server\\share\\notes.md',
+    ]) {
+      expect(screen.getByText(text).tagName, text).toBe('SPAN')
+    }
+
+    // Not found anywhere, a path in the repository still opens, relative to the main checkout.
+    fireEvent.click(screen.getByRole('button', { name: 'docs/ok.md' }))
+    expect(useProjectsStore.getState().projects[0].terminals.at(-1)).toMatchObject({
+      filePath: 'C:\\repo\\docs\\ok.md',
+    })
   })
 })

@@ -33,6 +33,20 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
   ("marcada no Alethe"), with an undo. Writes take the same lock as `campanhas.py` and are refused,
   with a reload, when the registry changed since it was read. **List source** in the Todo settings
   makes the list open on your personal todos instead. Projects without a registry are unchanged.
+- **Runs linked to campaign tasks.** `alethe_delegate` takes an optional `task`, the registry task
+  id the work is for (such as `MOTOR-01`); every worker of the call keeps it, also after a restart
+  of the app. The orchestration board shows it as a small chip on the run and on each worker card,
+  as `campaign · task` when the project has a campaign registry. A malformed id is refused, and a
+  delegation without `task` works as before.
+- **Live workers on the active campaign.** In the Todo List, the active campaign's row and each of
+  its task rows show the orchestrator workers running or queued for those tasks, such as
+  "2 running · 1 queued", updated as the board changes.
+- **Night card in the Todo List.** When the main checkout has a night diary
+  (`.workflow/local/noites/<date>.json`), a read-only "Night of" card above the list sums up the
+  latest night by result (ok, waiting on you, failed, stopped). Opened, it lists each task with its
+  result, summary and evidence; evidence that names a file in one of the repository's checkouts
+  opens it. It refreshes when a diary changes or a new one is written, and stays hidden when there
+  is none.
 - **Orchestration settings with named worker roles.** A new Orchestration category in Preferences
   holds roles such as a reviewer: each sets the agent, model, effort, read-only mode and time
   budget, with the models and efforts listed from the installed Codex (and Codex's common efforts

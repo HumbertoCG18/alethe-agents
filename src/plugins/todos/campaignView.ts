@@ -2,7 +2,7 @@
  * The campaign registry as the Todo tab uses it: read and watched once, shared by the list and the
  * Campaigns map, and edited from the list through the registry write command.
  */
-import { useEffect, useReducer, useRef, useState } from 'react'
+import { useEffect, useMemo, useReducer, useRef, useState } from 'react'
 
 import {
   activeCampaign,
@@ -12,16 +12,22 @@ import {
   type CampaignTab,
   type CampaignTask,
   isoDay,
+  liveTaskWorkers,
   parseCampaigns,
   registryPath,
   setCampaignTaskState,
   type TaskState,
+  type TaskWorkers,
 } from '../../lib/campaigns'
-import { type MessageKey, useT } from '../../lib/i18n'
+import { type MessageKey, type TFunction, useT } from '../../lib/i18n'
 import {
   campaignRegistryWrite,
   type GitCheckouts,
   listenFileChanged,
+  listenOrchestratorJobs,
+  type OrchestratorJob,
+  orchestratorJobs,
+  type OrchestratorSnapshot,
   readTextFile,
   unwatchFile,
   watchFile,
@@ -64,7 +70,7 @@ export type Registry = CampaignRegistry & {
  * Reads the registry in the main checkout of `projectPath` and re-reads it when the file changes;
  * `reload` re-reads it now, after a write.
  */
-function useCampaignRegistry(
+export function useCampaignRegistry(
   projectId: string | null,
   projectPath: string,
 ): { registry: Registry | null; reload: () => Promise<void> } {
@@ -188,6 +194,59 @@ export function useCampaignView(): CampaignView {
   }, [projectId, activeId, remembered, rememberCampaign])
 
   return { projectId, registry, activeId, reload }
+}
+
+type TaskJob = Pick<OrchestratorJob, 'task' | 'status' | 'cwd'>
+
+/**
+ * The orchestrator jobs that name a registry task, from the same snapshot and event the board
+ * reads. Only that projection is kept, so a worker streaming its reply does not re-render the tab.
+ */
+function useTaskJobs(): TaskJob[] {
+  const [key, setKey] = useState('[]')
+  useEffect(() => {
+    let cancelled = false
+    let unlisten: (() => void) | undefined
+    const apply = (snapshot: OrchestratorSnapshot) => {
+      if (cancelled) return
+      const jobs = snapshot.jobs
+        .filter((job) => job.task)
+        .map(({ task, status, cwd }) => ({ task, status, cwd }))
+      setKey(JSON.stringify(jobs))
+    }
+    orchestratorJobs().then(apply, () => {})
+    listenOrchestratorJobs(apply).then(
+      (off) => {
+        if (cancelled) off()
+        else unlisten = off
+      },
+      () => {},
+    )
+    return () => {
+      cancelled = true
+      unlisten?.()
+    }
+  }, [])
+  return useMemo(() => JSON.parse(key) as TaskJob[], [key])
+}
+
+/** Live orchestrator workers per task of the registry's repository. */
+export function useTaskWorkers(registry: Registry | null): ReadonlyMap<string, TaskWorkers> {
+  const jobs = useTaskJobs()
+  const checkouts = registry?.checkouts
+  return useMemo(
+    () => (checkouts ? liveTaskWorkers(jobs, checkouts) : new Map()),
+    [jobs, checkouts],
+  )
+}
+
+/** "2 running · 1 queued"; null when nothing is live. */
+export function workersLabel(t: TFunction, workers: TaskWorkers | undefined): string | null {
+  const parts = [
+    workers?.running ? t('todo.workers.running', { count: workers.running }) : null,
+    workers?.queued ? t('todo.workers.queued', { count: workers.queued }) : null,
+  ].filter(Boolean)
+  return parts.length > 0 ? parts.join(' · ') : null
 }
 
 const DONE: TaskState = 'concluída'

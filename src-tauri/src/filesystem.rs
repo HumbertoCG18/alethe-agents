@@ -330,6 +330,44 @@ fn normalize(path: &str) -> String {
     path.trim().to_string()
 }
 
+/// Calls `changed` when `target` is created or modified. A file is watched through its parent
+/// folder, so it is still seen after an atomic replace; a folder that exists is watched itself and
+/// also reports the files directly inside it.
+fn path_watcher(
+    target: PathBuf,
+    changed: impl Fn() + Send + 'static,
+) -> Result<RecommendedWatcher, String> {
+    let folder = target.is_dir();
+    let watched_dir = if folder {
+        target.clone()
+    } else {
+        target
+            .parent()
+            .map(Path::to_path_buf)
+            .ok_or_else(|| "invalid path".to_string())?
+    };
+    let mut watcher = RecommendedWatcher::new(
+        move |res: notify::Result<notify::Event>| {
+            let Ok(event) = res else { return };
+            if !matches!(event.kind, EventKind::Modify(_) | EventKind::Create(_)) {
+                return;
+            }
+            let concerns = |path: &PathBuf| {
+                path == &target || (folder && path.parent() == Some(target.as_path()))
+            };
+            if event.paths.iter().any(concerns) {
+                changed();
+            }
+        },
+        Config::default(),
+    )
+    .map_err(|e| e.to_string())?;
+    watcher
+        .watch(&watched_dir, RecursiveMode::NonRecursive)
+        .map_err(|e| e.to_string())?;
+    Ok(watcher)
+}
+
 #[tauri::command]
 pub fn watch_file(
     app: AppHandle,
@@ -337,12 +375,6 @@ pub fn watch_file(
     path: String,
 ) -> Result<(), String> {
     let key = normalize(&path);
-    let target = PathBuf::from(&key);
-    let parent = target
-        .parent()
-        .map(Path::to_path_buf)
-        .ok_or_else(|| "invalid path".to_string())?;
-
     let mut map = state.0.lock().map_err(|e| e.to_string())?;
 
     if let Some(entry) = map.get_mut(&key) {
@@ -351,24 +383,9 @@ pub fn watch_file(
     }
 
     let emit_path = key.clone();
-    let watched = target.clone();
-    let mut watcher = RecommendedWatcher::new(
-        move |res: notify::Result<notify::Event>| {
-            let Ok(event) = res else { return };
-            if !matches!(event.kind, EventKind::Modify(_) | EventKind::Create(_)) {
-                return;
-            }
-            if event.paths.iter().any(|p| p == &watched) {
-                let _ = app.emit("md://changed", serde_json::json!({ "path": emit_path }));
-            }
-        },
-        Config::default(),
-    )
-    .map_err(|e| e.to_string())?;
-
-    watcher
-        .watch(&parent, RecursiveMode::NonRecursive)
-        .map_err(|e| e.to_string())?;
+    let watcher = path_watcher(PathBuf::from(&key), move || {
+        let _ = app.emit("md://changed", serde_json::json!({ "path": emit_path }));
+    })?;
     map.insert(key, (watcher, 1));
     Ok(())
 }
@@ -443,7 +460,56 @@ fn find_relative_path_inner(cwd: &Path, relative: &str) -> Option<PathBuf> {
 mod tests {
     use super::*;
     use crate::git_control::checked_output;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::sync::mpsc;
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    fn scratch(tag: &str) -> PathBuf {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("alethe-watch-{tag}-{suffix}"));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    // A folder target reports the files written directly inside it, such as a new night diary.
+    #[test]
+    fn a_watched_folder_reports_a_file_written_inside_it() {
+        let dir = scratch("folder");
+        let folder = dir.join("noites");
+        fs::create_dir_all(&folder).unwrap();
+        let (sender, changes) = mpsc::channel();
+        let _watcher = path_watcher(folder.clone(), move || {
+            let _ = sender.send(());
+        })
+        .unwrap();
+
+        fs::write(folder.join("2026-10-03.json"), "{}").unwrap();
+        assert!(changes.recv_timeout(Duration::from_secs(5)).is_ok());
+        drop(_watcher);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // A file target keeps its behaviour: its own changes count, its siblings' do not.
+    #[test]
+    fn a_watched_file_reports_only_itself() {
+        let dir = scratch("file");
+        let file = dir.join("campanhas.json");
+        fs::write(&file, "{}").unwrap();
+        let (sender, changes) = mpsc::channel();
+        let _watcher = path_watcher(file.clone(), move || {
+            let _ = sender.send(());
+        })
+        .unwrap();
+
+        fs::write(dir.join("other.json"), "{}").unwrap();
+        assert!(changes.recv_timeout(Duration::from_millis(700)).is_err());
+        fs::write(&file, "{\"edited\": true}").unwrap();
+        assert!(changes.recv_timeout(Duration::from_secs(5)).is_ok());
+        drop(_watcher);
+        let _ = fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn finds_a_relative_path_in_a_sibling_worktree() {

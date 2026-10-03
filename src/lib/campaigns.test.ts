@@ -14,15 +14,24 @@ import {
   campaignActivity,
   campaignCwd,
   campaignTaskView,
+  campaignWorkers,
+  evidenceIsPath,
   isoDay,
+  liveTaskWorkers,
   nextTaskId,
+  nightDiaryFiles,
   parseCampaigns,
+  parseNightDiary,
+  pathInside,
   registryPath,
   resumePrompt,
   setCampaignTaskState,
+  taskLabel,
   validCampaignTitle,
+  workflowPath,
 } from './campaigns'
 import type { GitCheckouts } from './tauri/git'
+import type { OrchestratorJob } from './tauri/orchestrator'
 
 const SITUATION_KIND = {
   done: 'concluida',
@@ -515,5 +524,178 @@ describe('registry helpers', () => {
 
   it('dates writes with the local calendar day, as campanhas.py does', () => {
     expect(isoDay(new Date(2026, 0, 5, 23, 59))).toBe('2026-01-05')
+  })
+
+  it('places workflow files in the main checkout with its own separator', () => {
+    expect(registryPath('C:\\repo\\')).toBe('C:\\repo\\.workflow\\campanhas.json')
+    expect(workflowPath('/home/me/repo', 'local', 'noites')).toBe(
+      '/home/me/repo/.workflow/local/noites',
+    )
+  })
+})
+
+describe('runs linked to registry tasks', () => {
+  const registry = parseCampaigns(JSON.stringify(exemplo))!
+  const checkouts: GitCheckouts = {
+    main: 'C:\\repo',
+    worktrees: [
+      { path: 'C:\\repo', branch: 'dev', lastCommitMs: null },
+      { path: 'C:\\repo-feature', branch: 'feature', lastCommitMs: null },
+    ],
+  }
+  const job = (task: string | null, status: OrchestratorJob['status'], cwd = 'C:\\repo') => ({
+    task,
+    status,
+    cwd,
+  })
+
+  it('compares folders by whole components, after resolving . and ..', () => {
+    const inside: Array<[string, string]> = [
+      ['C:\\repo', 'C:\\repo'],
+      ['C:\\Repo\\src\\..\\docs\\x.md', 'c:\\repo\\'],
+      ['C:/repo/./a', 'C:\\repo'],
+      ['\\\\Server\\Share\\Repo\\x.md', '\\\\server\\share\\repo'],
+      ['\\\\?\\C:\\repo\\a', 'C:\\repo'],
+      ['C:\\x', 'C:\\'],
+      ['/home/me/repo/a/../b', '/home/me/repo'],
+    ]
+    const outside: Array<[string, string]> = [
+      ['C:\\repo\\..\\other', 'C:\\repo'],
+      ['C:\\repository', 'C:\\repo'],
+      ['\\\\server\\share\\other\\x.md', '\\\\server\\share\\repo'],
+      ['\\\\server\\share\\repo\\..\\..\\other\\x', '\\\\server\\share\\repo'],
+      ['D:\\repo\\x', 'C:\\repo'],
+      ['C:\\..\\x', 'C:\\'],
+      ['/home/me/Repo/a', '/home/me/repo'],
+      ['docs/x.md', 'C:\\repo'],
+      ['', 'C:\\repo'],
+    ]
+    for (const [path, root] of inside) {
+      expect(pathInside(path, root), `${path} in ${root}`).toBe(true)
+    }
+    for (const [path, root] of outside) {
+      expect(pathInside(path, root), `${path} in ${root}`).toBe(false)
+    }
+  })
+
+  it('names the campaign of a task the registry lists, else the task alone', () => {
+    expect(taskLabel('OITO-03', registry.campaigns)).toBe('OITO · OITO-03')
+    expect(taskLabel('MOTOR-01', registry.campaigns)).toBe('MOTOR-01')
+  })
+
+  it('counts the running and queued workers of each task in the repository', () => {
+    const workers = liveTaskWorkers(
+      [
+        job('OITO-02', 'running', 'C:\\Repo-Feature\\src'),
+        // Stopped on a question, it still holds its slot.
+        job('OITO-02', 'blocked'),
+        job('OITO-03', 'queued', 'C:\\repo\\.alethe\\worktrees\\job-03'),
+        job('OITO-03', 'done'),
+        job('OITO-03', 'interrupted'),
+        job('OITO-04', 'running', 'C:\\repository'),
+        job('OITO-04', 'running', 'C:\\other'),
+        job('OITO-04', 'running', 'C:\\repo\\..\\other'),
+        job(null, 'running'),
+      ],
+      checkouts,
+    )
+    expect(Object.fromEntries(workers)).toEqual({
+      'OITO-02': { running: 2, queued: 0 },
+      'OITO-03': { running: 0, queued: 1 },
+    })
+    expect(campaignWorkers(['OITO-01', 'OITO-02', 'OITO-03'], workers)).toEqual({
+      running: 2,
+      queued: 1,
+    })
+    expect(campaignWorkers(['BASE-01'], workers)).toEqual({ running: 0, queued: 0 })
+  })
+})
+
+describe('night diary', () => {
+  const diary = {
+    data: '2026-10-03',
+    entradas: [
+      {
+        tarefa: 'MOTOR-01',
+        resultado: 'aguarda-voce',
+        resumo: 'Gate 2 pendente',
+        evidencia: 'docs/motor.md',
+        hora: '03:41',
+      },
+      { tarefa: 'MOTOR-02', resultado: 'ok', resumo: 'feito', evidencia: 'a1b2c3d', hora: '04:10' },
+    ],
+  }
+
+  it('reads the date and every entry in order', () => {
+    expect(parseNightDiary(JSON.stringify(diary))).toEqual({
+      date: '2026-10-03',
+      entries: [
+        {
+          task: 'MOTOR-01',
+          result: 'aguarda-voce',
+          summary: 'Gate 2 pendente',
+          evidence: 'docs/motor.md',
+          time: '03:41',
+        },
+        { task: 'MOTOR-02', result: 'ok', summary: 'feito', evidence: 'a1b2c3d', time: '04:10' },
+      ],
+    })
+  })
+
+  it('ignores malformed entries and refuses a malformed file', () => {
+    const mixed = {
+      ...diary,
+      entradas: [
+        ...diary.entradas,
+        { tarefa: 'MOTOR-03', resultado: 'talvez' },
+        { resultado: 'ok' },
+        'MOTOR-04',
+        null,
+        { tarefa: 'MOTOR-05', resultado: 'parou', resumo: 7 },
+      ],
+    }
+    expect(parseNightDiary(JSON.stringify(mixed))?.entries.map((entry) => entry.task)).toEqual([
+      'MOTOR-01',
+      'MOTOR-02',
+      'MOTOR-05',
+    ])
+    expect(parseNightDiary(JSON.stringify(mixed))?.entries[2].summary).toBe('')
+    for (const text of [
+      '{',
+      'null',
+      '[]',
+      JSON.stringify({ data: '03/10/2026', entradas: [] }),
+      JSON.stringify({ data: '2026-10-03' }),
+      JSON.stringify({ data: '2026-10-03', entradas: {} }),
+    ]) {
+      expect(parseNightDiary(text)).toBeNull()
+    }
+  })
+
+  it('lists the diary files newest first, by their dated names', () => {
+    const entry = (name: string, isDir = false) => ({
+      name,
+      path: `C:\\n\\${name}`,
+      is_dir: isDir,
+      size: null,
+    })
+    expect(
+      nightDiaryFiles([
+        entry('2026-10-01.json'),
+        entry('2026-10-03.json'),
+        entry('notas.txt'),
+        entry('2026-10-04.json', true),
+        entry('2026-10-02.JSON'),
+      ]),
+    ).toEqual(['C:\\n\\2026-10-03.json', 'C:\\n\\2026-10-02.JSON', 'C:\\n\\2026-10-01.json'])
+  })
+
+  it('treats evidence with a folder or a file extension as a path, and anything else as text', () => {
+    for (const path of ['docs/motor.md', 'C:\\repo\\x.json', 'README.md', '/tmp/log']) {
+      expect(evidenceIsPath(path), path).toBe(true)
+    }
+    for (const text of ['a1b2c3d', 'https://github.com/x/y/pull/4', 'PR 12', '', 'see docs/x.md']) {
+      expect(evidenceIsPath(text), text).toBe(false)
+    }
   })
 })

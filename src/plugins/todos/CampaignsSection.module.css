@@ -297,6 +297,10 @@
   background: var(--status-stopped);
 }
 
+.nightEntry[data-lane='running'] .dot {
+  background: var(--status-working);
+}
+
 .nightEntry[data-lane='queued'] .dot {
   background: var(--status-waiting);
 }

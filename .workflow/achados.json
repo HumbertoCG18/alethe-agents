@@ -1,0 +1,14 @@
+{
+  "versao": 1,
+  "achados": [
+    {
+      "id": "ACH-0001",
+      "data": "2026-10-03",
+      "tipo": "bug",
+      "titulo": "Caixa de seleção da Todo List demora a responder ao concluir tarefa",
+      "origem": "TODO-03",
+      "detalhe": "relato do usuário em 03/10 após instalar o build 02:45; provável espera da gravação com trava antes de atualizar a tela",
+      "estado": "novo"
+    }
+  ]
+}

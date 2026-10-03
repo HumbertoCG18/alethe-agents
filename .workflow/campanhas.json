@@ -10,7 +10,7 @@
       "janela": "assistida",
       "depende_de": [],
       "worktrees": [],
-      "atualizado_em": "2026-10-02",
+      "atualizado_em": "2026-10-03",
       "tarefas": [
         {
           "id": "TODO-01",
@@ -69,6 +69,17 @@
           "origem": "USER",
           "evidencia": "agent-workflow-lab 9110d86",
           "resultado": "campanhas.py tarefa com id automatico; revisao independente aplicada"
+        },
+        {
+          "id": "TODO-07",
+          "titulo": "Caixa de seleção da Todo List demora a responder ao concluir tarefa",
+          "nivel": "T1",
+          "estado": "em execução",
+          "depende_de": [],
+          "origem": "CODE",
+          "achado": "ACH-0001",
+          "evidencia": "PR #51 integrado na dev (de75064); testes novos vermelho→verde; vitest 905, cargo campaign_registry 15",
+          "resultado": "aguarda o Gate 2 do usuário (build novo para sentir no app)"
         }
       ]
     },

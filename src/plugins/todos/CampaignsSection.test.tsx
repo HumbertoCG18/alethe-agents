@@ -248,6 +248,8 @@ describe('CampaignsSection', () => {
       campaignId: 'OITO',
       initialInput: expect.stringMatching(/^Retome a campanha OITO /),
     })
+    // Open keeps the user's own permission mode; only night tabs are started in auto mode.
+    expect(created.tabs[0].extraArgs).toBeUndefined()
     expect(useUiStore.getState().activeTerminal?.terminalId).toBe(created.id)
     expect(activeRow()).toHaveTextContent('OITO')
   })
@@ -888,6 +890,100 @@ describe('Findings card', () => {
     unmount()
     const unwatched = vi.mocked(unwatchFile).mock.calls.map(([path]) => path)
     expect(unwatched).toEqual(expect.arrayContaining([FILE, 'C:\\repo\\.workflow']))
+  })
+})
+
+describe('Modo noite', () => {
+  const projectId = () => useProjectsStore.getState().projects[0].id
+
+  it('is off by default and saves the project’s window and limits from the settings', async () => {
+    useUiStore.setState({ openModal: TODO_SETTINGS_MODAL_ID })
+    render(<TodoSettingsModal />)
+    const enable = screen.getByRole('checkbox', { name: /Run this project/ })
+    expect(enable).not.toBeChecked()
+    expect(screen.getByText(/Alethe must stay open and the computer awake/)).toBeInTheDocument()
+
+    fireEvent.click(enable)
+    fireEvent.change(screen.getByLabelText('Start'), { target: { value: '22:30' } })
+    fireEvent.change(screen.getByLabelText('End'), { target: { value: '05:00' } })
+    fireEvent.change(screen.getByLabelText('Minutes per task'), { target: { value: '60' } })
+    fireEvent.change(screen.getByLabelText('Tasks per night'), { target: { value: '3' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() =>
+      expect(useTodosStore.getState().nightSettings[projectId()]).toEqual({
+        enabled: true,
+        start: '22:30',
+        end: '05:00',
+        maxMinutesPerTask: 60,
+        maxTasks: 3,
+      }),
+    )
+  })
+
+  it('leaves Modo noite alone when other settings are saved', async () => {
+    useUiStore.setState({ openModal: TODO_SETTINGS_MODAL_ID })
+    render(<TodoSettingsModal />)
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(useUiStore.getState().openModal).toBeNull())
+    expect(useTodosStore.getState().nightSettings).toEqual({})
+  })
+
+  it('shows the running task with its elapsed time, then why the night ended until noon', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2026, 9, 3, 23, 42))
+    try {
+      const night = {
+        night: '2026-10-03',
+        started: 5,
+        failures: 0,
+        stopped: 'max' as const,
+        attempted: [],
+      }
+      const running = {
+        projectId: projectId(),
+        campaignId: 'OITO',
+        taskId: 'OITO-02',
+        terminalId: 't',
+        tabId: 'tab',
+        startedAt: new Date(2026, 9, 3, 23, 0).getTime(),
+        deadline: new Date(2026, 9, 4, 0, 30).getTime(),
+      }
+      useTodosStore.setState({ nightRun: { current: running, nights: {} } })
+      render(<TodoSidebar />)
+      expect(await screen.findByText('Night running: OITO-02 · 00:42')).toBeInTheDocument()
+
+      // Started although Claude's usage could not be read.
+      act(() =>
+        useTodosStore.setState({
+          nightRun: { current: { ...running, quotaUnread: true }, nights: {} },
+        }),
+      )
+      expect(
+        screen.getByText('Night running: OITO-02 · 00:42 · quota not read'),
+      ).toBeInTheDocument()
+
+      act(() =>
+        useTodosStore.setState({ nightRun: { current: null, nights: { [projectId()]: night } } }),
+      )
+      expect(screen.getByText('Night over: task limit')).toBeInTheDocument()
+
+      act(() =>
+        useTodosStore.setState({
+          nightRun: { current: null, nights: { [projectId()]: { ...night, stopped: 'diary' } } },
+        }),
+      )
+      expect(screen.getByText('Night over: diary not written')).toBeInTheDocument()
+
+      // The night of the 2nd ended at noon today.
+      act(() =>
+        useTodosStore.setState({
+          nightRun: { current: null, nights: { [projectId()]: { ...night, night: '2026-10-02' } } },
+        }),
+      )
+      expect(screen.queryByText(/Night over/)).not.toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 

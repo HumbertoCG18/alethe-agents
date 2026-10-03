@@ -4,23 +4,21 @@ import { useState } from 'react'
 import {
   type Campaign,
   campaignActivity,
-  campaignCwd,
   type CampaignSituation,
   type CampaignWindow,
   campaignWorkers,
   type RegistryError,
-  resumePrompt,
   type TaskWorkers,
 } from '../../lib/campaigns'
 import { intlLocale, type MessageKey, type TFunction, useT } from '../../lib/i18n'
-import { findRelativePath, type GitCheckouts } from '../../lib/tauri'
-import { AGENT_TYPE_LABELS, type SubTab } from '../../lib/types'
+import { type GitCheckouts } from '../../lib/tauri'
+import { AGENT_TYPE_LABELS } from '../../lib/types'
 import { useProjectsStore } from '../../stores/projectsStore'
-import { useUiStore } from '../../stores/uiStore'
 import styles from './CampaignsSection.module.css'
 import {
   type CampaignView,
-  type Registry,
+  continueCampaign,
+  openCampaign,
   STATE_KEYS,
   TASK_LANES,
   workersLabel,
@@ -67,77 +65,6 @@ function situationLabel(t: TFunction, situation: CampaignSituation): string {
     case 'blocked':
       return t('todo.campaigns.blocked')
   }
-}
-
-/**
- * Makes the first open terminal tab that `matches` the active one, looking in the focused
- * terminal first; returns its terminal id, or null when none matches.
- */
-function activateTab(projectId: string, matches: (tab: SubTab) => boolean): string | null {
-  const store = useProjectsStore.getState()
-  const focused = useUiStore.getState().activeTerminal?.terminalId
-  const terminals = [...(store.projects.find((item) => item.id === projectId)?.terminals ?? [])]
-  terminals.sort((a, b) => Number(b.id === focused) - Number(a.id === focused))
-  for (const terminal of terminals) {
-    if ((terminal.kind ?? 'terminal') !== 'terminal' || terminal.disabled) continue
-    const tab = terminal.tabs.find(matches)
-    if (!tab) continue
-    store.setActiveTab(projectId, terminal.id, tab.id)
-    return terminal.id
-  }
-  return null
-}
-
-function focusTerminal(projectId: string, terminalId: string) {
-  useProjectsStore.getState().focusWorkspaceTerminal(projectId, terminalId)
-  const ui = useUiStore.getState()
-  ui.setActiveTerminal(projectId, terminalId)
-  ui.requestPaneFocus(terminalId)
-}
-
-/**
- * Focuses the `agent` tab opened for this campaign, or opens one with its resume prompt. A tab
- * opened by hand, or for another campaign, is never reused even in the same checkout: it would
- * not get this campaign's prompt.
- */
-async function openCampaign(
-  projectId: string,
-  campaign: Campaign,
-  agent: CampaignAgent,
-  registry: Registry,
-) {
-  const cwd = campaignCwd(campaign, registry.checkouts)
-  if (!cwd || !useProjectsStore.getState().projects.some((item) => item.id === projectId)) return
-  const running = (tab: SubTab) => tab.type === agent && tab.campaignId === campaign.id
-  let terminalId = activateTab(projectId, running)
-  if (!terminalId) {
-    // Handoff paths are relative to the main checkout; find_relative_path also looks in the
-    // sibling worktree named by the first segment.
-    const handoff = campaign.handoff
-      ? await findRelativePath(registry.main, campaign.handoff).catch(() => null)
-      : null
-    // Checked again: the tab may have been opened while the handoff was looked up.
-    terminalId =
-      activateTab(projectId, running) ??
-      useProjectsStore.getState().createTerminal(projectId, {
-        name: campaign.id,
-        cwd,
-        firstTab: {
-          type: agent,
-          cwd,
-          campaignId: campaign.id,
-          initialInput: resumePrompt(campaign, registry.path, handoff),
-        },
-      }).id
-  }
-  focusTerminal(projectId, terminalId)
-}
-
-/** Focuses a tab opened for `campaign`, by the same rule as Open; false when there is none. */
-function continueCampaign(projectId: string, campaign: Campaign): boolean {
-  const terminalId = activateTab(projectId, (tab) => tab.campaignId === campaign.id)
-  if (terminalId) focusTerminal(projectId, terminalId)
-  return terminalId !== null
 }
 
 /** The campaigns map below the list; choosing a campaign makes it the list's source. */

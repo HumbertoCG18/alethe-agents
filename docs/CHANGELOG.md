@@ -52,6 +52,23 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
   new. Opened, it lists each with a dot by type (bug, risk, idea, debt), its title, the task it came
   from and its date; the detail shows as a tooltip. It refreshes when the file changes and stays
   hidden when the file is missing or nothing is new.
+- **Night mode (night scheduler).** In the Todo List settings, each project can turn on Night mode
+  (off by default) with a start and end time (the window may cross midnight), a maximum per task
+  (90 minutes by default) and a maximum number of tasks per night (5 by default). Inside the
+  window, Alethe runs the project's free night tasks (night window, ready, prerequisites done, not
+  yet tried tonight) one at a time across the app, each in a fresh Claude Code tab in the
+  campaign's worktree, always in Claude's auto permission mode (never bypassing permissions), with
+  a prompt to follow the lab's night procedure for that task only; the task's title and handoff
+  reach the agent as quoted data. A task is done when the night diary gets its line; one that never
+  writes it is recorded as stopped at the deadline fixed when it started (its maximum, or the
+  window end when sooner, measured in real time across daylight saving changes), and only its own
+  tab is closed. When that line cannot be written, the night ends with "diary not written" rather
+  than run the task again. The night ends at the window end, with no free task left, at the task
+  limit, after 2 failed or stopped tasks in a row, or when Claude's usage reaches the fallback
+  threshold, and never starts a task that could not finish inside the window. A task left running
+  by a restart is recorded as stopped. The Todo tab shows "Night running" with the task and its
+  elapsed time ("quota not read" when the usage could not be checked), then why the night ended
+  until noon. Alethe must stay open and the computer awake.
 - **Orchestration settings with named worker roles.** A new Orchestration category in Preferences
   holds roles such as a reviewer: each sets the agent, model, effort, read-only mode and time
   budget, with the models and efforts listed from the installed Codex (and Codex's common efforts

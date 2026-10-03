@@ -1,6 +1,11 @@
 import { nanoid } from 'nanoid'
 import { create } from 'zustand'
 
+import {
+  DEFAULT_NIGHT_SETTINGS,
+  type NightSettings,
+  type StopReason,
+} from '../../lib/nightScheduler'
 import type { PluginStorage } from '../../lib/plugins'
 import {
   DEFAULT_TODOS,
@@ -14,9 +19,46 @@ const TODOS_KEY = 'todos'
 const STORAGE_PATH_KEY = 'storagePath'
 const ACTIVE_CAMPAIGNS_KEY = 'activeCampaigns'
 const LIST_SOURCE_KEY = 'listSource'
+const NIGHT_SETTINGS_KEY = 'nightSettings'
+const NIGHT_RUN_KEY = 'nightRun'
 
 /** Where the list opens: the active campaign when the project has a registry, or the personal list. */
 export type ListSource = 'campaign' | 'mine'
+
+/**
+ * The night scheduler's state, kept so a restart never starts a task twice: the one task running
+ * across all projects, and each project's latest night (its date, tasks started, `falhou`/`parou`
+ * in a row, why it ended, and every task attempted, which is never picked again that night).
+ */
+export type NightRun = {
+  current: {
+    projectId: string
+    campaignId: string
+    taskId: string
+    /** Null until the tab exists: the start is saved before the tab is opened. */
+    terminalId: string | null
+    tabId: string | null
+    startedAt: number
+    /** Fixed at the start: the task's maximum, or the window end when sooner. */
+    deadline: number
+    /** Claude's usage could not be read when it started. */
+    quotaUnread?: boolean
+    /** The `parou` line whose write failed once, retried once. */
+    pendingStop?: string
+  } | null
+  nights: Record<
+    string,
+    {
+      night: string
+      started: number
+      failures: number
+      stopped: StopReason | null
+      attempted: string[]
+    }
+  >
+}
+
+const EMPTY_NIGHT_RUN: NightRun = { current: null, nights: {} }
 
 type TodosState = {
   todos: TodoItem[]
@@ -24,6 +66,9 @@ type TodosState = {
   /** The last active campaign of each project, by project id. */
   activeCampaigns: Record<string, string>
   listSource: ListSource
+  /** Modo noite, by project id; a project without an entry has it off. */
+  nightSettings: Record<string, NightSettings>
+  nightRun: NightRun
   hydrated: boolean
   createTodo: (title: string, tags?: string[], projectId?: string) => TodoItem | null
   createTodoFromPullRequest: (
@@ -40,6 +85,10 @@ type TodosState = {
   setStoragePath: (path: string) => void
   rememberCampaign: (projectId: string, campaignId: string) => void
   setListSource: (source: ListSource) => void
+  /** Saves a project's Modo noite; an ended night is reconsidered with the new settings. */
+  setNightSettings: (projectId: string, settings: NightSettings) => void
+  /** Sets the run state and resolves once it is saved; rejects when the save fails. */
+  setNightRun: (run: NightRun) => Promise<void>
 }
 
 let storage: PluginStorage | null = null
@@ -59,6 +108,8 @@ export const useTodosStore = create<TodosState>((set, get) => {
     storagePath: '',
     activeCampaigns: {},
     listSource: 'campaign',
+    nightSettings: {},
+    nightRun: EMPTY_NIGHT_RUN,
     hydrated: false,
 
     createTodo: (rawTitle, rawTags = [], projectId) => {
@@ -160,8 +211,68 @@ export const useTodosStore = create<TodosState>((set, get) => {
       void storage?.set(LIST_SOURCE_KEY, listSource)
       set({ listSource })
     },
+
+    setNightSettings: (projectId, settings) => {
+      const nightSettings = { ...get().nightSettings, [projectId]: settings }
+      const { nightRun } = get()
+      const night = nightRun.nights[projectId]
+      if (night?.stopped) {
+        get()
+          .setNightRun({
+            ...nightRun,
+            nights: { ...nightRun.nights, [projectId]: { ...night, stopped: null } },
+          })
+          .catch(() => {})
+      }
+      void storage?.set(NIGHT_SETTINGS_KEY, nightSettings)
+      set({ nightSettings })
+    },
+
+    setNightRun: (nightRun) => {
+      set({ nightRun })
+      return storage ? storage.set(NIGHT_RUN_KEY, nightRun) : Promise.resolve()
+    },
   }
 })
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+/** Stored settings over the defaults, so a field added later reads as its default. */
+function readNightSettings(value: unknown): Record<string, NightSettings> {
+  if (!isRecord(value)) return {}
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([, settings]) => isRecord(settings))
+      .map(([projectId, settings]) => [
+        projectId,
+        { ...DEFAULT_NIGHT_SETTINGS, ...(settings as Partial<NightSettings>) },
+      ]),
+  )
+}
+
+function readNightRun(value: unknown): NightRun {
+  if (!isRecord(value) || !isRecord(value.nights)) return EMPTY_NIGHT_RUN
+  const current = value.current
+  const valid =
+    isRecord(current) &&
+    ['projectId', 'campaignId', 'taskId'].every((key) => typeof current[key] === 'string') &&
+    ['terminalId', 'tabId'].every(
+      (key) => current[key] === null || typeof current[key] === 'string',
+    ) &&
+    typeof current.startedAt === 'number' &&
+    typeof current.deadline === 'number'
+  const nights = Object.fromEntries(
+    Object.entries(value.nights)
+      .filter(([, night]) => isRecord(night))
+      .map(([projectId, night]) => {
+        const record = night as NightRun['nights'][string]
+        const attempted = Array.isArray(record.attempted) ? record.attempted : []
+        return [projectId, { ...record, attempted }]
+      }),
+  )
+  return { current: valid ? (current as NightRun['current']) : null, nights }
+}
 
 /**
  * Loads the plugin's own record, falling back to whatever the pre-plugin core
@@ -188,7 +299,15 @@ export async function hydrateTodos(
 
   const listSource: ListSource = record[LIST_SOURCE_KEY] === 'mine' ? 'mine' : 'campaign'
 
-  useTodosStore.setState({ todos, storagePath, activeCampaigns, listSource, hydrated: true })
+  useTodosStore.setState({
+    todos,
+    storagePath,
+    activeCampaigns,
+    listSource,
+    nightSettings: readNightSettings(record[NIGHT_SETTINGS_KEY]),
+    nightRun: readNightRun(record[NIGHT_RUN_KEY]),
+    hydrated: true,
+  })
 
   if (!stored && legacy.todos.length > 0) await pluginStorage.set(TODOS_KEY, legacy.todos)
   if (record[STORAGE_PATH_KEY] === undefined && legacy.storagePath) {
@@ -203,6 +322,8 @@ export function resetTodosStoreForTests(): void {
     storagePath: '',
     activeCampaigns: {},
     listSource: 'campaign',
+    nightSettings: {},
+    nightRun: EMPTY_NIGHT_RUN,
     hydrated: false,
   })
 }

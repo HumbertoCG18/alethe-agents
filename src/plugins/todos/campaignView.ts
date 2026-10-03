@@ -8,13 +8,16 @@ import {
   activeCampaign,
   addCampaignTask,
   type Campaign,
+  campaignCwd,
   type CampaignRegistry,
   type CampaignTab,
   type CampaignTask,
   isoDay,
   liveTaskWorkers,
+  nightPrompt,
   parseCampaigns,
   registryPath,
+  resumePrompt,
   setCampaignTaskState,
   type TaskState,
   type TaskWorkers,
@@ -22,6 +25,7 @@ import {
 import { type MessageKey, type TFunction, useT } from '../../lib/i18n'
 import {
   campaignRegistryWrite,
+  findRelativePath,
   type GitCheckouts,
   listenFileChanged,
   listenOrchestratorJobs,
@@ -34,6 +38,7 @@ import {
   worktreeCheckouts,
 } from '../../lib/tauri'
 import { getProjectDefaultCwd } from '../../lib/terminalFactory'
+import type { SubTab } from '../../lib/types'
 import { selectActiveProject, useProjectsStore } from '../../stores/projectsStore'
 import { useUiStore } from '../../stores/uiStore'
 import { useTodosStore } from './store'
@@ -194,6 +199,88 @@ export function useCampaignView(): CampaignView {
   }, [projectId, activeId, remembered, rememberCampaign])
 
   return { projectId, registry, activeId, reload }
+}
+
+/**
+ * Makes the first open terminal tab that `matches` the active one, looking in the focused
+ * terminal first; returns its terminal id, or null when none matches.
+ */
+function activateTab(projectId: string, matches: (tab: SubTab) => boolean): string | null {
+  const store = useProjectsStore.getState()
+  const focused = useUiStore.getState().activeTerminal?.terminalId
+  const terminals = [...(store.projects.find((item) => item.id === projectId)?.terminals ?? [])]
+  terminals.sort((a, b) => Number(b.id === focused) - Number(a.id === focused))
+  for (const terminal of terminals) {
+    if ((terminal.kind ?? 'terminal') !== 'terminal' || terminal.disabled) continue
+    const tab = terminal.tabs.find(matches)
+    if (!tab) continue
+    store.setActiveTab(projectId, terminal.id, tab.id)
+    return terminal.id
+  }
+  return null
+}
+
+function focusTerminal(projectId: string, terminalId: string) {
+  useProjectsStore.getState().focusWorkspaceTerminal(projectId, terminalId)
+  const ui = useUiStore.getState()
+  ui.setActiveTerminal(projectId, terminalId)
+  ui.requestPaneFocus(terminalId)
+}
+
+/**
+ * Focuses the `agent` tab opened for this campaign, or opens one with its resume prompt, and
+ * returns its terminal id. A tab opened by hand, or for another campaign, is never reused even in
+ * the same checkout: it would not get this campaign's prompt. A `nightTask` (the night scheduler)
+ * always gets a fresh tab, with the night prompt for that task.
+ */
+export async function openCampaign(
+  projectId: string,
+  campaign: Campaign,
+  agent: 'claude' | 'codex',
+  registry: Registry,
+  nightTask?: CampaignTask,
+): Promise<string | null> {
+  const cwd = campaignCwd(campaign, registry.checkouts)
+  if (!cwd || !useProjectsStore.getState().projects.some((item) => item.id === projectId)) {
+    return null
+  }
+  const running = (tab: SubTab) =>
+    !nightTask && tab.type === agent && tab.campaignId === campaign.id
+  let terminalId = activateTab(projectId, running)
+  if (!terminalId) {
+    // Handoff paths are relative to the main checkout; find_relative_path also looks in the
+    // sibling worktree named by the first segment.
+    const handoff = campaign.handoff
+      ? await findRelativePath(registry.main, campaign.handoff).catch(() => null)
+      : null
+    // Checked again: the tab may have been opened while the handoff was looked up.
+    terminalId =
+      activateTab(projectId, running) ??
+      useProjectsStore.getState().createTerminal(projectId, {
+        name: nightTask?.id ?? campaign.id,
+        cwd,
+        firstTab: {
+          type: agent,
+          cwd,
+          campaignId: campaign.id,
+          // Night work runs unattended in Claude's auto mode, never bypassing permissions: a
+          // denied tool call becomes part of the task's result.
+          extraArgs: nightTask ? ['--permission-mode', 'auto'] : undefined,
+          initialInput: nightTask
+            ? nightPrompt(campaign, nightTask, registry.path, handoff)
+            : resumePrompt(campaign, registry.path, handoff),
+        },
+      }).id
+  }
+  focusTerminal(projectId, terminalId)
+  return terminalId
+}
+
+/** Focuses a tab opened for `campaign`, by the same rule as Open; false when there is none. */
+export function continueCampaign(projectId: string, campaign: Campaign): boolean {
+  const terminalId = activateTab(projectId, (tab) => tab.campaignId === campaign.id)
+  if (terminalId) focusTerminal(projectId, terminalId)
+  return terminalId !== null
 }
 
 type TaskJob = Pick<OrchestratorJob, 'task' | 'status' | 'cwd'>

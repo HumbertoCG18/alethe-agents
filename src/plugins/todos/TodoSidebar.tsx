@@ -42,7 +42,7 @@ import {
 } from './campaignView'
 import { FindingsCard } from './FindingsCard'
 import { TODO_SETTINGS_MODAL_ID } from './manifest'
-import { NightCard } from './NightCard'
+import { NightCard, NightStatus } from './NightCard'
 import { useTodosStore } from './store'
 import styles from './TodoSidebar.module.css'
 
@@ -656,6 +656,7 @@ export function TodoSidebar() {
       </form>
 
       <div className={styles.content}>
+        <NightStatus projectId={view.projectId} />
         <NightCard registry={view.registry} />
         <FindingsCard registry={view.registry} />
         {filter !== 'completed' ? <GsdSyncSection /> : null}

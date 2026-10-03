@@ -175,35 +175,38 @@
       "janela": "assistida",
       "depende_de": [],
       "worktrees": [],
-      "atualizado_em": "2026-10-02",
+      "atualizado_em": "2026-10-03",
       "tarefas": [
         {
           "id": "ACHADOS-01",
           "titulo": "campanhas.py achado: tipo, título curto, sem repetição, até 3 por tarefa (laboratório)",
           "nivel": "T1",
-          "estado": "pronta",
+          "estado": "concluída",
           "depende_de": [],
-          "origem": "USER"
+          "origem": "USER",
+          "evidencia": "agent-workflow-lab 373dcfa; revisão independente aplicada (triagem idempotente, controle nas pontas)"
         },
         {
           "id": "ACHADOS-02",
           "titulo": "Cartão Achados na Todo List, com contagem e lista",
           "nivel": "T1",
-          "estado": "pronta",
+          "estado": "concluída",
           "depende_de": [
             "ACHADOS-01"
           ],
-          "origem": "USER"
+          "origem": "USER",
+          "evidencia": "fork https://github.com/HumbertoCG18/alethe-agents/pull/47; revisão independente aplicada"
         },
         {
           "id": "ACHADOS-03",
           "titulo": "Triagem pelo agente: virar tarefa de uma campanha ou descartar",
           "nivel": "T1",
-          "estado": "pronta",
+          "estado": "concluída",
           "depende_de": [
             "ACHADOS-01"
           ],
-          "origem": "USER"
+          "origem": "USER",
+          "evidencia": "agent-workflow-lab 373dcfa; revisão independente aplicada (triagem idempotente, controle nas pontas)"
         }
       ]
     },

@@ -20,13 +20,14 @@ pub const CONFLICT: &str = "conflict";
 
 /// Replaces the registry or a night diary at `path` with `content`, formatted like campanhas.py
 /// writes it, when the file is still exactly `expected_content`, the text the panel read (empty
-/// for a diary not written yet); otherwise returns [`CONFLICT`].
+/// for a diary not written yet); otherwise returns [`CONFLICT`]. Returns the text written, the
+/// base for the panel's next write.
 #[tauri::command]
 pub async fn campaign_registry_write(
     path: String,
     expected_content: String,
     content: String,
-) -> Result<(), String> {
+) -> Result<String, String> {
     tokio::task::spawn_blocking(move || {
         write_registry(
             Path::new(path.trim()),
@@ -225,7 +226,7 @@ fn write_registry(
     expected_content: &str,
     content: &str,
     timeout: Duration,
-) -> Result<(), String> {
+) -> Result<String, String> {
     let (target, workflow) = target_of(file).ok_or(REFUSED)?;
     let text = formatted(file, target, content)?;
     create_folders(file, target, workflow)?;
@@ -251,14 +252,14 @@ fn write_registry(
         .unwrap_or_default();
     let name = file.file_name().ok_or(REFUSED)?.to_string_lossy();
     let temporary = file.with_file_name(format!("{name}.{}.{stamp}.tmp", std::process::id()));
-    let renamed = fs::write(&temporary, text)
+    let renamed = fs::write(&temporary, &text)
         .map_err(|error| error.to_string())
         .and_then(|()| checked_path(file, target, workflow))
         .and_then(|()| fs::rename(&temporary, file).map_err(|error| error.to_string()));
     if renamed.is_err() {
         let _ = fs::remove_file(&temporary);
     }
-    renamed
+    renamed.map(|()| text)
 }
 
 #[cfg(test)]
@@ -372,6 +373,17 @@ mod tests {
         write_registry(&path, ORIGINAL, SAMPLE, LOCK_TIMEOUT).unwrap();
         // Key order kept, two-space indent, UTF-8 unescaped, trailing newline.
         assert_eq!(fs::read_to_string(&path).unwrap(), PYTHON);
+        cleanup(&path);
+    }
+
+    #[test]
+    fn returns_the_text_it_wrote_even_when_it_formats_a_number_differently() {
+        let path = registry();
+        // JavaScript writes 0.000001; serde writes 1e-6. The panel's next write expects the file.
+        let content = "{\n  \"campanhas\": [],\n  \"x\": 0.000001\n}\n";
+        let written = write_registry(&path, ORIGINAL, content, LOCK_TIMEOUT).unwrap();
+        assert_ne!(written, content);
+        assert_eq!(written, fs::read_to_string(&path).unwrap());
         cleanup(&path);
     }
 

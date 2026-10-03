@@ -74,6 +74,7 @@ vi.mock('../../lib/tauri', async (importOriginal) => ({
   campaignRegistryWrite: vi.fn(async (path: string, expected: string, content: string) => {
     if (fs.files.get(path) !== expected) throw 'conflict'
     fs.files.set(path, content)
+    return content
   }),
 }))
 
@@ -84,6 +85,7 @@ import {
   readTextFile,
   unwatchFile,
   watchFile,
+  worktreeCheckouts,
 } from '../../lib/tauri'
 import { CampaignsSection } from './CampaignsSection'
 import { useCampaignView } from './campaignView'
@@ -516,6 +518,35 @@ describe('Todo list source', () => {
     expect(within(row('OITO-01')).getByRole('button')).toBeDisabled()
   })
 
+  it('shows a check as soon as the write lands, before the worktrees are read again', async () => {
+    fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    render(<TodoSidebar />)
+    await waitFor(() => expect(row('OITO-03')).not.toBeNull())
+    // Reading the worktrees runs git: 0.2 to 0.4 s per read on Windows (ACH-0001).
+    const checkouts = await worktreeCheckouts('C:\\repo')
+    let readWorktrees: () => void = () => {}
+    vi.mocked(worktreeCheckouts).mockImplementationOnce(
+      () => new Promise((resolve) => (readWorktrees = () => resolve(checkouts))),
+    )
+    // The command formats the file its own way (serde writes 0.000001 as 1e-6) and returns it.
+    vi.mocked(campaignRegistryWrite).mockImplementationOnce(async (path, expected, content) => {
+      if (fs.files.get(path) !== expected) throw 'conflict'
+      const written = `${JSON.stringify(JSON.parse(content), null, 4)}\n`
+      fs.files.set(path, written)
+      return written
+    })
+
+    fireEvent.click(within(row('OITO-03')).getByRole('button', { name: 'Mark complete' }))
+    await waitFor(() =>
+      expect(within(row('OITO-03')).getByRole('button', { name: 'Reopen task' })).toBeEnabled(),
+    )
+    expect(task('OITO-03')?.estado).toBe('concluída')
+    // Undone before that read ends: the undo starts from the text the command wrote.
+    fireEvent.click(within(row('OITO-03')).getByRole('button', { name: 'Reopen task' }))
+    await waitFor(() => expect(task('OITO-03')).toEqual(original('OITO-03')))
+    await act(async () => readWorktrees())
+  })
+
   it('keeps a check and its undo on the project it was made in, across a switch to another', async () => {
     const other = `${OTHER_REPO}\\.workflow\\campanhas.json`
     // Both registries have an OITO-03.
@@ -529,10 +560,10 @@ describe('Todo list source', () => {
     let finish: () => void = () => {}
     vi.mocked(campaignRegistryWrite).mockImplementationOnce(
       (path, _expected, content) =>
-        new Promise<void>((resolve) => {
+        new Promise<string>((resolve) => {
           finish = () => {
             fs.files.set(path, content)
-            resolve()
+            resolve(content)
           }
         }),
     )

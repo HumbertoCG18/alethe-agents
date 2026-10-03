@@ -238,6 +238,22 @@
             "ELO-05"
           ],
           "origem": "DECISION"
+        },
+        {
+          "id": "AGENDADOR-02",
+          "titulo": "Limite de CPU e RAM para os workers da noite (herdado da NIGHT-42-04 do GPT Tutor)",
+          "nivel": "T2",
+          "estado": "proposta",
+          "depende_de": [],
+          "origem": "DECISION"
+        },
+        {
+          "id": "AGENDADOR-03",
+          "titulo": "Suspender o computador ao fim da noite, opt-in (herdado da NIGHT-42-05 do GPT Tutor)",
+          "nivel": "T2",
+          "estado": "proposta",
+          "depende_de": [],
+          "origem": "DECISION"
         }
       ]
     },

@@ -51,6 +51,7 @@ vi.mock('../../lib/tauri', async (importOriginal) => ({
   campaignRegistryWrite: vi.fn(async (path: string, expected: string, content: string) => {
     if ((fs.files.get(path) ?? '') !== expected) throw 'conflict'
     fs.files.set(path, content)
+    return content
   }),
 }))
 

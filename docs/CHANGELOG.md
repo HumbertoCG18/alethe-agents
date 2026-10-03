@@ -195,6 +195,8 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ### Fixed
 
+- Checking, adding or undoing a campaign task in the Todo List shows at once, instead of waiting
+  for the list to re-read the project's worktrees.
 - The Todo List settings in Portuguese have their accents back ("Configurações", "Pasta padrão",
   "Não foi possível").
 - Codex terminals get the orchestrator tools again. Codex no longer reports that the `alethe` MCP

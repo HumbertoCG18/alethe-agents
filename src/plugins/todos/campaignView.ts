@@ -73,14 +73,15 @@ export type Registry = CampaignRegistry & {
 
 /**
  * Reads the registry in the main checkout of `projectPath` and re-reads it when the file changes;
- * `reload` re-reads it now, after a write.
+ * `reload` re-reads it now, and `publish` shows text just written to it.
  */
 export function useCampaignRegistry(
   projectId: string | null,
   projectPath: string,
-): { registry: Registry | null; reload: () => Promise<void> } {
+): Pick<CampaignView, 'registry' | 'reload' | 'publish'> {
   const [registry, setRegistry] = useState<Registry | null>(null)
   const reloadRef = useRef<() => Promise<void>>(async () => {})
+  const publishRef = useRef<(path: string, text: string) => void>(() => {})
 
   useEffect(() => {
     if (!projectId || !projectPath) return
@@ -129,6 +130,11 @@ export function useCampaignRegistry(
       )
     }
     reloadRef.current = reload
+    publishRef.current = (path, text) => {
+      const parsed = cancelled || path !== target ? null : parseCampaigns(text)
+      if (parsed)
+        setRegistry((shown) => (shown?.path === path ? { ...shown, ...parsed, text } : shown))
+    }
     const retry = () => {
       if (target && watched !== target && document.visibilityState !== 'hidden') void reload()
     }
@@ -152,6 +158,7 @@ export function useCampaignRegistry(
   return {
     registry: registry?.projectId === projectId ? registry : null,
     reload: () => reloadRef.current(),
+    publish: (path, text) => publishRef.current(path, text),
   }
 }
 
@@ -176,6 +183,8 @@ export type CampaignView = {
   /** The campaign being worked on: the focused terminal's, else the project's last one. */
   activeId: string | null
   reload: () => Promise<void>
+  /** Shows `text`, just written to the registry at `path`, when that registry is the one shown. */
+  publish: (path: string, text: string) => void
 }
 
 /** The active project's registry and active campaign, shared by the Todo list and the map. */
@@ -184,7 +193,7 @@ export function useCampaignView(): CampaignView {
   const projectPath = useProjectsStore((state) =>
     getProjectDefaultCwd(selectActiveProject(state), state.projects),
   )
-  const { registry, reload } = useCampaignRegistry(projectId, projectPath)
+  const { registry, reload, publish } = useCampaignRegistry(projectId, projectPath)
   const focused = useFocusedTab()
   const remembered = useTodosStore((state) =>
     projectId ? (state.activeCampaigns[projectId] ?? null) : null,
@@ -198,7 +207,7 @@ export function useCampaignView(): CampaignView {
     if (projectId && activeId && activeId !== remembered) rememberCampaign(projectId, activeId)
   }, [projectId, activeId, remembered, rememberCampaign])
 
-  return { projectId, registry, activeId, reload }
+  return { projectId, registry, activeId, reload, publish }
 }
 
 /**
@@ -348,7 +357,8 @@ export type CampaignEdits = ReturnType<typeof useCampaignEdits>
 
 /**
  * Edits of the registry from the list. Each starts from the registry as last read, so a change
- * the script made meanwhile is refused as a conflict; the list reloads after every attempt.
+ * the script made meanwhile is refused as a conflict; the list shows a written edit at once and
+ * reloads after a refused one.
  */
 export function useCampaignEdits(view: CampaignView) {
   const t = useT()
@@ -369,7 +379,11 @@ export function useCampaignEdits(view: CampaignView) {
     busy.current = true
     rerender()
     try {
-      await campaignRegistryWrite(base.path, base.text, content)
+      const written = await campaignRegistryWrite(base.path, base.text, content)
+      // Shown at once: the reload re-reads the worktrees with git (0.2 to 0.4 s on Windows), and
+      // runs behind it to catch a write made meanwhile.
+      latest.current.publish(base.path, written)
+      void latest.current.reload()
       return true
     } catch (error) {
       notify(
@@ -377,9 +391,9 @@ export function useCampaignEdits(view: CampaignView) {
           ? t('todo.campaignWrite.conflict')
           : t('todo.campaignWrite.failed', { message: String(error) }),
       )
+      await latest.current.reload()
       return false
     } finally {
-      await latest.current.reload()
       busy.current = false
       rerender()
     }

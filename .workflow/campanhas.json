@@ -238,17 +238,19 @@
       "janela": "assistida",
       "depende_de": [],
       "worktrees": [],
-      "atualizado_em": "2026-10-02",
+      "atualizado_em": "2026-10-03",
       "tarefas": [
         {
           "id": "AGENDADOR-01",
           "titulo": "Agendador do Alethe abre um agente novo por tarefa da noite livre",
           "nivel": "T2",
-          "estado": "proposta",
+          "estado": "bloqueada",
           "depende_de": [
             "ELO-05"
           ],
-          "origem": "DECISION"
+          "origem": "DECISION",
+          "evidencia": "fork PR (Closes #48), dev",
+          "resultado": "implementado e revisado (12 correções); aguarda a primeira noite curta de teste e o Gate 2 do usuário"
         },
         {
           "id": "AGENDADOR-02",

@@ -33,7 +33,7 @@ import {
   selectActiveProject,
   useProjectsStore,
 } from '../../stores/projectsStore'
-import { useTerminalsStore } from '../../stores/terminalsStore'
+import { anyTabWorking, useTerminalsStore } from '../../stores/terminalsStore'
 import { useUiStore } from '../../stores/uiStore'
 import { useVoiceHistoryStore } from '../../stores/voiceHistoryStore'
 import styles from './VoiceCommand.module.css'
@@ -79,7 +79,7 @@ function readWorkspace(): VoiceWorkspace {
         ptyId: tab.ptyId,
         agent: tab.type,
         cwd: tab.cwd || terminal.cwd,
-        busy: tab.ptyId ? runtime[tab.ptyId]?.status === 'working' : false,
+        busy: anyTabWorking([tab], runtime),
         name: terminal.name,
       })
     }

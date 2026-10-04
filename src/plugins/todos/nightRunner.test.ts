@@ -181,6 +181,10 @@ describe('night runner', () => {
     expect(agent.tab.extraArgs).toEqual(['--permission-mode', 'auto'])
     expect(agent.tab.initialInput).toContain('para a tarefa N-01 da campanha N')
     expect(agent.tab.initialInput).toContain(`registro ${registryOf(REPO)}`)
+    // A plain tab: unlike Open, no orchestration board is opened next to it.
+    const [project] = useProjectsStore.getState().projects
+    expect(project.terminals).toHaveLength(1)
+    expect(project.paneGroups ?? []).toEqual([])
     expect(current()).toEqual({
       projectId,
       campaignId: 'N',

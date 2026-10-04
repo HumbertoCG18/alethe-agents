@@ -177,6 +177,16 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ### Changed
 
+- The Campaigns map in the Todo tab groups campaigns into **Active** (a tab open for it, or a live
+  orchestration worker on one of its tasks), **Open** and **Finished**, collapsed by default. A
+  campaign moves to Finished as soon as its last task is done, the selected one included. Active
+  campaigns show whether they are **Running** or **Stopped**, from their terminals and workers.
+- Opening a campaign starts its agent as a planner, grouped with an Orchestration board, as the
+  new-terminal dialog does. Night tasks still open a plain tab.
+- The Findings and Night cards in the Todo tab are collapsible sections like the others. A finding
+  shows its title, then its id, type, origin task and date.
+- A planner tab in the Orchestration board shows its terminal's live status (running, waiting or
+  stopped) instead of its workers'.
 - **A worker that runs out of time no longer loses its work.** A delegated worker is told its time
   budget when it starts, and by when to write its answer. If it is still stopped at the end, the
   planner and the board get what it had written by then along with the timeout, instead of only
@@ -195,6 +205,7 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ### Fixed
 
+- A campaign whose terminal was closed mid-task no longer keeps a green dot in the Campaigns map.
 - Checking, adding or undoing a campaign task in the Todo List shows at once, instead of waiting
   for the list to re-read the project's worktrees.
 - The Todo List settings in Portuguese have their accents back ("Configurações", "Pasta padrão",

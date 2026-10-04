@@ -1,4 +1,3 @@
-import { ChevronDown } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
 import {
@@ -24,6 +23,7 @@ import { useProjectsStore } from '../../stores/projectsStore'
 import { useUiStore } from '../../stores/uiStore'
 import styles from './CampaignsSection.module.css'
 import type { Registry } from './campaignView'
+import { SectionToggle } from './SectionToggle'
 import { useTodosStore } from './store'
 import sidebarStyles from './TodoSidebar.module.css'
 import { createWatchSet } from './watchSet'
@@ -222,25 +222,21 @@ export function NightCard({ registry }: { registry: Registry | null }) {
   }).format(new Date(year, month - 1, day))
 
   return (
-    <section className={styles.night}>
-      <button
-        type="button"
-        className={sidebarStyles.sectionToggle}
-        onClick={() => setOpen((current) => !current)}
-        aria-expanded={open}
-      >
-        <ChevronDown
-          size={13}
-          className={`${sidebarStyles.sectionChevron} ${open ? '' : sidebarStyles.sectionChevronClosed}`}
-        />
-        <span className={sidebarStyles.sectionName}>{t('todo.night.title', { date })}</span>
-        <span className={styles.meta}>
-          {NIGHT_RESULTS.map((result) => {
-            const count = diary.entries.filter((entry) => entry.result === result).length
-            return count > 0 ? <span key={result}>{t(COUNT_KEYS[result], { count })}</span> : null
-          })}
-        </span>
-      </button>
+    <section className={`${sidebarStyles.section} ${styles.card}`}>
+      <SectionToggle
+        name={t('todo.night.title', { date })}
+        count={diary.entries.length}
+        open={open}
+        onToggle={() => setOpen((current) => !current)}
+        extra={
+          <span className={styles.meta}>
+            {NIGHT_RESULTS.map((result) => {
+              const count = diary.entries.filter((entry) => entry.result === result).length
+              return count > 0 ? <span key={result}>{t(COUNT_KEYS[result], { count })}</span> : null
+            })}
+          </span>
+        }
+      />
       {open ? (
         <ul className={styles.tasks}>
           {diary.entries.map((entry, index) => (

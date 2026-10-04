@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useProjectsStore } from '../stores/projectsStore'
 import { recordClaudeLaunch } from './claudeMcpConfigs'
-import { startOrchestrationOn } from './orchestrationOnTerminal'
+import { createOrchestratedTerminal, startOrchestrationOn } from './orchestrationOnTerminal'
 import { EMPTY_PROJECTS_FILE } from './types'
 
 vi.mock('./terminalLifecycle', () => ({ cleanupPtys: vi.fn() }))
@@ -126,5 +126,29 @@ describe('startOrchestrationOn', () => {
     expect(await startOrchestrationOn({ ...target, confirmRestart, restart })).toBe('ready')
 
     expect(boards(target.projectId, target.terminalId)).toHaveLength(1)
+  })
+})
+
+// Opening a new agent as a planner, from the new-terminal dialog or a campaign.
+describe('createOrchestratedTerminal', () => {
+  it('turns the feature on before the terminal exists, then groups it with a new board', async () => {
+    useProjectsStore.setState({ ...structuredClone(EMPTY_PROJECTS_FILE), hydrated: false })
+    const project = store().createProject({ name: 'App' })
+    let featureAtCreation: boolean | null = null
+
+    const terminal = await createOrchestratedTerminal(project.id, 'C:\repo', () => {
+      featureAtCreation = store().preferences.enabledFeatures.orchestrator
+      return store().createTerminal(project.id, {
+        name: 'Planner',
+        cwd: 'C:\repo',
+        firstTab: { type: 'codex', cwd: 'C:\repo' },
+      })
+    })
+
+    expect(featureAtCreation).toBe(true)
+    expect(boards(project.id, terminal.id)).toHaveLength(1)
+    const [group] = boards(project.id, terminal.id)
+    const board = store().projects[0].terminals.find((item) => item.id === group.paneIds[1])
+    expect(board).toMatchObject({ kind: 'orchestrator', cwd: 'C:\repo' })
   })
 })

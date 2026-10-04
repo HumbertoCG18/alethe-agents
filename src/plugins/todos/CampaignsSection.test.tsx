@@ -2,8 +2,10 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import exemplo from '../../lib/__fixtures__/campanhas.exemplo.json'
-import { EMPTY_PROJECTS_FILE } from '../../lib/types'
+import { parseCampaigns } from '../../lib/campaigns'
+import { EMPTY_PROJECTS_FILE, type SubTab } from '../../lib/types'
 import { useProjectsStore } from '../../stores/projectsStore'
+import { useTerminalsStore } from '../../stores/terminalsStore'
 import { useUiStore } from '../../stores/uiStore'
 
 const OTHER_REPO = vi.hoisted(() => 'C:\\other')
@@ -88,7 +90,7 @@ import {
   worktreeCheckouts,
 } from '../../lib/tauri'
 import { CampaignsSection } from './CampaignsSection'
-import { useCampaignView } from './campaignView'
+import { campaignLiveStatus, useCampaignView, useTaskWorkers } from './campaignView'
 import { TODO_SETTINGS_MODAL_ID } from './manifest'
 import { resetTodosStoreForTests, useTodosStore } from './store'
 import { TodoSettingsModal } from './TodoSettingsModal'
@@ -98,7 +100,10 @@ const REGISTRY = 'C:\\repo\\.workflow\\campanhas.json'
 
 /** The section as the Todo tab mounts it. */
 function Section() {
-  return <CampaignsSection view={useCampaignView()} onSelect={() => {}} />
+  const view = useCampaignView()
+  return (
+    <CampaignsSection view={view} workers={useTaskWorkers(view.registry)} onSelect={() => {}} />
+  )
 }
 
 function withOito(registry: typeof exemplo, fields: Record<string, unknown>) {
@@ -136,6 +141,14 @@ const IDS = new RegExp(`^(${exemplo.campanhas.map((campaign) => campaign.id).joi
 /** Campaign ids in the order the rows show them. */
 const rowOrder = () => screen.getAllByText(IDS).map((element) => element.textContent)
 const activeRow = () => document.querySelector('[aria-current="true"]')
+/** A group header of the Campaigns map, named and counted, or null when the group is hidden. */
+const group = (name: 'Active' | 'Open' | 'Finished') =>
+  screen.queryByRole('button', { name: new RegExp(`^${name} \\d+$`) })
+/** The project's agent terminals, without the panes opened next to them. */
+const agentTerminals = () =>
+  useProjectsStore
+    .getState()
+    .projects[0].terminals.filter((terminal) => (terminal.kind ?? 'terminal') === 'terminal')
 
 function openTerminal(cwd: string, type: 'shell' | 'claude', campaignId?: string) {
   const projectId = useProjectsStore.getState().projects[0].id
@@ -176,7 +189,7 @@ describe('CampaignsSection', () => {
     expect(screen.getByText('Waits for ABERTA', { selector: '[data-unmet]' })).toBeInTheDocument()
 
     const edited = structuredClone(exemplo)
-    edited.campanhas[0].titulo = 'Renamed by the script'
+    edited.campanhas[1].titulo = 'Renamed by the script'
     fs.files.set(REGISTRY, JSON.stringify(edited))
     act(() => fs.onChange?.(REGISTRY))
     expect(await screen.findByText('Renamed by the script')).toBeInTheDocument()
@@ -200,22 +213,23 @@ describe('CampaignsSection', () => {
     const inWorktree = openTerminal('C:\\repo-feature', 'claude')
     render(<Section />)
     await expandSection()
-    expect(rowOrder()[0]).toBe('BASE')
+    // PARADA has a tab opened for it: it is in Active, above the open ones.
+    expect(rowOrder()).toEqual(['PARADA', 'OITO', 'ABERTA', 'DEPOIS', 'NOTURNA'])
     expect(activeRow()).toBeNull()
 
     // The tab opened for PARADA wins, although it sits in the main checkout.
     focusTerminal(tagged.id)
-    expect(rowOrder()).toEqual(['PARADA', 'BASE', 'OITO', 'ABERTA', 'DEPOIS', 'NOTURNA'])
+    expect(rowOrder()).toEqual(['PARADA', 'OITO', 'ABERTA', 'DEPOIS', 'NOTURNA'])
     expect(activeRow()).toHaveTextContent('PARADA')
 
-    // Any other terminal counts by the worktree its cwd is in.
+    // Any other terminal counts by the worktree its cwd is in; OITO leads the Open group.
     focusTerminal(inWorktree.id)
-    expect(rowOrder()[0]).toBe('OITO')
+    expect(rowOrder()[1]).toBe('OITO')
     expect(activeRow()).toHaveTextContent('OITO')
 
-    // With no campaign terminal focused, the last active campaign of the project stays on top.
+    // With no campaign terminal focused, the last active campaign of the project stays first.
     act(() => useUiStore.setState({ activeTerminal: null }))
-    expect(rowOrder()[0]).toBe('OITO')
+    expect(rowOrder()[1]).toBe('OITO')
     expect(useTodosStore.getState().activeCampaigns).toEqual({
       [useProjectsStore.getState().projects[0].id]: 'OITO',
     })
@@ -224,14 +238,119 @@ describe('CampaignsSection', () => {
     // tagged for OITO, even though a Claude tab already runs in its worktree.
     fireEvent.click(screen.getByRole('button', { name: 'Continue campaign OITO' }))
     fireEvent.click(screen.getByRole('menuitem', { name: 'Claude Code' }))
-    await waitFor(() => expect(useProjectsStore.getState().projects[0].terminals).toHaveLength(3))
-    const created = useProjectsStore.getState().projects[0].terminals[2]
+    await waitFor(() => expect(agentTerminals()).toHaveLength(3))
+    const created = agentTerminals()[2]
     expect(created.tabs[0]).toMatchObject({
       type: 'claude',
       cwd: 'C:\\repo-feature',
       campaignId: 'OITO',
     })
     expect(useUiStore.getState().activeTerminal?.terminalId).toBe(created.id)
+  })
+
+  it('groups the map into Active, Open and Finished, where a finished campaign always goes', async () => {
+    fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    const projectId = useProjectsStore.getState().projects[0].id
+    // The selected campaign is finished: it goes to Finished all the same.
+    useTodosStore.setState({ activeCampaigns: { [projectId]: 'BASE' } })
+    // PARADA has a tab open for it, DEPOIS a live worker.
+    openTerminal('C:\\repo', 'claude', 'PARADA')
+    orchestrator.jobs = [{ task: 'DEPOIS-01', status: 'queued', cwd: 'C:\\repo' }]
+    render(<Section />)
+    await expandSection()
+    await waitFor(() => expect(group('Active')).toHaveTextContent('2'))
+    expect(screen.getByRole('button', { name: /Campaigns/ })).toHaveTextContent('6')
+    // ABERTA has every task done but is not fully decomposed: it stays open.
+    expect(rowOrder()).toEqual(['DEPOIS', 'PARADA', 'OITO', 'ABERTA', 'NOTURNA'])
+    expect(group('Active')).toHaveAttribute('aria-expanded', 'true')
+    expect(group('Open')).toHaveAttribute('aria-expanded', 'true')
+    expect(group('Open')).toHaveTextContent('3')
+    expect(group('Finished')).toHaveAttribute('aria-expanded', 'false')
+    expect(group('Finished')).toHaveTextContent('1')
+
+    fireEvent.click(group('Finished')!)
+    expect(rowOrder()).toEqual(['DEPOIS', 'PARADA', 'OITO', 'ABERTA', 'NOTURNA', 'BASE'])
+    expect(activeRow()).toHaveTextContent('BASE')
+    fireEvent.click(group('Open')!)
+    expect(rowOrder()).toEqual(['DEPOIS', 'PARADA', 'BASE'])
+    fireEvent.click(group('Open')!)
+
+    // The script finishes PARADA's last task: it moves to Finished on its own.
+    const edited = structuredClone(exemplo)
+    edited.campanhas[5].tarefas[0].estado = 'concluída'
+    fs.files.set(REGISTRY, JSON.stringify(edited))
+    act(() => fs.onChange?.(REGISTRY))
+    await waitFor(() =>
+      expect(rowOrder()).toEqual(['DEPOIS', 'OITO', 'ABERTA', 'NOTURNA', 'BASE', 'PARADA']),
+    )
+
+    // Once its worker settles, nothing is active and the group is hidden.
+    act(() => orchestrator.emit?.({ jobs: [] }))
+    expect(group('Active')).toBeNull()
+    expect(rowOrder()).toEqual(['OITO', 'ABERTA', 'DEPOIS', 'NOTURNA', 'BASE', 'PARADA'])
+  })
+
+  it('shows an active campaign running only while its tab works or a worker runs one of its tasks', async () => {
+    fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    const terminal = openTerminal('C:\\repo', 'claude', 'PARADA')
+    const projectId = useProjectsStore.getState().projects[0].id
+    useProjectsStore.getState().setSubTabPtyId(projectId, terminal.id, terminal.tabs[0].id, 'pty-p')
+    useTerminalsStore.getState().registerPty('pty-p')
+    const setStatus = (status: 'working' | 'waiting') =>
+      act(() => useTerminalsStore.getState().setStatus('pty-p', status))
+    render(<Section />)
+    await expandSection()
+    const row = () => screen.getByText('PARADA').closest('[data-status]')
+    expect(row()).toHaveAttribute('data-status', 'stopped')
+    expect(row()).toHaveTextContent('Stopped')
+
+    setStatus('working')
+    expect(row()).toHaveAttribute('data-status', 'working')
+    expect(row()).toHaveTextContent('Running')
+    setStatus('waiting')
+    expect(row()).toHaveAttribute('data-status', 'stopped')
+
+    // A queued worker keeps it active but not running; a running one runs it.
+    act(() =>
+      orchestrator.emit?.({ jobs: [{ task: 'PARADA-01', status: 'queued', cwd: 'C:\\repo' }] }),
+    )
+    expect(row()).toHaveAttribute('data-status', 'stopped')
+    act(() =>
+      orchestrator.emit?.({ jobs: [{ task: 'PARADA-01', status: 'running', cwd: 'C:\\repo' }] }),
+    )
+    expect(row()).toHaveAttribute('data-status', 'working')
+
+    // Outside Active, a task left in progress with nothing live is not shown as running.
+    const oito = screen.getByText('OITO').closest('[data-lane]')
+    expect(oito).toHaveAttribute('data-lane', 'interrupted')
+    expect(oito).not.toHaveAttribute('data-status')
+    expect(oito).toHaveTextContent('In progress, 4 ready')
+    useTerminalsStore.getState().reset()
+  })
+
+  it('opens a campaign as a planner next to its own orchestration board', async () => {
+    fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    render(<Section />)
+    await expandSection()
+    fireEvent.click(screen.getByRole('button', { name: 'Open campaign OITO' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Codex' }))
+    await waitFor(() => expect(agentTerminals()).toHaveLength(1))
+
+    const [terminal] = agentTerminals()
+    const project = useProjectsStore.getState().projects[0]
+    const board = project.terminals.find((item) => item.kind === 'orchestrator')
+    expect(board).toMatchObject({ cwd: 'C:\\repo' })
+    expect(project.paneGroups).toEqual([
+      expect.objectContaining({ kind: 'orchestration', paneIds: [terminal.id, board!.id] }),
+    ])
+    expect(useProjectsStore.getState().preferences.enabledFeatures.orchestrator).toBe(true)
+    expect(useUiStore.getState().activeTerminal?.terminalId).toBe(terminal.id)
+
+    // Continuing focuses that tab: no second agent, no second board.
+    act(() => useUiStore.setState({ activeTerminal: null }))
+    fireEvent.click(screen.getByRole('button', { name: 'Continue campaign OITO' }))
+    expect(useUiStore.getState().activeTerminal?.terminalId).toBe(terminal.id)
+    expect(useProjectsStore.getState().projects[0].terminals).toHaveLength(2)
   })
 
   it('opens a new tab for a campaign whose checkout another campaign tab already uses', async () => {
@@ -242,8 +361,8 @@ describe('CampaignsSection', () => {
     await expandSection()
     fireEvent.click(screen.getByRole('button', { name: 'Open campaign OITO' }))
     fireEvent.click(screen.getByRole('menuitem', { name: 'Claude Code' }))
-    await waitFor(() => expect(useProjectsStore.getState().projects[0].terminals).toHaveLength(2))
-    const created = useProjectsStore.getState().projects[0].terminals[1]
+    await waitFor(() => expect(agentTerminals()).toHaveLength(2))
+    const created = agentTerminals()[1]
     expect(created.tabs[0]).toMatchObject({
       type: 'claude',
       cwd: 'C:\\repo',
@@ -283,8 +402,8 @@ describe('CampaignsSection', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Continue campaign PARADA' }))
     fireEvent.click(screen.getByRole('menuitem', { name: 'Codex' }))
-    await waitFor(() => expect(useProjectsStore.getState().projects[0].terminals).toHaveLength(1))
-    const [terminal] = useProjectsStore.getState().projects[0].terminals
+    await waitFor(() => expect(agentTerminals()).toHaveLength(1))
+    const [terminal] = agentTerminals()
     expect(terminal.tabs[0]).toMatchObject({ type: 'codex', cwd: 'C:\\repo', campaignId: 'PARADA' })
     expect(useUiStore.getState().activeTerminal?.terminalId).toBe(terminal.id)
   })
@@ -304,8 +423,8 @@ describe('CampaignsSection', () => {
     }
 
     open()
-    await waitFor(() => expect(useProjectsStore.getState().projects[0].terminals).toHaveLength(1))
-    const [terminal] = useProjectsStore.getState().projects[0].terminals
+    await waitFor(() => expect(agentTerminals()).toHaveLength(1))
+    const [terminal] = agentTerminals()
     expect(terminal.cwd).toBe('C:\\repo-feature')
     // The worktree has no registry of its own: both paths point into the main checkout.
     expect(findRelativePath).toHaveBeenCalledWith('C:\\repo', 'docs/handoff.md')
@@ -324,7 +443,7 @@ describe('CampaignsSection', () => {
     act(() => useUiStore.setState({ activeTerminal: null }))
     fireEvent.click(screen.getByRole('button', { name: 'Continue campaign OITO' }))
     await waitFor(() => expect(useUiStore.getState().activeTerminal?.terminalId).toBe(terminal.id))
-    expect(useProjectsStore.getState().projects[0].terminals).toHaveLength(1)
+    expect(agentTerminals()).toHaveLength(1)
   })
 
   it('publishes only the newest reload when reads finish out of order', async () => {
@@ -337,7 +456,7 @@ describe('CampaignsSection', () => {
     await waitFor(() => expect(readTextFile).toHaveBeenCalledTimes(1))
 
     const edited = structuredClone(exemplo)
-    edited.campanhas[0].titulo = 'Newest'
+    edited.campanhas[1].titulo = 'Newest'
     fs.files.set(REGISTRY, JSON.stringify(edited))
     act(() => fs.onChange?.(REGISTRY))
     await expandSection()
@@ -345,7 +464,7 @@ describe('CampaignsSection', () => {
 
     await act(async () => finishOld(JSON.stringify(exemplo)))
     expect(screen.getByText('Newest')).toBeInTheDocument()
-    expect(screen.queryByText(exemplo.campanhas[0].titulo)).not.toBeInTheDocument()
+    expect(screen.queryByText(exemplo.campanhas[1].titulo)).not.toBeInTheDocument()
   })
 
   it('retries a failed watch when the window regains focus, so a registry created later shows up', async () => {
@@ -673,6 +792,7 @@ describe('Todo list source', () => {
     }
     await expandSection()
     expect(activeRow()).toHaveTextContent('2 running · 1 queued')
+    fireEvent.click(screen.getByRole('button', { name: /^Finished/ }))
     expect(screen.getByText('BASE').closest('[data-lane]')).not.toHaveTextContent('running')
 
     // The board's event updates the counts; a settled worker leaves them.
@@ -846,6 +966,9 @@ describe('Findings card', () => {
   })
   const file = (...achados: unknown[]) => JSON.stringify({ versao: 1, achados })
   const card = () => screen.queryByRole('button', { name: /^Findings/ })
+  /** The card's header, once it shows `count` findings. */
+  const findCard = async (count: number) =>
+    screen.findByRole('button', { name: new RegExp(`^Findings ${count}$`) })
 
   it('is hidden without the file or without new findings', async () => {
     fs.files.set(REGISTRY, JSON.stringify(exemplo))
@@ -871,7 +994,7 @@ describe('Findings card', () => {
       ),
     )
     render(<TodoSidebar />)
-    const toggle = await screen.findByRole('button', { name: 'Findings (3)' })
+    const toggle = await findCard(3)
     expect(toggle).toHaveAttribute('aria-expanded', 'false')
     expect(screen.queryByText('ACH-0001 title')).toBeNull()
 
@@ -887,8 +1010,11 @@ describe('Findings card', () => {
     expect(rows[1].querySelector('[role="img"]')).toHaveAttribute('aria-label', 'debt')
     expect(rows[2].querySelector('[role="img"]')).toHaveAttribute('aria-label', 'risk')
     expect(screen.getByText('<b>bold</b> [a](http://x)')).toBeInTheDocument()
-    expect(screen.getAllByText('MOTOR-01')).toHaveLength(2)
-    expect(rows[2]).toHaveTextContent('10/02')
+    // The title, then the finding's own id, its type, the task it came from, and its date.
+    expect(rows[0]).toHaveTextContent('ACH-0002 · idea · MOTOR-01 · 10/03')
+    expect(rows[1]).toHaveTextContent('ACH-0004 title')
+    expect(rows[1]).toHaveTextContent('ACH-0004 · debt · — · 10/03')
+    expect(rows[2]).toHaveTextContent('ACH-0001 · risk · MOTOR-01 · 10/02')
     expect(screen.queryByRole('link')).toBeNull()
   })
 
@@ -902,11 +1028,11 @@ describe('Findings card', () => {
 
     fs.files.set(FILE, file(finding('ACH-0001')))
     act(() => fs.onChange?.(FILE))
-    expect(await screen.findByRole('button', { name: 'Findings (1)' })).toBeInTheDocument()
+    expect(await findCard(1)).toBeInTheDocument()
 
     fs.files.set(FILE, file(finding('ACH-0001'), finding('ACH-0002')))
     act(() => fs.onChange?.(FILE))
-    expect(await screen.findByRole('button', { name: 'Findings (2)' })).toBeInTheDocument()
+    expect(await findCard(2)).toBeInTheDocument()
 
     fs.files.set(
       FILE,
@@ -1072,7 +1198,7 @@ describe('Watch references', () => {
 
     fs.files.set(FILE, one)
     act(() => fs.onChange?.(FILE))
-    await screen.findByRole('button', { name: 'Findings (1)' })
+    await screen.findByRole('button', { name: 'Findings 1' })
     expect(calls(unwatchFile, FOLDER)).toBe(1)
     expect(calls(unwatchFile, FILE)).toBe(0)
 
@@ -1094,8 +1220,35 @@ describe('Watch references', () => {
     fs.files.set(REGISTRY, JSON.stringify(exemplo))
     fs.files.set(FILE, JSON.stringify({ achados: many }))
     render(<TodoSidebar />)
-    fireEvent.click(await screen.findByRole('button', { name: 'Findings (205)' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Findings 205' }))
     expect(document.querySelectorAll('[data-finding]')).toHaveLength(200)
     expect(screen.getByText('+5 more')).toBeInTheDocument()
+  })
+})
+
+describe('campaignLiveStatus', () => {
+  const { campaigns } = parseCampaigns(JSON.stringify(exemplo))!
+  const tab = (campaignId: string | undefined, ptyId: string | null) =>
+    ({ campaignId, ptyId }) as SubTab
+
+  it('keeps the campaigns with a tab or a live worker: working while one of them runs', () => {
+    const live = campaignLiveStatus(
+      campaigns,
+      [
+        { tabs: [tab('PARADA', 'p1'), tab('OITO', 'p2'), tab(undefined, 'p3')] },
+        { tabs: [tab('OITO', null)] },
+      ],
+      { p1: { status: 'waiting' }, p2: { status: 'working' }, p3: { status: 'working' } },
+      new Map([
+        ['DEPOIS-01', { running: 0, queued: 1 }],
+        ['NOTURNA-02', { running: 1, queued: 0 }],
+      ]),
+    )
+    expect(Object.fromEntries(live)).toEqual({
+      OITO: 'working',
+      DEPOIS: 'stopped',
+      NOTURNA: 'working',
+      PARADA: 'stopped',
+    })
   })
 })

@@ -54,11 +54,13 @@
   background: var(--status-stopped);
 }
 
-/* The active campaign is the one being worked on. */
-.campaign[data-active='true'] .dot {
+/* A campaign with a tab or worker live shows its live state, in the terminal status colours. */
+.campaign[data-status='working'] .dot {
   background: var(--status-working);
-  box-shadow: none;
-  animation: none;
+}
+
+.campaign[data-status='stopped'] .dot {
+  background: var(--status-stopped);
 }
 
 @keyframes block-pulse {
@@ -273,16 +275,13 @@
   white-space: nowrap;
 }
 
-/* The night card: a read-only box above the list, one line until opened. */
-.night {
+/* The night and findings sections: read-only, above the list, rows aligned with the campaigns'. */
+.card {
   margin-bottom: 8px;
-  padding: 0 0 2px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
 }
 
-.night > .tasks {
-  padding: 0 8px 4px;
+.card > .tasks {
+  padding: 2px 5px 4px 9px;
 }
 
 .nightEntry {
@@ -312,6 +311,12 @@
 .nightEntry[data-lane='interrupted'] .dot {
   background: transparent;
   box-shadow: inset 0 0 0 1.5px var(--status-waiting);
+}
+
+/* A finding: its dot, then its title over its meta line. */
+.finding {
+  grid-template-columns: 6px minmax(0, 1fr);
+  column-gap: 9px;
 }
 
 .evidence {
@@ -357,14 +362,13 @@ button.evidence:hover {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .campaign[data-lane='blocked']:not([data-active='true']) .dot {
+  .campaign[data-lane='blocked'] .dot {
     animation: none;
     box-shadow: 0 0 0 2px var(--status-waiting-soft);
   }
 }
 
-:global([data-visual-style='clean']) .campaign,
-:global([data-visual-style='clean']) .night {
+:global([data-visual-style='clean']) .campaign {
   border-radius: var(--clean-row-radius);
 }
 

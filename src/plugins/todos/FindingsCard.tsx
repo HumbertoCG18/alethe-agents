@@ -1,4 +1,3 @@
-import { ChevronDown } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
 import { type Finding, type FindingType, parseFindings, workflowPath } from '../../lib/campaigns'
@@ -7,6 +6,7 @@ import { listenFileChanged, readTextFile } from '../../lib/tauri'
 import { useProjectsStore } from '../../stores/projectsStore'
 import styles from './CampaignsSection.module.css'
 import type { Registry } from './campaignView'
+import { SectionToggle } from './SectionToggle'
 import sidebarStyles from './TodoSidebar.module.css'
 import { createWatchSet } from './watchSet'
 
@@ -92,35 +92,35 @@ export function FindingsCard({ registry }: { registry: Registry | null }) {
   }
 
   return (
-    <section className={styles.night}>
-      <button
-        type="button"
-        className={sidebarStyles.sectionToggle}
-        onClick={() => setOpen((current) => !current)}
-        aria-expanded={open}
-      >
-        <ChevronDown
-          size={13}
-          className={`${sidebarStyles.sectionChevron} ${open ? '' : sidebarStyles.sectionChevronClosed}`}
-        />
-        <span className={sidebarStyles.sectionName}>
-          {t('todo.findings.title', { count: findings.length })}
-        </span>
-      </button>
+    <section className={`${sidebarStyles.section} ${styles.card}`}>
+      <SectionToggle
+        name={t('todo.findings.title')}
+        count={findings.length}
+        open={open}
+        onToggle={() => setOpen((current) => !current)}
+      />
       {open ? (
         <ul className={styles.tasks}>
           {findings.slice(0, MAX_ROWS).map((finding) => (
             <li
               key={finding.id}
-              className={styles.nightEntry}
+              className={`${styles.nightEntry} ${styles.finding}`}
               data-finding={finding.id}
               data-lane={TYPE_LANES[finding.type]}
               title={finding.detail || undefined}
             >
               <span className={styles.dot} role="img" aria-label={t(TYPE_KEYS[finding.type])} />
-              <span className={styles.id}>{finding.origin}</span>
-              <span className={styles.taskTitle}>{finding.title}</span>
-              <span className={styles.meta}>{dateOf(finding.date)}</span>
+              <span className={styles.taskBody}>
+                <span className={styles.taskTitle}>{finding.title}</span>
+                <span className={styles.meta}>
+                  {[
+                    finding.id,
+                    t(TYPE_KEYS[finding.type]),
+                    finding.origin || '—',
+                    dateOf(finding.date),
+                  ].join(' · ')}
+                </span>
+              </span>
             </li>
           ))}
           {findings.length > MAX_ROWS ? (

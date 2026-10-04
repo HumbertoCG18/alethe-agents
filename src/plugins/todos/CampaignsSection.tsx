@@ -1,5 +1,5 @@
-import { ChevronDown, Play } from 'lucide-react'
-import { useState } from 'react'
+import { Play } from 'lucide-react'
+import { Fragment, useMemo, useState } from 'react'
 
 import {
   type Campaign,
@@ -12,10 +12,13 @@ import {
 } from '../../lib/campaigns'
 import { intlLocale, type MessageKey, type TFunction, useT } from '../../lib/i18n'
 import { type GitCheckouts } from '../../lib/tauri'
-import { AGENT_TYPE_LABELS } from '../../lib/types'
+import { AGENT_TYPE_LABELS, type Terminal } from '../../lib/types'
 import { useProjectsStore } from '../../stores/projectsStore'
+import { useTerminalsStore } from '../../stores/terminalsStore'
 import styles from './CampaignsSection.module.css'
 import {
+  type CampaignLive,
+  campaignLiveStatus,
   type CampaignView,
   continueCampaign,
   openCampaign,
@@ -23,6 +26,7 @@ import {
   TASK_LANES,
   workersLabel,
 } from './campaignView'
+import { SectionToggle } from './SectionToggle'
 import sidebarStyles from './TodoSidebar.module.css'
 
 const AGENTS = ['claude', 'codex'] as const
@@ -43,9 +47,10 @@ const ERROR_KEYS: Record<RegistryError['kind'], MessageKey> = {
   cycle: 'todo.campaigns.errorCycle',
 }
 
-// Orchestration board lanes, so dots and chips read the same as the board's.
+// Orchestration board lanes, so dots and chips read the same as the board's. Outside Active nothing
+// is live for the campaign, so a task left in progress reads as interrupted, not running.
 const SITUATION_LANES: Record<CampaignSituation['kind'], string> = {
-  running: 'running',
+  running: 'interrupted',
   ready: 'queued',
   waits: 'interrupted',
   blocked: 'blocked',
@@ -67,10 +72,32 @@ function situationLabel(t: TFunction, situation: CampaignSituation): string {
   }
 }
 
+/**
+ * Active: a tab is open for it or a worker is live on one of its tasks. Open: anything else not
+ * finished. Finished: done, even when active.
+ */
+const GROUPS = ['active', 'open', 'finished'] as const
+type Group = (typeof GROUPS)[number]
+
+const GROUP_KEYS: Record<Group, MessageKey> = {
+  active: 'todo.campaigns.groupActive',
+  open: 'todo.campaigns.groupOpen',
+  finished: 'todo.campaigns.groupFinished',
+}
+
+const LIVE_KEYS: Record<CampaignLive, MessageKey> = {
+  working: 'todo.campaigns.liveRunning',
+  stopped: 'todo.campaigns.liveStopped',
+}
+
+// Stable fallbacks, so the selectors below return the same value while nothing changes.
+const NO_WORKERS: ReadonlyMap<string, TaskWorkers> = new Map()
+const NO_TERMINALS: Terminal[] = []
+
 /** The campaigns map below the list; choosing a campaign makes it the list's source. */
 export function CampaignsSection({
   view: { projectId, registry, activeId },
-  workers = new Map(),
+  workers = NO_WORKERS,
   onSelect,
 }: {
   view: CampaignView
@@ -80,33 +107,65 @@ export function CampaignsSection({
 }) {
   const t = useT()
   const [collapsed, setCollapsed] = useState(true)
+  const [closed, setClosed] = useState<ReadonlySet<Group>>(() => new Set(['finished']))
+  const terminals = useProjectsStore(
+    (state) =>
+      state.projects.find((project) => project.id === projectId)?.terminals ?? NO_TERMINALS,
+  )
+  // Read as a string, so output on a pty (recorded every 250 ms) does not re-render the map.
+  const liveKey = useTerminalsStore((state) =>
+    JSON.stringify([
+      ...campaignLiveStatus(registry?.campaigns ?? [], terminals, state.byPtyId, workers),
+    ]),
+  )
+  const live = useMemo(() => new Map<string, CampaignLive>(JSON.parse(liveKey)), [liveKey])
 
   if (!registry || !projectId) return null
-  // Stable sort: the active campaign first, the rest in priority order.
+  // Stable sort: the active campaign first in its group, the rest in priority order.
   const campaigns = [...registry.campaigns].sort(
     (a, b) => Number(b.id === activeId) - Number(a.id === activeId),
+  )
+  const groupOf = (campaign: Campaign): Group =>
+    campaign.situation.kind === 'done' ? 'finished' : live.has(campaign.id) ? 'active' : 'open'
+  const toggleGroup = (group: Group) =>
+    setClosed((current) => {
+      const next = new Set(current)
+      if (!next.delete(group)) next.add(group)
+      return next
+    })
+
+  const row = (campaign: Campaign, status?: CampaignLive) => (
+    <CampaignRow
+      key={campaign.id}
+      campaign={campaign}
+      checkouts={registry.checkouts}
+      active={campaign.id === activeId}
+      live={status}
+      workers={
+        campaign.id === activeId
+          ? workersLabel(
+              t,
+              campaignWorkers(
+                campaign.tasks.map((task) => task.id),
+                workers,
+              ),
+            )
+          : null
+      }
+      onSelect={() => onSelect(campaign.id)}
+      onOpen={(agent) => void openCampaign(projectId, campaign, agent, registry)}
+      onContinue={() => continueCampaign(projectId, campaign)}
+    />
   )
 
   return (
     <section className={sidebarStyles.section}>
-      <div className={sidebarStyles.sectionHeader}>
-        <button
-          type="button"
-          className={sidebarStyles.sectionToggle}
-          onClick={() => setCollapsed((current) => !current)}
-          aria-expanded={!collapsed}
-        >
-          <ChevronDown
-            size={13}
-            className={`${sidebarStyles.sectionChevron} ${collapsed ? sidebarStyles.sectionChevronClosed : ''}`}
-          />
-          <span className={sidebarStyles.sectionName}>{t('todo.campaigns.title')}</span>
-          <span className={sidebarStyles.sectionCount}>
-            {registry.errors.length > 0 ? '!' : registry.campaigns.length}
-          </span>
-          <span className={sidebarStyles.sectionRule} />
-        </button>
-      </div>
+      <SectionToggle
+        name={t('todo.campaigns.title')}
+        count={registry.errors.length > 0 ? '!' : registry.campaigns.length}
+        open={!collapsed}
+        onToggle={() => setCollapsed((current) => !current)}
+      />
       {collapsed ? null : registry.errors.length > 0 ? (
         <div className={styles.invalid} role="alert">
           <p className={styles.invalidTitle}>{t('todo.campaigns.invalid')}</p>
@@ -120,28 +179,26 @@ export function CampaignsSection({
         </div>
       ) : (
         <div className={sidebarStyles.list}>
-          {campaigns.map((campaign) => (
-            <CampaignRow
-              key={campaign.id}
-              campaign={campaign}
-              checkouts={registry.checkouts}
-              active={campaign.id === activeId}
-              workers={
-                campaign.id === activeId
-                  ? workersLabel(
-                      t,
-                      campaignWorkers(
-                        campaign.tasks.map((task) => task.id),
-                        workers,
-                      ),
+          {GROUPS.map((group) => {
+            const members = campaigns.filter((campaign) => groupOf(campaign) === group)
+            if (members.length === 0) return null
+            const open = !closed.has(group)
+            return (
+              <Fragment key={group}>
+                <SectionToggle
+                  name={t(GROUP_KEYS[group])}
+                  count={members.length}
+                  open={open}
+                  onToggle={() => toggleGroup(group)}
+                />
+                {open
+                  ? members.map((campaign) =>
+                      row(campaign, group === 'active' ? live.get(campaign.id) : undefined),
                     )
-                  : null
-              }
-              onSelect={() => onSelect(campaign.id)}
-              onOpen={(agent) => void openCampaign(projectId, campaign, agent, registry)}
-              onContinue={() => continueCampaign(projectId, campaign)}
-            />
-          ))}
+                  : null}
+              </Fragment>
+            )
+          })}
         </div>
       )}
     </section>
@@ -152,6 +209,7 @@ function CampaignRow({
   campaign,
   checkouts,
   active,
+  live,
   workers,
   onSelect,
   onOpen,
@@ -160,6 +218,8 @@ function CampaignRow({
   campaign: Campaign
   checkouts: GitCheckouts
   active: boolean
+  /** Its live state, in the Active group; the dot then follows it instead of the registry. */
+  live?: CampaignLive
   /** Its live workers, as "2 running · 1 queued"; null when none or not the active campaign. */
   workers: string | null
   onSelect: () => void
@@ -187,7 +247,8 @@ function CampaignRow({
   return (
     <div
       className={styles.campaign}
-      data-lane={SITUATION_LANES[campaign.situation.kind]}
+      data-lane={live ? undefined : SITUATION_LANES[campaign.situation.kind]}
+      data-status={live}
       data-active={active ? 'true' : undefined}
       aria-current={active ? 'true' : undefined}
     >
@@ -210,6 +271,7 @@ function CampaignRow({
           <span>
             {`${campaign.done}/${campaign.total}${campaign.decomposed ? '' : '+?'} · ${campaign.percent}%`}
           </span>
+          {live ? <span>{t(LIVE_KEYS[live])}</span> : null}
           <span className={styles.situation}>{situationLabel(t, campaign.situation)}</span>
           {workers ? <span className={styles.workers}>{workers}</span> : null}
         </span>

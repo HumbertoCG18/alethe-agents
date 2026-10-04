@@ -94,6 +94,7 @@ import { useCampaignRegistry } from '../../plugins/todos/campaignView'
 import { useAgentCanvasStore } from '../../stores/agentCanvasStore'
 import { useNodeCostStore } from '../../stores/nodeCostStore'
 import { useProjectsStore } from '../../stores/projectsStore'
+import { useTerminalsStore } from '../../stores/terminalsStore'
 import { useUiStore } from '../../stores/uiStore'
 import { AgentIcon } from '../icons/AgentIcons'
 import { MarkdownRenderer } from '../MarkdownPane/MarkdownRenderer'
@@ -932,7 +933,11 @@ type PlannerTabProps = {
   t: TFunction
 }
 
-function PlannerTab({ group, selected, theme, onSelect, t }: PlannerTabProps) {
+export function PlannerTab({ group, selected, theme, onSelect, t }: PlannerTabProps) {
+  // The dot is the planner terminal's own status (a planner id is its pty id), not its jobs'.
+  const status = useTerminalsStore(
+    (state) => (group.id ? state.byPtyId[group.id]?.status : undefined) ?? 'stopped',
+  )
   const name = group.label ?? t('orchestrator.noPlanner')
   const title = group.label
     ? group.agent
@@ -948,6 +953,7 @@ function PlannerTab({ group, selected, theme, onSelect, t }: PlannerTabProps) {
       aria-selected={selected}
       className={styles.tab}
       data-state={group.state}
+      data-status={status}
       data-selected={selected ? 'true' : undefined}
       title={title}
       onPointerDown={(event) => event.stopPropagation()}

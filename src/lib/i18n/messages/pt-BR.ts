@@ -741,6 +741,24 @@ export const ptBR: Record<MessageKey, string> = {
   'todo.campaignWrite.duplicate': '{campaign} já tem essa tarefa: {id}',
   'todo.campaignWrite.invalid': 'O registro ficaria inválido; nada foi gravado.',
   'todo.campaignWrite.requeued': '{id} voltou para a fila da próxima noite.',
+  'todo.campaignControls.title': 'Campanha',
+  'todo.campaignControls.continue': 'Continuar campanha',
+  'todo.campaignControls.nothingReady': 'Nada pronto para retomar',
+  'todo.campaignControls.pause': 'Pausar campanha',
+  'todo.campaignControls.cancel': 'Cancelar campanha',
+  'todo.campaignControls.cancelConfirm':
+    'Cancelar a campanha {id}? Os agentes dela são interrompidos e as abas fechadas, os workers rodando e na fila são cancelados, e as tarefas em execução voltam para Pronta. Nada é concluído nem apagado.',
+  'todo.campaignControls.keep': 'Manter rodando',
+  'todo.campaignControls.cancelledTitle': 'Campanha {id} cancelada',
+  'todo.campaignControls.cancelled':
+    'Abas fechadas: {tabs} · workers cancelados: {jobs} · tarefas de volta a Pronta: {tasks}',
+  'todo.campaignControls.leftInInput':
+    'O agente de {id} começou a trabalhar, então o prompt ficou no campo de entrada sem Enter.',
+  'todo.campaignControls.cancelFailed':
+    'Não foi possível listar os workers da orquestração, então nada foi cancelado: {message}',
+  'todo.campaignControls.cancelledPartly':
+    'Abas fechadas: {tabs} · workers cancelados: {jobs} · tarefas de volta a Pronta: {tasks}. Workers ainda ativos em {ids}: essas tarefas continuam em execução.',
+  'todo.campaignControls.sendFailed': 'Não foi possível enviar o prompt para {id}: {message}',
   'todo.workers.running': '{count} rodando',
   'todo.workers.queued': '{count} na fila',
   'todo.night.title': 'Noite de {date}',

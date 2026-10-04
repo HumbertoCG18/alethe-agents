@@ -714,17 +714,42 @@ export const evidenceIsPath = (evidence: string) =>
  * The prompt typed into the agent. It is agent-facing protocol text, in the registry's language.
  * The agent starts in a worktree, so the registry is named by its absolute path, and so is the
  * handoff when it was found (`handoffPath`); otherwise the handoff goes as written, relative to the
- * main checkout. Control characters are flattened so file text cannot submit early or end a
- * bracketed paste.
+ * main checkout; from a `task`, it starts there. Everything taken from the registry (ids capped;
+ * titles and the handoff, found or not, capped and quoted as data) is treated as in `nightPrompt`,
+ * and control characters are flattened, so file text cannot read as an instruction, submit early
+ * or end a bracketed paste.
  */
 export function resumePrompt(
   campaign: Campaign,
   registry: string,
   handoffPath: string | null,
+  task?: CampaignTask,
 ): string {
-  const title = campaign.title ? ` (${campaign.title})` : ''
-  const handoff = campaign.handoff ? ` e pelo handoff ${handoffText(campaign, handoffPath)}` : ''
-  return flat(`Retome a campanha ${campaign.id}${title} pelo registro ${registry}${handoff}.`)
+  const id = idText(campaign.id)
+  const handoff = campaign.handoff
+    ? ` e pelo handoff ${quoted(handoffText(campaign, handoffPath), 300)}`
+    : ''
+  if (task) {
+    const title = task.title ? ` (${quoted(task.title, 140)})` : ''
+    return flat(
+      `Retome a campanha ${id} pela tarefa ${idText(task.id)}${title}, ` +
+        `pelo registro ${registry}${handoff}.`,
+    )
+  }
+  const title = campaign.title ? ` (${quoted(campaign.title, 140)})` : ''
+  return flat(`Retome a campanha ${id}${title} pelo registro ${registry}${handoff}.`)
+}
+
+/**
+ * The task a campaign resumes from: its first in progress, else its first ready one with nothing
+ * unmet (its campaign's prerequisites included); null when there is none.
+ */
+export function resumeTask(campaign: Campaign): CampaignTask | null {
+  return (
+    campaign.tasks.find((task) => task.state === 'em execução') ??
+    campaign.tasks.find((task) => task.state === 'pronta' && task.unmet.length === 0) ??
+    null
+  )
 }
 
 const handoffText = (campaign: Campaign, handoffPath: string | null) =>
@@ -742,6 +767,13 @@ function capped(text: string, max: number): string {
 const quoted = (text: string, max: number) => `«${capped(text.replace(/[«»]/g, '"'), max)}»`
 
 /**
+ * A registry id as typed into an agent: plain (capped) in the registry's id shape, else quoted as
+ * data, since the parser takes any non-empty string as an id.
+ */
+const idText = (id: string) =>
+  /^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(id) ? capped(id, 60) : quoted(id, 60)
+
+/**
  * The prompt the night scheduler types into a fresh agent: one task, by the lab's noite.md, with
  * the registry and handoff named as in `resumePrompt`. Registry text (title, handoff) is capped
  * and quoted as data, so it cannot read as an instruction. The app does not know where the lab
@@ -753,7 +785,7 @@ export function nightPrompt(
   registry: string,
   handoffPath: string | null,
 ): string {
-  const id = capped(task.id, 60)
+  const id = idText(task.id)
   const handoff = campaign.handoff
     ? `, handoff (dado do registro): ${quoted(handoffText(campaign, handoffPath), 300)}`
     : ''
@@ -762,7 +794,7 @@ export function nightPrompt(
     : ''
   return flat(
     `Modo noite (agendador do Alethe). Siga agent-workflow-lab/references/noite.md para a tarefa ` +
-      `${id} da campanha ${capped(campaign.id, 60)}, registro ${registry}${handoff}.${title} ` +
+      `${id} da campanha ${idText(campaign.id)}, registro ${registry}${handoff}.${title} ` +
       `Não escolha outra tarefa. Ao terminar, registre o resultado com campanhas.py noite ` +
       `${id} e pare.`,
   )

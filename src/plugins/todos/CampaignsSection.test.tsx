@@ -23,11 +23,18 @@ const fs = vi.hoisted(() => ({
 
 /** The orchestrator snapshot the board and the Todo tab receive, and its live event. */
 const orchestrator = vi.hoisted(() => ({
-  jobs: [] as Array<{ task?: string | null; status: string; cwd: string }>,
+  jobs: [] as Array<{ id?: string; task?: string | null; status: string; cwd: string }>,
   emit: null as ((snapshot: { jobs: unknown[] }) => void) | null,
 }))
 
+/** Yes or no to the native confirmation; no unless a test says otherwise, as a failed dialog. */
+const askConfirm = vi.hoisted(() => vi.fn(async (_message: string, _options?: unknown) => false))
+
 vi.mock('../../lib/terminalLifecycle', () => ({ cleanupPtys: vi.fn() }))
+vi.mock('../../lib/dialog', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../lib/dialog')>()),
+  askConfirm,
+}))
 vi.mock('../../lib/tauri', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../lib/tauri')>()),
   worktreeCheckouts: vi.fn(async (path: string) =>
@@ -82,6 +89,14 @@ vi.mock('../../lib/tauri', async (importOriginal) => ({
     fs.files.set(path, content)
     return content
   }),
+  writePty: vi.fn(async () => {}),
+  // The backend finishes a cancelled worker at once: the next snapshot shows it cancelled.
+  orchestratorCancel: vi.fn(async (jobId: string) => {
+    orchestrator.jobs = orchestrator.jobs.map((job) =>
+      job.id === jobId ? { ...job, status: 'cancelled' } : job,
+    )
+    return null
+  }),
 }))
 
 import {
@@ -89,11 +104,15 @@ import {
   findRelativePath,
   listDirectory,
   openInFileExplorer,
+  orchestratorCancel,
+  orchestratorJobs,
   readTextFile,
   unwatchFile,
   watchFile,
   worktreeCheckouts,
+  writePty,
 } from '../../lib/tauri'
+import { cleanupPtys } from '../../lib/terminalLifecycle'
 import { CampaignsSection } from './CampaignsSection'
 import { campaignLiveStatus, useCampaignView, useTaskWorkers } from './campaignView'
 import { TODO_SETTINGS_MODAL_ID } from './manifest'
@@ -557,8 +576,8 @@ describe('CampaignsSection', () => {
       cwd: 'C:\\repo-feature',
       campaignId: 'OITO',
       initialInput:
-        'Retome a campanha OITO (Uma de oito feitas: 12,5% arredonda para 13) pelo registro ' +
-        `${REGISTRY} e pelo handoff C:\\repo\\docs\\handoff.md.`,
+        'Retome a campanha OITO («Uma de oito feitas: 12,5% arredonda para 13») pelo registro ' +
+        `${REGISTRY} e pelo handoff «C:\\repo\\docs\\handoff.md».`,
     })
     expect(useUiStore.getState().activeTerminal?.terminalId).toBe(terminal.id)
     // Its tab is focused now, so OITO became the active campaign and continues there.
@@ -940,6 +959,411 @@ describe('Todo list source', () => {
     expect(activeRow()).not.toHaveTextContent('queued')
     expect(row('OITO-02')).not.toHaveTextContent('running')
     expect(row('OITO-03')).toHaveTextContent('1 running')
+  })
+})
+
+describe('Campaign controls', () => {
+  const projectId = () => useProjectsStore.getState().projects[0].id
+  const toggle = () => screen.findByRole('button', { name: 'Campaign' })
+  const button = (name: string) => screen.queryByRole('button', { name })
+  /** Shows OITO in the list, with its Campaign group opened. */
+  async function openControls() {
+    useTodosStore.setState({ activeCampaigns: { [projectId()]: 'OITO' } })
+    render(<TodoSidebar />)
+    fireEvent.click(await toggle())
+  }
+  /** A terminal opened for `campaignId`, its first tab on `ptyId` in `status`. */
+  function agentTab(campaignId: string, ptyId: string, status: 'working' | 'waiting') {
+    const terminal = openTerminal('C:\\repo', 'claude', campaignId)
+    useProjectsStore.getState().setSubTabPtyId(projectId(), terminal.id, terminal.tabs[0].id, ptyId)
+    useTerminalsStore.getState().registerPty(ptyId)
+    useTerminalsStore.getState().setStatus(ptyId, status)
+    return terminal
+  }
+  const terminalById = (id: string) =>
+    useProjectsStore.getState().projects[0].terminals.find((terminal) => terminal.id === id)
+
+  beforeEach(() => {
+    useUiStore.setState({ toasts: [], notifications: [] })
+    useTerminalsStore.getState().reset()
+  })
+  afterEach(() => useTerminalsStore.getState().reset())
+
+  it('sits collapsed in the Active section, under the add field and above the first task row', async () => {
+    fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    useTodosStore.setState({ activeCampaigns: { [projectId()]: 'OITO' } })
+    render(<TodoSidebar />)
+    const header = await toggle()
+    expect(header).toHaveAttribute('aria-expanded', 'false')
+    expect(button('Continue campaign')).toBeNull()
+    const section = screen.getByRole('button', { name: /^Active · OITO/ }).closest('section')!
+    expect(section).toContainElement(header)
+    const follows = (a: Element, b: Element) =>
+      Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(follows(screen.getByPlaceholderText('Add a task to OITO…'), header)).toBe(true)
+    expect(follows(header, document.querySelector('[data-task]')!)).toBe(true)
+
+    fireEvent.click(header)
+    expect(header).toHaveAttribute('aria-expanded', 'true')
+    expect(button('Continue campaign')).toBeEnabled()
+    // Not running: no Pause or Cancel.
+    expect(button('Pause campaign')).toBeNull()
+    expect(button('Cancel campaign')).toBeNull()
+  })
+
+  it('continues from the task in progress in a new Claude Code tab, next to its board', async () => {
+    fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    await openControls()
+    fireEvent.click(button('Continue campaign')!)
+    await waitFor(() => expect(agentTerminals()).toHaveLength(1))
+
+    const [terminal] = agentTerminals()
+    expect(terminal.tabs[0]).toMatchObject({
+      type: 'claude',
+      campaignId: 'OITO',
+      initialInput: `Retome a campanha OITO pela tarefa OITO-02 («em andamento»), pelo registro ${REGISTRY}.`,
+    })
+    const board = useProjectsStore
+      .getState()
+      .projects[0].terminals.find((item) => item.kind === 'orchestrator')
+    expect(useProjectsStore.getState().projects[0].paneGroups).toEqual([
+      expect.objectContaining({ kind: 'orchestration', paneIds: [terminal.id, board!.id] }),
+    ])
+    expect(useUiStore.getState().activeTerminal?.terminalId).toBe(terminal.id)
+    expect(writePty).not.toHaveBeenCalled()
+  })
+
+  it('else from the first ready task with nothing unmet, typed and submitted in the open tab', async () => {
+    const registry = withOito(structuredClone(exemplo), { handoff: 'docs/handoff.md' })
+    for (const item of registry.campanhas.find((campaign) => campaign.id === 'OITO')!.tarefas) {
+      // Nothing in progress, and OITO-03 waits on a blocked task: OITO-04 comes next.
+      if (item.id === 'OITO-02') Object.assign(item, { estado: 'bloqueada' })
+      if (item.id === 'OITO-03') Object.assign(item, { depende_de: ['OITO-07'] })
+    }
+    fs.files.set(REGISTRY, JSON.stringify(registry))
+    fs.handoff = 'C:\\repo\\docs\\handoff.md'
+    const terminal = agentTab('OITO', 'pty-o', 'waiting')
+    await openControls()
+    fireEvent.click(button('Continue campaign')!)
+
+    const prompt =
+      'Retome a campanha OITO pela tarefa OITO-04 («pronta, depende de outra campanha»), ' +
+      `pelo registro ${REGISTRY} e pelo handoff «C:\\repo\\docs\\handoff.md».`
+    await waitFor(() => expect(writePty).toHaveBeenCalledTimes(2))
+    // The text first, then Enter on its own, as the initial input is sent.
+    expect(vi.mocked(writePty).mock.calls).toEqual([
+      ['pty-o', prompt],
+      ['pty-o', '\r'],
+    ])
+    expect(useUiStore.getState().activeTerminal?.terminalId).toBe(terminal.id)
+    expect(agentTerminals()).toHaveLength(1)
+  })
+
+  it('gives a tab whose terminal was disabled the prompt as its initial input', async () => {
+    fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    const terminal = agentTab('OITO', 'pty-o', 'waiting')
+    useProjectsStore.getState().setTerminalDisabled(projectId(), terminal.id, true)
+    await openControls()
+    fireEvent.click(button('Continue campaign')!)
+
+    await waitFor(() => expect(terminalById(terminal.id)?.disabled).toBe(false))
+    await waitFor(() =>
+      expect(terminalById(terminal.id)?.tabs[0].initialInput).toBe(
+        `Retome a campanha OITO pela tarefa OITO-02 («em andamento»), pelo registro ${REGISTRY}.`,
+      ),
+    )
+    expect(writePty).not.toHaveBeenCalled()
+  })
+
+  it('cannot continue a campaign with nothing ready, and says so', async () => {
+    fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    // DEPOIS-01 is ready, but its campaign waits for ABERTA.
+    useTodosStore.setState({ activeCampaigns: { [projectId()]: 'DEPOIS' } })
+    render(<TodoSidebar />)
+    fireEvent.click(await toggle())
+    expect(button('Continue campaign')).toBeDisabled()
+    expect(screen.getByText('Nothing ready to resume')).toBeInTheDocument()
+  })
+
+  it('pauses by sending Esc to each of its working tabs, leaving its workers alone', async () => {
+    fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    orchestrator.jobs = [{ id: 'job-1', task: 'OITO-03', status: 'running', cwd: 'C:\\repo' }]
+    agentTab('OITO', 'pty-a', 'working')
+    agentTab('OITO', 'pty-b', 'waiting')
+    agentTab('PARADA', 'pty-c', 'working')
+    await openControls()
+    expect(button('Continue campaign')).toBeNull()
+    expect(button('Cancel campaign')).toBeEnabled()
+
+    fireEvent.click(button('Pause campaign')!)
+    await waitFor(() => expect(writePty).toHaveBeenCalledTimes(1))
+    expect(writePty).toHaveBeenCalledWith('pty-a', '\x1b')
+    expect(orchestratorCancel).not.toHaveBeenCalled()
+    expect(askConfirm).not.toHaveBeenCalled()
+  })
+
+  it('cancels only once confirmed: interrupts, cancels its workers, closes its tabs and puts its tasks back', async () => {
+    const text = JSON.stringify(exemplo)
+    fs.files.set(REGISTRY, text)
+    orchestrator.jobs = [
+      { id: 'job-run', task: 'OITO-03', status: 'running', cwd: 'C:\\repo' },
+      { id: 'job-queued', task: 'OITO-05', status: 'queued', cwd: 'C:\\repo-feature' },
+      { id: 'job-blocked', task: 'OITO-05', status: 'blocked', cwd: 'C:\\repo' },
+      { id: 'job-done', task: 'OITO-03', status: 'done', cwd: 'C:\\repo' },
+      // Same id, another repository; and another campaign.
+      { id: 'job-other-repo', task: 'OITO-03', status: 'running', cwd: OTHER_REPO },
+      { id: 'job-parada', task: 'PARADA-01', status: 'running', cwd: 'C:\\repo' },
+    ]
+    const alone = agentTab('OITO', 'pty-a', 'working')
+    const shared = agentTab('OITO', 'pty-b', 'waiting')
+    useProjectsStore
+      .getState()
+      .createSubTab(projectId(), shared.id, { type: 'shell', cwd: 'C:\\repo' })
+    const other = agentTab('PARADA', 'pty-c', 'working')
+    await openControls()
+    await waitFor(() => expect(button('Cancel campaign')).toBeEnabled())
+
+    // No: nothing happens.
+    fireEvent.click(button('Cancel campaign')!)
+    await waitFor(() => expect(askConfirm).toHaveBeenCalledTimes(1))
+    expect(askConfirm.mock.calls[0][0]).toContain('OITO')
+    await act(async () => {})
+    expect(writePty).not.toHaveBeenCalled()
+    expect(orchestratorCancel).not.toHaveBeenCalled()
+    expect(agentTerminals()).toHaveLength(3)
+    expect(fs.files.get(REGISTRY)).toBe(text)
+
+    // Yes, with the registry write held to see the controls wait for it.
+    let release: () => void = () => {}
+    const write = vi.mocked(campaignRegistryWrite).getMockImplementation()!
+    vi.mocked(campaignRegistryWrite).mockImplementationOnce(
+      (...args) =>
+        new Promise((resolve, reject) => {
+          release = () => void write(...args).then(resolve, reject)
+        }),
+    )
+    askConfirm.mockResolvedValueOnce(true)
+    fireEvent.click(button('Cancel campaign')!)
+    await waitFor(() => expect(campaignRegistryWrite).toHaveBeenCalledTimes(1))
+    expect(writePty).toHaveBeenCalledTimes(1)
+    expect(writePty).toHaveBeenCalledWith('pty-a', '\x1b')
+    expect(
+      vi
+        .mocked(orchestratorCancel)
+        .mock.calls.map(([id]) => id)
+        .sort(),
+    ).toEqual(['job-blocked', 'job-queued', 'job-run'])
+    // Its own terminal goes; the shared one keeps its other tab; the other campaign's stays.
+    expect(terminalById(alone.id)).toBeUndefined()
+    expect(terminalById(shared.id)?.tabs.map((tab) => tab.type)).toEqual(['shell'])
+    expect(terminalById(other.id)).toBeDefined()
+    expect(cleanupPtys).toHaveBeenCalledWith(['pty-a'])
+    expect(cleanupPtys).toHaveBeenCalledWith(['pty-b'])
+    // Its workers still show live until the board says otherwise: the controls wait on the write.
+    expect(button('Pause campaign')).toBeDisabled()
+    expect(button('Cancel campaign')).toBeDisabled()
+
+    await act(async () => release())
+    await waitFor(() => expect(task('OITO-02')?.estado).toBe('pronta'))
+    // Only the task in progress changed; nothing was concluded or deleted.
+    expect(task('OITO-01')).toEqual(original('OITO-01'))
+    expect(task('OITO-03')).toEqual(original('OITO-03'))
+    expect(campaignRegistryWrite).toHaveBeenCalledTimes(1)
+    await waitFor(() =>
+      expect(lastToast()?.body).toBe(
+        'Tabs closed: 2 · workers cancelled: 3 · tasks back to Ready: 1',
+      ),
+    )
+    await waitFor(() => expect(button('Cancel campaign')).toBeEnabled())
+  })
+
+  /** OITO with these tasks set to these states. */
+  const oitoWith = (states: Record<string, string>) => {
+    const data = structuredClone(exemplo)
+    for (const item of data.campanhas.flatMap((campaign) => campaign.tarefas)) {
+      if (item.id in states) item.estado = states[item.id]
+    }
+    return JSON.stringify(data)
+  }
+  /** Answers yes to the confirmation and clicks Cancel. */
+  const confirmCancel = () => {
+    askConfirm.mockResolvedValueOnce(true)
+    fireEvent.click(button('Cancel campaign')!)
+  }
+
+  it('runs one action at a time: a second click while one runs sends nothing more', async () => {
+    fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    agentTab('OITO', 'pty-o', 'waiting')
+    await openControls()
+    const resume = button('Continue campaign')!
+    fireEvent.click(resume)
+    fireEvent.click(resume)
+    expect(resume).toBeDisabled()
+    await waitFor(() => expect(writePty).toHaveBeenCalledWith('pty-o', '\r'))
+    await act(() => new Promise((resolve) => setTimeout(resolve, 300)))
+    expect(vi.mocked(writePty).mock.calls.map(([, data]) => data === '\r')).toEqual([false, true])
+    expect(resume).toBeEnabled()
+  })
+
+  it('leaves the prompt typed, without Enter, when the agent starts working before it', async () => {
+    fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    agentTab('OITO', 'pty-o', 'waiting')
+    // The agent starts a turn of its own while the prompt is being typed.
+    vi.mocked(writePty).mockImplementationOnce(async () => {
+      useTerminalsStore.getState().setStatus('pty-o', 'working')
+    })
+    await openControls()
+    fireEvent.click(button('Continue campaign')!)
+    await waitFor(() =>
+      expect(lastToast()?.body).toBe(
+        'The agent of OITO started working, so the prompt was left in its input without Enter.',
+      ),
+    )
+    expect(writePty).toHaveBeenCalledTimes(1)
+  })
+
+  it('cancels nothing when the workers cannot be listed', async () => {
+    const text = JSON.stringify(exemplo)
+    fs.files.set(REGISTRY, text)
+    agentTab('OITO', 'pty-a', 'working')
+    await openControls()
+    await waitFor(() => expect(button('Cancel campaign')).toBeEnabled())
+    vi.mocked(orchestratorJobs).mockRejectedValueOnce('orchestrator down')
+
+    confirmCancel()
+    await waitFor(() =>
+      expect(lastToast()?.body).toBe(
+        'Could not list the orchestration workers, so nothing was cancelled: orchestrator down',
+      ),
+    )
+    expect(writePty).not.toHaveBeenCalled()
+    expect(orchestratorCancel).not.toHaveBeenCalled()
+    expect(agentTerminals()).toHaveLength(1)
+    expect(campaignRegistryWrite).not.toHaveBeenCalled()
+    expect(fs.files.get(REGISTRY)).toBe(text)
+  })
+
+  it('keeps in progress the tasks whose workers it could not cancel, and says which', async () => {
+    fs.files.set(
+      REGISTRY,
+      oitoWith({ 'OITO-03': 'em execução', 'OITO-05': 'em execução', 'OITO-08': 'em execução' }),
+    )
+    orchestrator.jobs = [
+      { id: 'job-refused', task: 'OITO-02', status: 'running', cwd: 'C:\\repo' },
+      { id: 'job-stuck', task: 'OITO-03', status: 'running', cwd: 'C:\\repo' },
+      { id: 'job-gone', task: 'OITO-05', status: 'queued', cwd: 'C:\\repo' },
+    ]
+    // Refused; accepted but still live in the next snapshot; and cancelled.
+    vi.mocked(orchestratorCancel)
+      .mockRejectedValueOnce('refused')
+      .mockResolvedValueOnce(null)
+      .mockImplementationOnce(async () => {
+        orchestrator.jobs = orchestrator.jobs.map((job) =>
+          job.id === 'job-gone' ? { ...job, status: 'cancelled' } : job,
+        )
+        return null
+      })
+    await openControls()
+    await waitFor(() => expect(button('Cancel campaign')).toBeEnabled())
+
+    confirmCancel()
+    await waitFor(() => expect(task('OITO-05')?.estado).toBe('pronta'))
+    expect(task('OITO-08')?.estado).toBe('pronta')
+    expect(task('OITO-02')?.estado).toBe('em execução')
+    expect(task('OITO-03')?.estado).toBe('em execução')
+    await waitFor(() =>
+      expect(lastToast()?.body).toBe(
+        'Tabs closed: 0 · workers cancelled: 1 · tasks back to Ready: 2. ' +
+          'Workers still live on OITO-02, OITO-03: those tasks stay in progress.',
+      ),
+    )
+  })
+
+  it('puts tasks back from the registry on disk, even a change the list has not read yet', async () => {
+    fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    agentTab('OITO', 'pty-a', 'working')
+    await openControls()
+    await waitFor(() => expect(button('Cancel campaign')).toBeEnabled())
+    // Written by the script, not yet reloaded: OITO-07 done, OITO-03 started.
+    fs.files.set(REGISTRY, oitoWith({ 'OITO-07': 'concluída', 'OITO-03': 'em execução' }))
+
+    confirmCancel()
+    await waitFor(() => expect(task('OITO-02')?.estado).toBe('pronta'))
+    expect(task('OITO-03')?.estado).toBe('pronta')
+    expect(task('OITO-07')?.estado).toBe('concluída')
+    expect(campaignRegistryWrite).toHaveBeenCalledTimes(1)
+    await waitFor(() =>
+      expect(lastToast()?.body).toBe(
+        'Tabs closed: 1 · workers cancelled: 0 · tasks back to Ready: 2',
+      ),
+    )
+  })
+
+  it('retries a refused release once from the file as it is then, and reports a second refusal', async () => {
+    fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    agentTab('OITO', 'pty-a', 'working')
+    agentTab('OITO', 'pty-b', 'working')
+    await openControls()
+    await waitFor(() => expect(button('Cancel campaign')).toBeEnabled())
+    vi.mocked(campaignRegistryWrite).mockRejectedValueOnce('conflict')
+
+    confirmCancel()
+    await waitFor(() => expect(task('OITO-02')?.estado).toBe('pronta'))
+    expect(campaignRegistryWrite).toHaveBeenCalledTimes(2)
+    expect(useUiStore.getState().toasts.map((toast) => toast.body)).not.toContain(
+      'The registry changed since it was read. The list was reloaded; try again.',
+    )
+
+    // Refused twice: reported, and the task stays in progress.
+    cleanup()
+    vi.clearAllMocks()
+    useUiStore.setState({ toasts: [] })
+    fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    agentTab('OITO', 'pty-c', 'working')
+    await openControls()
+    await waitFor(() => expect(button('Cancel campaign')).toBeEnabled())
+    vi.mocked(campaignRegistryWrite)
+      .mockRejectedValueOnce('conflict')
+      .mockRejectedValueOnce('conflict')
+    confirmCancel()
+    await waitFor(() =>
+      expect(useUiStore.getState().toasts.map((toast) => toast.body)).toContain(
+        'The registry changed since it was read. The list was reloaded; try again.',
+      ),
+    )
+    expect(campaignRegistryWrite).toHaveBeenCalledTimes(2)
+    expect(task('OITO-02')?.estado).toBe('em execução')
+  })
+
+  it('keeps in progress a task whose new worker started while the old one was cancelled', async () => {
+    fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    orchestrator.jobs = [
+      { id: 'old', task: 'OITO-02', status: 'running', cwd: 'C:\\repo' },
+      // Another repository's worker on the same id never counts.
+      { id: 'elsewhere', task: 'OITO-08', status: 'running', cwd: OTHER_REPO },
+    ]
+    vi.mocked(orchestratorCancel).mockImplementationOnce(async () => {
+      orchestrator.jobs = [
+        { id: 'old', task: 'OITO-02', status: 'cancelled', cwd: 'C:\\repo' },
+        { id: 'new', task: 'OITO-02', status: 'running', cwd: 'C:\\repo-feature' },
+        { id: 'elsewhere', task: 'OITO-08', status: 'running', cwd: OTHER_REPO },
+      ]
+      return null
+    })
+    agentTab('OITO', 'pty-a', 'working')
+    await openControls()
+    await waitFor(() => expect(button('Cancel campaign')).toBeEnabled())
+
+    confirmCancel()
+    await waitFor(() =>
+      expect(lastToast()?.body).toBe(
+        'Tabs closed: 1 · workers cancelled: 1 · tasks back to Ready: 0. ' +
+          'Workers still live on OITO-02: those tasks stay in progress.',
+      ),
+    )
+    expect(orchestratorCancel).toHaveBeenCalledTimes(1)
+    expect(task('OITO-02')?.estado).toBe('em execução')
+    expect(campaignRegistryWrite).not.toHaveBeenCalled()
   })
 })
 

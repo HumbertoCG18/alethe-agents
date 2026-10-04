@@ -9,7 +9,7 @@ import { EMPTY_PROJECTS_FILE } from '../../lib/types'
 import type { AgentHookPayload } from '../../stores/agentCanvasStore'
 import { useProjectsStore } from '../../stores/projectsStore'
 import { useTerminalsStore } from '../../stores/terminalsStore'
-import { useXtermSession } from './useXtermSession'
+import { submitInitialInput, useXtermSession } from './useXtermSession'
 
 const hooks = vi.hoisted(() => new Set<(event: { payload: AgentHookPayload }) => void>())
 const scrolls = vi.hoisted(() => [] as Array<() => void>)
@@ -28,6 +28,7 @@ vi.mock('@xterm/xterm', () => ({
   Terminal: class {
     cols = 80
     rows = 24
+    modes = { bracketedPasteMode: false }
     unicode = { activeVersion: '11' }
     options = { fontSize: 14 }
     loadAddon() {}
@@ -68,6 +69,7 @@ vi.mock('../../lib/tauri', async (importOriginal) => ({
   ]),
   agentHooksSettingsPath: vi.fn(async () => 'hooks.json'),
   spawnPty: vi.fn(async () => ({ id: 'pty-0' })),
+  writePty: vi.fn(async () => {}),
 }))
 
 function emit(sessionId: string, plannerId = 'pty-0') {
@@ -233,5 +235,58 @@ describe('Claude terminal session lifecycle', () => {
     await waitFor(() => expect(scrolls).toHaveLength(1))
     act(() => scrolls[0]())
     expect(input.hideLinkActions).toHaveBeenCalled()
+  })
+})
+
+describe('initial input', () => {
+  const enters = () =>
+    vi.mocked(tauri.writePty).mock.calls.filter(([, data]) => data === '\r').length
+  const status = (value: 'working' | 'waiting') =>
+    act(() => useTerminalsStore.getState().setStatus('pty-0', value))
+
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => vi.useRealTimers())
+
+  it('submits with Enter, then its retries, in an idle fresh session', async () => {
+    useTerminalsStore.getState().registerPty('pty-0')
+    const sent = submitInitialInput('pty-0')
+    await vi.advanceTimersByTimeAsync(150)
+    await sent
+    expect(enters()).toBe(1)
+    await vi.advanceTimersByTimeAsync(6_000)
+    expect(enters()).toBe(4)
+  })
+
+  it('sends no Enter while the agent is working', async () => {
+    useTerminalsStore.getState().registerPty('pty-0')
+    status('working')
+    const sent = submitInitialInput('pty-0')
+    await vi.advanceTimersByTimeAsync(10_000)
+    await sent
+    expect(enters()).toBe(0)
+  })
+
+  it('stops the retries once the agent is working, even when it is done again by the next one', async () => {
+    useTerminalsStore.getState().registerPty('pty-0')
+    const sent = submitInitialInput('pty-0')
+    await vi.advanceTimersByTimeAsync(1_400)
+    await sent
+    expect(enters()).toBe(2)
+    status('working')
+    await vi.advanceTimersByTimeAsync(500)
+    status('waiting')
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(enters()).toBe(2)
+  })
+
+  it('goes through that guard when a fresh session is given its initial input', async () => {
+    const input = { ...params(), sessionId: undefined, initialInput: 'Retome a campanha X.' }
+    renderHook(() => useXtermSession(input))
+    await vi.advanceTimersByTimeAsync(1_000)
+    // The agent starts a turn of its own before the prompt is submitted.
+    status('working')
+    await vi.advanceTimersByTimeAsync(15_000)
+    expect(tauri.writePty).toHaveBeenCalledWith('pty-0', 'Retome a campanha X.')
+    expect(enters()).toBe(0)
   })
 })

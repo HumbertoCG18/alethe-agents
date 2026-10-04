@@ -14,6 +14,7 @@ import {
   type CampaignTask,
   campaignWorkers,
   checkedResult,
+  inCheckouts,
   isoDay,
   liveTaskWorkers,
   type NightDiary,
@@ -38,6 +39,7 @@ import {
   listDirectory,
   listenFileChanged,
   listenOrchestratorJobs,
+  orchestratorCancel,
   type OrchestratorJob,
   orchestratorJobs,
   type OrchestratorSnapshot,
@@ -45,11 +47,12 @@ import {
   unwatchFile,
   watchFile,
   worktreeCheckouts,
+  writePty,
 } from '../../lib/tauri'
 import { getProjectDefaultCwd } from '../../lib/terminalFactory'
 import type { PtyStatus, SubTab, Terminal } from '../../lib/types'
 import { selectActiveProject, useProjectsStore } from '../../stores/projectsStore'
-import { anyTabWorking, type PtyRuntime } from '../../stores/terminalsStore'
+import { anyTabWorking, type PtyRuntime, useTerminalsStore } from '../../stores/terminalsStore'
 import { useUiStore } from '../../stores/uiStore'
 import { useTodosStore } from './store'
 import { createWatchSet } from './watchSet'
@@ -263,11 +266,20 @@ function focusTerminal(projectId: string, terminalId: string, show: boolean) {
 }
 
 /**
- * Focuses the `agent` tab opened for this campaign, or opens one with its resume prompt, as a
- * planner grouped with an orchestration board, and returns its terminal id. A tab opened by hand,
- * or for another campaign, is never reused even in the same checkout: it would not get this
- * campaign's prompt. A `nightTask` (the night scheduler) always gets a fresh plain tab, with the
- * night prompt for that task.
+ * The campaign's handoff as found on disk. Handoff paths are relative to the main checkout;
+ * find_relative_path also looks in the sibling worktree named by the first segment.
+ */
+const findHandoff = (campaign: Campaign, registry: Registry): Promise<string | null> =>
+  campaign.handoff
+    ? findRelativePath(registry.main, campaign.handoff).catch(() => null)
+    : Promise.resolve(null)
+
+/**
+ * Focuses the `agent` tab opened for this campaign, or opens one with its resume prompt (from
+ * `resumeFrom` when given), as a planner grouped with an orchestration board, and returns its
+ * terminal id. A tab opened by hand, or for another campaign, is never reused even in the same
+ * checkout: it would not get this campaign's prompt. A `nightTask` (the night scheduler) always
+ * gets a fresh plain tab, with the night prompt for that task.
  */
 export async function openCampaign(
   projectId: string,
@@ -275,6 +287,7 @@ export async function openCampaign(
   agent: CampaignAgent,
   registry: Registry,
   nightTask?: CampaignTask,
+  resumeFrom?: CampaignTask,
 ): Promise<string | null> {
   const cwd = campaignCwd(campaign, registry.checkouts)
   if (!cwd || !useProjectsStore.getState().projects.some((item) => item.id === projectId)) {
@@ -284,11 +297,7 @@ export async function openCampaign(
     !nightTask && tab.type === agent && tab.campaignId === campaign.id
   let terminalId = activateTab(projectId, running)
   if (!terminalId) {
-    // Handoff paths are relative to the main checkout; find_relative_path also looks in the
-    // sibling worktree named by the first segment.
-    const handoff = campaign.handoff
-      ? await findRelativePath(registry.main, campaign.handoff).catch(() => null)
-      : null
+    const handoff = await findHandoff(campaign, registry)
     // Checked again: the tab may have been opened while the handoff was looked up.
     terminalId = activateTab(projectId, running)
     if (!terminalId) {
@@ -307,7 +316,7 @@ export async function openCampaign(
             extraArgs: nightTask ? ['--permission-mode', 'auto'] : undefined,
             initialInput: nightTask
               ? nightPrompt(campaign, nightTask, registry.path, handoff)
-              : resumePrompt(campaign, registry.path, handoff),
+              : resumePrompt(campaign, registry.path, handoff, resumeFrom),
           },
         })
       // The user's tab is a planner with its own board; the night's stays a plain tab.
@@ -324,6 +333,129 @@ export function continueCampaign(projectId: string, campaign: Campaign): boolean
   const terminalId = activateTab(projectId, (tab) => tab.campaignId === campaign.id)
   if (terminalId) focusTerminal(projectId, terminalId, true)
   return terminalId !== null
+}
+
+/** The campaign's tabs in the project, with their terminals. */
+function campaignTabs(projectId: string, campaignId: string) {
+  const terminals =
+    useProjectsStore.getState().projects.find((item) => item.id === projectId)?.terminals ?? []
+  return terminals.flatMap((terminal) =>
+    terminal.tabs.filter((tab) => tab.campaignId === campaignId).map((tab) => ({ terminal, tab })),
+  )
+}
+
+const tabWorking = (tab: SubTab) => anyTabWorking([tab], useTerminalsStore.getState().byPtyId)
+
+/**
+ * Types `text` into a running agent, then Enter on its own, as the initial input is sent. Enter is
+ * held back from an agent that started working meanwhile, so it cannot reach that turn: false then.
+ */
+async function submit(ptyId: string, text: string): Promise<boolean> {
+  await writePty(ptyId, text)
+  await new Promise((resolve) => window.setTimeout(resolve, 150))
+  if (useTerminalsStore.getState().byPtyId[ptyId]?.status === 'working') return false
+  await writePty(ptyId, '\r')
+  return true
+}
+
+/**
+ * Continue campaign: asks its agent to resume from `task`. The campaign's tab is focused, as by
+ * Continue, and gets the prompt typed and submitted unless its agent is working; a tab whose pty
+ * is not running (a disabled terminal enabled again) gets it as its initial input. Without a tab,
+ * a Claude Code one is opened with its board and the prompt. Resolves false when the prompt was
+ * left typed in the input, without Enter.
+ */
+export async function resumeCampaign(
+  projectId: string,
+  campaign: Campaign,
+  registry: Registry,
+  task: CampaignTask,
+): Promise<boolean> {
+  // Looked up first: a tab without a pty must get its input before it renders and spawns one.
+  const prompt = resumePrompt(campaign, registry.path, await findHandoff(campaign, registry), task)
+  if (!continueCampaign(projectId, campaign)) {
+    await openCampaign(projectId, campaign, 'claude', registry, undefined, task)
+    return true
+  }
+  const focused = useUiStore.getState().activeTerminal?.terminalId
+  const found = campaignTabs(projectId, campaign.id).find(
+    ({ terminal, tab }) => terminal.id === focused && terminal.activeTabId === tab.id,
+  )
+  if (!found) return true
+  const { terminal, tab } = found
+  if (!tab.ptyId) {
+    useProjectsStore.getState().setSubTabInitialInput(projectId, terminal.id, tab.id, prompt)
+  } else if (!tabWorking(tab)) {
+    return submit(tab.ptyId, prompt)
+  }
+  return true
+}
+
+/**
+ * Pause campaign: Esc to each of its tabs whose agent is working, which interrupts the turn as
+ * pressing it in Claude Code or Codex does. Orchestration workers are left running.
+ */
+export async function pauseCampaign(projectId: string, campaignId: string): Promise<void> {
+  const working = campaignTabs(projectId, campaignId).flatMap(({ tab }) =>
+    tab.ptyId && tabWorking(tab) ? [tab.ptyId] : [],
+  )
+  await Promise.all(working.map((ptyId) => writePty(ptyId, '\x1b').catch(() => {})))
+}
+
+const LIVE_JOBS: ReadonlySet<OrchestratorJob['status']> = new Set(['queued', 'running', 'blocked'])
+
+export type CampaignCancel = {
+  tabs: number
+  /** Workers cancelled, as the next snapshot shows them. */
+  jobs: number
+  /** Tasks with a worker still live after the cancel: refused, still running, or started since. */
+  live: string[]
+}
+
+/**
+ * Cancel campaign, once the user agreed. Its live orchestration workers (those on its tasks in this
+ * repository's checkouts, one stopped on a question included) are listed first: when they cannot
+ * be, it throws before anything is done. Then it interrupts its working tabs, cancels those
+ * workers, checks a new snapshot for any of its workers still live, and closes its tabs the way the
+ * UI does,
+ * which kills their ptys: a terminal holding only its tabs is deleted, another one loses just those
+ * tabs. The registry is left to the caller.
+ */
+export async function cancelCampaign(
+  projectId: string,
+  campaign: Campaign,
+  registry: Registry,
+): Promise<CampaignCancel> {
+  const tasks = new Set(campaign.tasks.map((task) => task.id))
+  const liveJobs = (snapshot: OrchestratorSnapshot) =>
+    snapshot.jobs.filter(
+      (job) =>
+        job.task &&
+        tasks.has(job.task) &&
+        LIVE_JOBS.has(job.status) &&
+        inCheckouts(job.cwd, registry.checkouts),
+    )
+  const jobs = liveJobs(await orchestratorJobs())
+  await pauseCampaign(projectId, campaign.id)
+  const results = await Promise.allSettled(jobs.map((job) => orchestratorCancel(job.id)))
+  // Any worker of the campaign live now counts, also one started since the first listing; without
+  // a new snapshot, no cancel is confirmed.
+  const after = await orchestratorJobs().catch(() => null)
+  const stillLive = after ? liveJobs(after) : jobs
+  const refused = jobs.filter((_, index) => results[index].status === 'rejected')
+  const live = [...refused, ...stillLive]
+  const store = useProjectsStore.getState()
+  const own = campaignTabs(projectId, campaign.id)
+  for (const terminal of new Set(own.map((item) => item.terminal))) {
+    const tabs = own.filter((item) => item.terminal === terminal).map((item) => item.tab)
+    if (tabs.length === terminal.tabs.length) store.deleteTerminal(projectId, terminal.id)
+    else for (const tab of tabs) store.closeSubTab(projectId, terminal.id, tab.id)
+  }
+  return {
+    tabs: own.length,
+    jobs: jobs.filter((job) => !live.some((other) => other.id === job.id)).length,
+    live: [...new Set(live.flatMap((job) => (job.task ? [job.task] : [])))],
+  }
 }
 
 /** What a campaign with something live for it shows: a subset of the pty statuses. */
@@ -499,8 +631,15 @@ export function useCampaignEdits(view: CampaignView) {
   const notify = (body: string, actions?: { label: string; run: () => void }[]) =>
     pushToast({ title: t('todo.campaignWrite.title'), body, actions })
 
-  /** Writes `content` over `base`, the registry as read; false, with a toast, when refused. */
-  const write = async (base: Base, content: string): Promise<boolean> => {
+  /**
+   * Writes `content` over `base`, the registry as read; false, with a toast, when refused. With
+   * `retry`, a conflict is handed back as `conflict` instead, for the caller to try again.
+   */
+  const write = async (
+    base: Base,
+    content: string,
+    retry = false,
+  ): Promise<boolean | 'conflict'> => {
     if (busy.current) return false
     busy.current = true
     rerender()
@@ -512,6 +651,7 @@ export function useCampaignEdits(view: CampaignView) {
       void latest.current.reload()
       return true
     } catch (error) {
+      if (retry && error === 'conflict') return 'conflict'
       notify(
         error === 'conflict'
           ? t('todo.campaignWrite.conflict')
@@ -620,7 +760,7 @@ export function useCampaignEdits(view: CampaignView) {
       const registry = latest.current.registry
       if (!registry) return false
       const result = addCampaignTask(registry.text, campaign.id, title, isoDay(new Date()))
-      if (result.ok) return write(registry, result.content)
+      if (result.ok) return (await write(registry, result.content)) === true
       if (result.error === 'duplicate') {
         notify(t('todo.campaignWrite.duplicate', { campaign: campaign.id, id: result.id }))
       } else if (result.error === 'title') notify(t('todo.campaignWrite.badTitle'))
@@ -638,6 +778,58 @@ export function useCampaignEdits(view: CampaignView) {
 
     /** The user's Gate 2 on a task waiting for it: done, with `evidence` when given, and an undo. */
     conclude: (taskId: string, evidence?: string) => check(taskId, evidence),
+
+    /**
+     * Puts every task in progress of `campaignId` back as ready, but those in `keep`, in one write
+     * over the registry at `path`; only their states change. It starts from the file as it is now,
+     * not as the list last read it, so a change the list has not read yet does not refuse it; a
+     * conflict is tried once more from the file as it is then. Returns how many, or null when
+     * nothing was written.
+     */
+    release: async (
+      path: string,
+      campaignId: string,
+      keep: readonly string[] = [],
+    ): Promise<number | null> => {
+      for (const retry of [true, false]) {
+        let text: string
+        try {
+          text = await readTextFile(path)
+        } catch (error) {
+          notify(t('todo.campaignWrite.failed', { message: String(error) }))
+          return null
+        }
+        const campaign = parseCampaigns(text)?.campaigns.find((item) => item.id === campaignId)
+        const running = (campaign?.tasks ?? [])
+          .filter((task) => task.state === 'em execução' && !keep.includes(task.id))
+          .map((task) => task.id)
+        if (running.length === 0) return 0
+        let content = text
+        for (const taskId of running) {
+          const edit = setCampaignTaskState(
+            content,
+            taskId,
+            'pronta',
+            undefined,
+            isoDay(new Date()),
+          )
+          if (!edit.ok) {
+            notify(
+              t(
+                edit.error === 'missing'
+                  ? 'todo.campaignWrite.conflict'
+                  : 'todo.campaignWrite.invalid',
+              ),
+            )
+            return null
+          }
+          content = edit.content
+        }
+        const written = await write({ path, text }, content, retry)
+        if (written !== 'conflict') return written ? running.length : null
+      }
+      return null
+    },
 
     /** Puts a task back as ready, for the next night to retry it; only its state changes. */
     requeue: async (taskId: string) => {

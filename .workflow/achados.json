@@ -38,6 +38,15 @@
       "detalhe": "04/10: Alethe Dev aberto por Start-Process de dentro do Claude Code herdou CLAUDECODE, CLAUDE_CODE_CHILD_SESSION, CLAUDE_CODE_MESSAGING_* etc.; o Claude nas abas virou sessão filha (sem transcript, sem auto memory, status bar padrão). Proposta: spawn_pty remove as variáveis de sessão do Claude Code do ambiente herdado. Vale também para npm run app aberto num terminal do Claude.",
       "estado": "virou-tarefa",
       "destino": "UI-03"
+    },
+    {
+      "id": "ACH-0005",
+      "data": "2026-10-04",
+      "tipo": "bug",
+      "titulo": "Terminais herdam NO_COLOR quando o Alethe é aberto de dentro do Claude Code",
+      "origem": "UI-03",
+      "detalhe": "04/10: o instalador aberto pelo script herdou NO_COLOR do terminal de ferramentas do Claude Code; o Alethe e as abas ficaram sem cor. O #58 só remove CLAUDE*. Proposta: remover NO_COLOR junto quando houver sessão externa (CLAUDECODE/CLAUDE_CODE_SESSION_ID), como CLAUDE_CODE_DISABLE_AUTO_MEMORY.",
+      "estado": "novo"
     }
   ]
 }

@@ -280,7 +280,7 @@
       "worktrees": [
         "alethe-agents-agy"
       ],
-      "atualizado_em": "2026-09-24",
+      "atualizado_em": "2026-10-04",
       "tarefas": [
         {
           "id": "AGY-01",
@@ -288,6 +288,26 @@
           "nivel": "T2",
           "estado": "proposta",
           "depende_de": [],
+          "origem": "USER"
+        },
+        {
+          "id": "AGY-02",
+          "titulo": "Orquestrador AGY: planejador e revisor Opus 5.5, por último na ordem Claude Code, Codex, AGY",
+          "nivel": "T2",
+          "estado": "proposta",
+          "depende_de": [
+            "AGY-01"
+          ],
+          "origem": "USER"
+        },
+        {
+          "id": "AGY-03",
+          "titulo": "Workers AGY de pesquisa e auditoria (só leitura) com Sonnet 5.5 e Opus 5.5, esforço pelo id do modelo",
+          "nivel": "T2",
+          "estado": "proposta",
+          "depende_de": [
+            "AGY-01"
+          ],
           "origem": "USER"
         }
       ]

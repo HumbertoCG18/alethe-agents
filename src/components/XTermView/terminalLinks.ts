@@ -10,6 +10,8 @@ export type DetectedTerminalLink = {
   kind: 'url' | 'path'
 
   fileKind?: FileLinkKind
+  /** The path joined with the rows a TUI cut it across; see `wrappedPathCandidates`. */
+  wrapped?: string[]
 }
 
 type TerminalBufferLine = {
@@ -178,6 +180,131 @@ export function detectTerminalLinks(line: string): DetectedTerminalLink[] {
     })
   }
   return links
+}
+
+function isPathBoundary(char: string): boolean {
+  return /\s/.test(char) || HARD_LINK_DELIMITERS.has(char)
+}
+
+/** The rows of a logical line and the two on each side of it, nearest first, as xterm prints them. */
+export type TerminalLinkRows = {
+  above: readonly string[]
+  line: readonly string[]
+  below: readonly string[]
+}
+
+/** Reads the rows of `logical` and around it from the buffer. A row's text skips the second cell of
+ * a wide glyph, so joined the line's rows are exactly its text, whatever the width of its cells;
+ * only its last row is trimmed, as in `getLogicalTerminalLine`. */
+export function terminalRowsAround(
+  buffer: TerminalBuffer,
+  logical: LogicalTerminalLine,
+): TerminalLinkRows {
+  const row = (index: number, trimRight = true) =>
+    buffer.getLine(index)?.translateToString(trimRight) ?? ''
+  const first = logical.startLine - 1
+  let next = first + 1
+  while (next < buffer.length && buffer.getLine(next)?.isWrapped) next += 1
+  return {
+    above: [row(first - 1), row(first - 2)],
+    line: Array.from({ length: next - first }, (_, i) => row(first + i, first + i === next - 1)),
+    below: [row(next), row(next + 1)],
+  }
+}
+
+/**
+ * Claude Code wraps long lines itself, moving the cursor instead of letting the terminal wrap, so a
+ * path cut at a row end goes on after the indentation of the next row, and xterm keeps the halves
+ * apart, each its own link or none. Returns the clicked link, found in the text of `rows.line`,
+ * joined with the leading token of the rows below when it ends its row, or with the trailing token
+ * of the rows above when it opens its row; up to two rows each way, the farther only through a row
+ * that is all path. How full the cut row is proves nothing, since a resize or a wide glyph changes
+ * it, so these are only guesses for `locateTerminalPath` to check against the disk.
+ */
+export function wrappedPathCandidates(
+  link: Pick<DetectedTerminalLink, 'text' | 'index' | 'displayLength' | 'kind'>,
+  { above, line, below }: TerminalLinkRows,
+): string[] {
+  if (link.kind !== 'path' || !line.length) return []
+  const rows = [...[...above].reverse(), ...line, ...below]
+  // The row and column of an offset in the line's text.
+  const at = (offset: number) => {
+    let row = 0
+    while (row < line.length - 1 && offset >= line[row].length) offset -= line[row++].length
+    return { row: above.length + row, col: offset }
+  }
+  const first = at(link.index)
+  const last = at(link.index + link.displayLength - 1)
+
+  const candidates: string[] = []
+  if (!rows[first.row].slice(0, first.col).trim()) {
+    let head = ''
+    for (let row = first.row - 1; row >= Math.max(0, first.row - 2); row -= 1) {
+      const text = rows[row].trim()
+      let start = text.length
+      while (start > 0 && !isPathBoundary(text[start - 1])) start -= 1
+      if (start === text.length) break
+      head = text.slice(start) + head
+      candidates.push(head + link.text)
+      if (start > 0) break
+    }
+  }
+  // Punctuation the link dropped at the row end may be the cut in the middle of the path.
+  const rest = rows[last.row].slice(last.col + 1).trimEnd()
+  if (/^[),.;:]*$/.test(rest)) {
+    let tail = rest
+    for (let row = last.row + 1; row <= last.row + 2 && row < rows.length; row += 1) {
+      const text = rows[row].trim()
+      let stop = 0
+      while (stop < text.length && !isPathBoundary(text[stop])) stop += 1
+      const token = text.slice(0, stop)
+      if (!token.replace(LINK_TRAILING_PUNCTUATION, '')) break
+      candidates.push((link.text + tail + token).replace(LINK_TRAILING_PUNCTUATION, ''))
+      if (stop < text.length) break
+      tail += token
+    }
+  }
+  return candidates
+}
+
+/** Whether the path ends in one of the file extensions links are detected by; a dotted folder such
+ * as `.claude` does not. */
+function hasKnownFileExtension(path: string): boolean {
+  const clean = stripLineColumn(path)
+  return FILE_EXT_BOUNDARY_PATTERN.test(clean.slice(clean.lastIndexOf('.')))
+}
+
+/** Where a clicked path link is on disk, each path looked up through `find`, which also searches
+ * the repository's other checkouts. A file link that exists wins, so the text around it never
+ * redirects it. Otherwise the longest wrapped candidate that exists, since a row cut right after a
+ * folder name leaves a link to the folder; when none exists, the path as printed. The kind comes
+ * from the path found: a cut half printed without its extension has none. */
+export async function locateTerminalPath(
+  link: Pick<DetectedTerminalLink, 'target' | 'wrapped'>,
+  cwd: string,
+  home: string | null,
+  find: (cwd: string, path: string) => Promise<string | null>,
+): Promise<{ target: string; fileKind?: FileLinkKind }> {
+  const lookup = (path: string) =>
+    find(cwd, relativeTerminalPath(path) ?? resolveTerminalFilePath(path, cwd, home)).catch(
+      () => null,
+    )
+  let found = await lookup(link.target)
+  // The candidates are only looked up when needed: each missing one costs a `git worktree list`.
+  if (!found || !hasKnownFileExtension(link.target)) {
+    const wrapped = link.wrapped ?? []
+    const located = await Promise.all(wrapped.map(lookup))
+    // Known limit: prose joined to a missing path or a folder still wins when that join exists.
+    let longest = found ? link.target.length : -1
+    located.forEach((path, index) => {
+      if (path && wrapped[index].length > longest) {
+        found = path
+        longest = wrapped[index].length
+      }
+    })
+  }
+  const target = found ?? resolveTerminalFilePath(link.target, cwd, home)
+  return { target, fileKind: classifyFileLink(target) }
 }
 
 export function getLogicalTerminalLine(

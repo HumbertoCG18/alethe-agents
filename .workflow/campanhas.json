@@ -130,6 +130,46 @@
           "origem": "USER",
           "evidencia": "Gate 2 do usuário em 04/10; PR #55 (4eb961c)",
           "resultado": "ponto da aba do planejador com o status vivo"
+        },
+        {
+          "id": "TODO-13",
+          "titulo": "Continuar não abre a aba da campanha ativa (terminal desativado conta como Ativa)",
+          "nivel": "T1",
+          "estado": "em execução",
+          "depende_de": [],
+          "origem": "USER",
+          "evidencia": "PR #61 integrado na dev; revisão Codex (1 MAJOR, 2 MINOR corrigidos); vitest 941",
+          "resultado": "aguarda o Gate 2 do usuário"
+        },
+        {
+          "id": "TODO-14",
+          "titulo": "Subseções de Campanhas recuadas sob o cabeçalho principal",
+          "nivel": "T1",
+          "estado": "em execução",
+          "depende_de": [],
+          "origem": "USER",
+          "evidencia": "PR #61 integrado na dev; revisão Codex (1 MAJOR, 2 MINOR corrigidos); vitest 941",
+          "resultado": "aguarda o Gate 2 do usuário"
+        },
+        {
+          "id": "TODO-15",
+          "titulo": "Entradas aguardando você no cartão da Noite com ações para concluir",
+          "nivel": "T2",
+          "estado": "em execução",
+          "depende_de": [],
+          "origem": "USER",
+          "evidencia": "PR #61 integrado na dev; revisão Codex (1 MAJOR, 2 MINOR corrigidos); vitest 941",
+          "resultado": "aguarda o Gate 2 do usuário"
+        },
+        {
+          "id": "TODO-16",
+          "titulo": "Ponto da campanha rodando pisca em verde a cada 1,5 s",
+          "nivel": "T1",
+          "estado": "em execução",
+          "depende_de": [],
+          "origem": "USER",
+          "evidencia": "PR #61 integrado na dev; revisão Codex (1 MAJOR, 2 MINOR corrigidos); vitest 941",
+          "resultado": "aguarda o Gate 2 do usuário"
         }
       ]
     },
@@ -387,6 +427,17 @@
           "origem": "CODE",
           "achado": "ACH-0004",
           "evidencia": "PR #58 integrado na dev; revisão Codex (1 MAJOR, 1 MINOR corrigidos); cargo test 418",
+          "resultado": "aguarda o Gate 2 do usuário"
+        },
+        {
+          "id": "UI-04",
+          "titulo": "Terminais herdam NO_COLOR quando o Alethe é aberto de dentro do Claude Code",
+          "nivel": "T1",
+          "estado": "em execução",
+          "depende_de": [],
+          "origem": "CODE",
+          "achado": "ACH-0005",
+          "evidencia": "PR #61 integrado na dev; revisão Codex (1 MAJOR, 2 MINOR corrigidos); vitest 941",
           "resultado": "aguarda o Gate 2 do usuário"
         }
       ]

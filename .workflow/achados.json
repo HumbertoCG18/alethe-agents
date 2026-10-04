@@ -46,7 +46,8 @@
       "titulo": "Terminais herdam NO_COLOR quando o Alethe é aberto de dentro do Claude Code",
       "origem": "UI-03",
       "detalhe": "04/10: o instalador aberto pelo script herdou NO_COLOR do terminal de ferramentas do Claude Code; o Alethe e as abas ficaram sem cor. O #58 só remove CLAUDE*. Proposta: remover NO_COLOR junto quando houver sessão externa (CLAUDECODE/CLAUDE_CODE_SESSION_ID), como CLAUDE_CODE_DISABLE_AUTO_MEMORY.",
-      "estado": "novo"
+      "estado": "virou-tarefa",
+      "destino": "UI-04"
     }
   ]
 }

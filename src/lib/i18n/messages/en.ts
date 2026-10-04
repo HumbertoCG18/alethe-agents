@@ -2409,6 +2409,8 @@ export const en = {
   'ui.terminal.orchestrationStartFailed': 'Could not start orchestration',
   'ui.terminal.orchestrationStartFailedBody':
     'Claude did not come back with the orchestrator tools.',
+  'ui.terminal.orchestrationRestartUnasked':
+    'Claude has to restart for orchestration, and the confirmation could not open. Nothing was changed.',
   'ui.terminal.openOrchestration': 'Open orchestration',
   'ui.terminal.orchestrationRestartTitle': 'Restart Claude for orchestration?',
   'ui.terminal.orchestrationRestartBody':

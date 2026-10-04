@@ -1063,8 +1063,10 @@ pub async fn resize_pty(
     .map_err(|error| format!("resize_pty: falha na task bloqueante: {error}"))?
 }
 
-fn terminate_session(session: PtySession) {
-    let _ = process_tree::kill_pty_tree(&session.pty_id);
+/// Asks for the session's process tree to end; returns how many processes that covered, or why it
+/// could not (with no root PID registered, only the `taskkill /T` fallback runs).
+fn terminate_session(session: PtySession) -> Result<usize, String> {
+    let tree = process_tree::kill_pty_tree(&session.pty_id).map(|pids| pids.len());
     process_tree::unregister_pty(&session.pty_id);
     {
         let (lock, cvar) = &*session.read_active;
@@ -1074,6 +1076,7 @@ fn terminate_session(session: PtySession) {
         }
     }
     kill_tree_without_holding_child(&session.child);
+    tree
 }
 
 #[tauri::command]
@@ -1095,7 +1098,7 @@ pub async fn kill_pty(
 
         if let Some(session) = session {
             session.teardown.store(TEARDOWN_KILLED, Ordering::SeqCst);
-            terminate_session(session);
+            let _ = terminate_session(session);
         }
 
         delete_scrollback(&app, &id)
@@ -1133,7 +1136,7 @@ pub async fn kill_ptys(
             let _ = std::thread::Builder::new()
                 .name("alethe-pty-batch-kill".to_string())
                 .spawn(move || {
-                    terminate_session(session);
+                    let _ = terminate_session(session);
                     let _ = done.send(id);
                 });
         }
@@ -1620,10 +1623,18 @@ pub fn cleanup_orphan_scrollback(app: &AppHandle) {
 /// How long shutdown waits for terminal processes to die before giving up on them.
 const SHUTDOWN_KILL_TIMEOUT: Duration = Duration::from_secs(4);
 
+/// What a shutdown teardown got through: how many sessions it tore down, and its app-events lines
+/// (see `teardown_log`).
+pub struct ShutdownTeardown {
+    pub sessions: usize,
+    pub summary: String,
+    pub lines: Vec<String>,
+}
+
 /// Removes every session from shared state immediately and terminates their process trees in
 /// parallel, waiting at most `SHUTDOWN_KILL_TIMEOUT`. The caller's thread blocks for that wait, so
-/// the app hides its windows first (#275). Returns how many sessions it tore down.
-pub fn kill_all_sessions_background(sessions: &PtySessions) -> usize {
+/// the app hides its windows first (#275).
+pub fn kill_all_sessions_background(sessions: &PtySessions) -> ShutdownTeardown {
     let drained = sessions
         .lock()
         .ok()
@@ -1635,37 +1646,76 @@ pub fn kill_all_sessions_background(sessions: &PtySessions) -> usize {
         })
         .unwrap_or_default();
 
-    if drained.is_empty() {
-        return 0;
-    }
-
     // One thread per session, then wait for them. Two reasons this is not fire-and-forget:
     // terminating a session runs `taskkill` and waits for it, so doing them in sequence costs the
     // sum of every kill; and a detached thread dies with the process, which on shutdown is
     // immediate — the agents were simply left running, and the next attempt to resume one of their
     // sessions found the old process still holding it.
-    let total = drained.len();
-    let (done, finished) = std::sync::mpsc::channel::<()>();
+    let ids: Vec<String> = drained
+        .iter()
+        .map(|session| session.pty_id.clone())
+        .collect();
+    let (done, finished) = std::sync::mpsc::channel::<SessionKill>();
     for session in drained {
         let done = done.clone();
         let _ = std::thread::Builder::new()
             .name("alethe-pty-shutdown".to_string())
             .spawn(move || {
-                terminate_session(session);
-                let _ = done.send(());
+                let started = Instant::now();
+                let id = session.pty_id.clone();
+                let outcome = terminate_session(session);
+                let _ = done.send((id, started.elapsed().as_millis(), outcome));
             });
     }
     drop(done);
 
     // Bounded: a kill that will not finish must not hold the window open forever.
     let deadline = Instant::now() + SHUTDOWN_KILL_TIMEOUT;
-    for _ in 0..total {
+    let mut requested = Vec::with_capacity(ids.len());
+    while requested.len() < ids.len() {
         let remaining = deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() || finished.recv_timeout(remaining).is_err() {
+        let Ok(kill) = finished.recv_timeout(remaining) else {
             break;
-        }
+        };
+        requested.push(kill);
     }
-    total
+    let (summary, lines) = teardown_log(&ids, &requested);
+    ShutdownTeardown {
+        sessions: ids.len(),
+        summary,
+        lines,
+    }
+}
+
+/// A session's PTY id, how long `terminate_session` took, and what it returned.
+type SessionKill = (String, u128, Result<usize, String>);
+
+/// The shutdown's app-events lines, each well under the log's 512 characters: a summary, then one
+/// line per session. `requested_ms` is how long asking its tree to end took (TerminateProcess
+/// returns before the process is gone), with how many processes that covered or why it failed;
+/// `pending` is a session whose teardown had not returned when the wait ran out.
+fn teardown_log(ids: &[String], requested: &[SessionKill]) -> (String, Vec<String>) {
+    let mut lines: Vec<String> = requested
+        .iter()
+        .map(|(id, ms, outcome)| match outcome {
+            Ok(pids) => format!("id={id} requested_ms={ms} pids={pids}"),
+            Err(error) => format!(
+                "id={id} requested_ms={ms} error={}",
+                error.chars().take(200).collect::<String>()
+            ),
+        })
+        .collect();
+    let pending = ids
+        .iter()
+        .filter(|id| !requested.iter().any(|(done, _, _)| done == *id));
+    lines.extend(pending.map(|id| format!("id={id} pending")));
+    let summary = format!(
+        "requested={}/{} pending={}",
+        requested.len(),
+        ids.len(),
+        lines.len() - requested.len()
+    );
+    (summary, lines)
 }
 
 static JOB_GUARD_ACTIVE: OnceLock<bool> = OnceLock::new();
@@ -1787,6 +1837,29 @@ mod tests {
             ),
             "kills must not run one after another: each waits on taskkill, so the cost adds up"
         );
+    }
+
+    /// app-events.log keeps 512 characters of a line: 20 sessions with 21-character ids in one line
+    /// lost the pending ones. Each session gets its own short line.
+    #[test]
+    fn shutdown_logs_one_short_line_per_session_and_names_the_pending_ones() {
+        let ids: Vec<String> = (0..21).map(|n| format!("{n:0>21}")).collect();
+        let requested: Vec<SessionKill> = ids[..20]
+            .iter()
+            .map(|id| (id.clone(), 4011, Ok(17)))
+            .collect();
+        let (summary, lines) = teardown_log(&ids, &requested);
+        assert_eq!(summary, "requested=20/21 pending=1");
+        assert_eq!(lines.len(), 21);
+        assert_eq!(lines[0], format!("id={} requested_ms=4011 pids=17", ids[0]));
+        assert_eq!(lines[20], format!("id={} pending", ids[20]));
+
+        // An error is logged, cut short enough to keep its line well under the limit.
+        let failed = [(ids[0].clone(), 3, Err("4: terminate error 5".repeat(100)))];
+        let (summary, lines) = teardown_log(&ids[..1], &failed);
+        assert_eq!(summary, "requested=1/1 pending=0");
+        assert!(lines[0].starts_with(&format!("id={} requested_ms=3 error=4: terminate", ids[0])));
+        assert!(lines.iter().chain([&summary]).all(|line| line.len() < 300));
     }
 
     #[test]

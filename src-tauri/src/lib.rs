@@ -581,25 +581,70 @@ pub fn run() {
         });
 }
 
+/// How long quitting may take before the watchdog ends the process itself.
+const QUIT_WATCHDOG: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Calls `force_exit` once `after` has passed, logging it first. The thread dies with the process,
+/// so it only fires when quitting stalled somewhere: a window, a kill, the event loop.
+fn spawn_quit_watchdog(after: std::time::Duration, force_exit: impl FnOnce() + Send + 'static) {
+    let _ = std::thread::Builder::new()
+        .name("alethe-quit-watchdog".to_string())
+        .spawn(move || {
+            std::thread::sleep(after);
+            let _ = logging::record_app_event(
+                "app.quit.watchdog".to_string(),
+                format!("forced_exit_after_ms={}", after.as_millis()),
+            );
+            force_exit();
+        });
+}
+
+/// Each step goes to app-events.log as it happens, so a quit that stalls shows where.
 #[tauri::command]
 fn quit_app(app: tauri::AppHandle, sessions: tauri::State<'_, PtySessions>) {
+    spawn_quit_watchdog(QUIT_WATCHDOG, || std::process::exit(0));
+    let started = std::time::Instant::now();
+    // try_lock: a lock held elsewhere is itself worth logging, and must not stall the log.
+    let count = sessions
+        .try_lock()
+        .map(|sessions| sessions.len().to_string())
+        .unwrap_or_else(|_| "locked".to_string());
+    let _ = logging::record_app_event("app.quit.start".to_string(), format!("sessions={count}"));
     // The teardown below waits a few seconds at most for process trees to die; hidden first, the
     // window does not sit frozen on screen meanwhile (#275).
-    for window in app.webview_windows().values() {
+    let windows = app.webview_windows();
+    for window in windows.values() {
         let _ = window.hide();
     }
-    // The Windows job object remains the hard guarantee that descendants die with the app. The
-    // best-effort explicit teardown runs in the background so a slow process tree cannot block exit.
-    let started = std::time::Instant::now();
-    let sessions = pty::kill_all_sessions_background(sessions.inner());
     let _ = logging::record_app_event(
-        "app.quit".to_string(),
+        "app.quit.hidden".to_string(),
         format!(
-            "sessions={sessions} teardown_ms={}",
+            "windows={} ms={}",
+            windows.len(),
             started.elapsed().as_millis()
         ),
     );
+    // The Windows job object remains the hard guarantee that descendants die with the app. The
+    // best-effort explicit teardown runs in the background so a slow process tree cannot block exit.
+    let teardown_started = std::time::Instant::now();
+    let teardown = pty::kill_all_sessions_background(sessions.inner());
+    let _ = logging::record_app_event(
+        "app.quit".to_string(),
+        format!(
+            "sessions={} teardown_ms={} {}",
+            teardown.sessions,
+            teardown_started.elapsed().as_millis(),
+            teardown.summary
+        ),
+    );
+    for line in teardown.lines {
+        let _ = logging::record_app_event("app.quit.session".to_string(), line);
+    }
     crash_watch::mark_clean_exit();
+    let _ = logging::record_app_event(
+        "app.quit.exit".to_string(),
+        format!("clean_exit=marked ms={}", started.elapsed().as_millis()),
+    );
     app.exit(0);
 }
 
@@ -611,6 +656,51 @@ fn ping() -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_quit_watchdog_forces_the_exit_only_once_its_wait_runs_out() {
+        let (fired, exits) = std::sync::mpsc::channel();
+        spawn_quit_watchdog(std::time::Duration::from_millis(300), move || {
+            let _ = fired.send(());
+        });
+        assert!(
+            exits
+                .recv_timeout(std::time::Duration::from_millis(50))
+                .is_err(),
+            "not before its wait"
+        );
+        assert!(
+            exits
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .is_ok(),
+            "once its wait runs out"
+        );
+    }
+
+    /// A quit that hung left nothing in app-events.log: every step is logged as it happens, and the
+    /// watchdog starts before anything that can stall.
+    #[test]
+    fn quitting_logs_each_step_under_a_watchdog() {
+        let source = include_str!("lib.rs");
+        let body = source
+            .split("fn quit_app(")
+            .nth(1)
+            .expect("quit_app exists");
+        let body = &body[..body.find("\n}").expect("quit_app ends")];
+        let at = |needle: &str| {
+            body.find(needle)
+                .unwrap_or_else(|| panic!("quit_app has {needle}"))
+        };
+        let watchdog = at("spawn_quit_watchdog(QUIT_WATCHDOG");
+        assert!(watchdog < at("\"app.quit.start\""));
+        assert!(at("\"app.quit.start\"") < at(".hide()"));
+        assert!(at(".hide()") < at("\"app.quit.hidden\""));
+        assert!(at("\"app.quit.hidden\"") < at("kill_all_sessions_background"));
+        assert!(at("kill_all_sessions_background") < at("\"app.quit.session\""));
+        assert!(at("\"app.quit.session\"") < at("mark_clean_exit"));
+        assert!(at("mark_clean_exit") < at("\"app.quit.exit\""));
+        assert!(at("\"app.quit.exit\"") < at("app.exit(0)"));
+    }
 
     #[test]
     fn rebuilt_path_is_non_empty_on_windows() {

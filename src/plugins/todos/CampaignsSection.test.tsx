@@ -1397,15 +1397,20 @@ describe('Night card', () => {
       await choose('PARADA-01', 'Continue in the terminal')
       expect(useUiStore.getState().activeTerminal?.terminalId).toBe(tagged.id)
 
-      // One without offers the agents, as Open does.
+      // One without opens Claude Code right away, as a planner next to its own board.
       await choose('OITO-07', 'Continue in the terminal')
-      fireEvent.click(screen.getByRole('menuitem', { name: 'Codex' }))
+      expect(screen.queryByRole('menu')).toBeNull()
       await waitFor(() =>
         expect(agentTerminals().find((item) => item.tabs[0].campaignId === 'OITO')).toBeDefined(),
       )
-      expect(
-        agentTerminals().find((item) => item.tabs[0].campaignId === 'OITO')!.tabs[0],
-      ).toMatchObject({ type: 'codex', cwd: 'C:\\repo' })
+      const opened = agentTerminals().find((item) => item.tabs[0].campaignId === 'OITO')!
+      expect(opened.tabs[0]).toMatchObject({ type: 'claude', cwd: 'C:\\repo' })
+      const project = useProjectsStore.getState().projects[0]
+      const board = project.terminals.find((item) => item.kind === 'orchestrator')
+      expect(project.paneGroups).toEqual([
+        expect.objectContaining({ kind: 'orchestration', paneIds: [opened.id, board!.id] }),
+      ])
+      expect(useUiStore.getState().activeTerminal?.terminalId).toBe(opened.id)
       expect(campaignRegistryWrite).not.toHaveBeenCalled()
     })
   })

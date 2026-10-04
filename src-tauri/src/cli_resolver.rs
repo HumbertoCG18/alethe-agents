@@ -121,9 +121,7 @@ pub fn command_builder_for_terminal(
     scrub_editor_environment(&mut builder);
     builder.env_remove("EDITOR");
     builder.env_remove("VISUAL");
-    builder.env_remove("CLAUDECODE");
-    builder.env_remove("CLAUDE_CODE_ENTRYPOINT");
-    builder.env_remove("CLAUDECODE_PARENT_PID");
+    scrub_claude_session_environment(&mut builder);
     builder
 }
 
@@ -577,6 +575,45 @@ fn scrub_editor_environment(builder: &mut CommandBuilder) {
     ] {
         builder.env_remove(key);
     }
+}
+
+/// Drops the Claude Code session Alethe may have been started from (an agent relaunching it, or
+/// `npm run app` typed in a Claude Code terminal); inherited, it turns every Claude Code in a pane
+/// into that session's child: no transcript, no auto memory, its messaging socket.
+fn scrub_claude_session_environment(builder: &mut CommandBuilder) {
+    for key in inherited_claude_session_vars(|key| builder.get_env(key).is_some()) {
+        builder.env_remove(key);
+    }
+}
+
+/// The same for a process Alethe starts directly (orchestration workers), which inherits Alethe's
+/// own environment.
+pub(crate) fn scrub_claude_session_command(command: &mut std::process::Command) {
+    for key in inherited_claude_session_vars(|key| env::var_os(key).is_some()) {
+        command.env_remove(key);
+    }
+}
+
+/// The variables of an outer Claude Code session, given what the environment holds.
+fn inherited_claude_session_vars(holds: impl Fn(&str) -> bool) -> Vec<&'static str> {
+    // Set by Claude Code for its children only; nobody sets them for a fresh terminal.
+    let inherited_session = holds("CLAUDECODE") || holds("CLAUDE_CODE_SESSION_ID");
+    let mut keys = vec![
+        "CLAUDECODE",
+        "CLAUDECODE_PARENT_PID",
+        "CLAUDE_CODE_ENTRYPOINT",
+        "CLAUDE_CODE_CHILD_SESSION",
+        "CLAUDE_CODE_SESSION_ID",
+        "CLAUDE_CODE_SESSION_ATTENDED",
+        "CLAUDE_CODE_MESSAGING_SOCKET",
+        "CLAUDE_CODE_MESSAGING_TOKEN",
+        "CLAUDE_PID",
+    ];
+    // A user may set this one on purpose; the outer session also sets it for its children.
+    if inherited_session {
+        keys.push("CLAUDE_CODE_DISABLE_AUTO_MEMORY");
+    }
+    keys
 }
 
 pub fn rebuilt_path() -> String {
@@ -1163,5 +1200,72 @@ mod tests {
             std::env::remove_var("PATH");
         }
         let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn terminals_do_not_inherit_the_claude_code_session_that_started_alethe() {
+        let session = [
+            "CLAUDECODE",
+            "CLAUDECODE_PARENT_PID",
+            "CLAUDE_CODE_ENTRYPOINT",
+            "CLAUDE_CODE_CHILD_SESSION",
+            "CLAUDE_CODE_SESSION_ID",
+            "CLAUDE_CODE_SESSION_ATTENDED",
+            "CLAUDE_CODE_MESSAGING_SOCKET",
+            "CLAUDE_CODE_MESSAGING_TOKEN",
+            "CLAUDE_PID",
+        ];
+        let mut builder = CommandBuilder::new("shell");
+        for key in session {
+            builder.env(key, "1");
+        }
+        builder.env("CLAUDE_CODE_DISABLE_AUTO_MEMORY", "1");
+        builder.env("CLAUDE_CODE_MAX_OUTPUT_TOKENS", "64000");
+        scrub_claude_session_environment(&mut builder);
+        for key in session {
+            assert!(builder.get_env(key).is_none(), "{key} was inherited");
+        }
+        // Set by the outer session for its children, so it goes with it; other settings stay.
+        assert!(builder.get_env("CLAUDE_CODE_DISABLE_AUTO_MEMORY").is_none());
+        assert!(builder.get_env("CLAUDE_CODE_MAX_OUTPUT_TOKENS").is_some());
+
+        // Without an outer session, a user's own setting is kept.
+        let mut builder = CommandBuilder::new("shell");
+        builder.env_remove("CLAUDECODE");
+        builder.env_remove("CLAUDE_CODE_SESSION_ID");
+        builder.env_remove("CLAUDE_CODE_CHILD_SESSION");
+        builder.env("CLAUDE_CODE_DISABLE_AUTO_MEMORY", "1");
+        scrub_claude_session_environment(&mut builder);
+        assert!(builder.get_env("CLAUDE_CODE_DISABLE_AUTO_MEMORY").is_some());
+    }
+
+    #[test]
+    fn terminal_and_worker_commands_drop_a_session_inherited_by_alethe() {
+        // Alethe itself started from a Claude Code session: its environment holds the session.
+        std::env::set_var("CLAUDE_CODE_CHILD_SESSION", "1");
+        std::env::set_var("CLAUDE_CODE_SESSION_ID", "outer");
+        let builder = command_builder_for_terminal(Some("claude"), None, &[]);
+        let mut worker = std::process::Command::new("claude");
+        scrub_claude_session_command(&mut worker);
+        std::env::remove_var("CLAUDE_CODE_CHILD_SESSION");
+        std::env::remove_var("CLAUDE_CODE_SESSION_ID");
+
+        assert!(builder.get_env("CLAUDE_CODE_CHILD_SESSION").is_none());
+        assert!(builder.get_env("CLAUDE_CODE_SESSION_ID").is_none());
+        let removed: Vec<String> = worker
+            .get_envs()
+            .filter(|(_, value)| value.is_none())
+            .map(|(key, _)| key.to_string_lossy().into_owned())
+            .collect();
+        for key in [
+            "CLAUDE_CODE_CHILD_SESSION",
+            "CLAUDE_CODE_SESSION_ID",
+            "CLAUDE_CODE_DISABLE_AUTO_MEMORY",
+        ] {
+            assert!(
+                removed.iter().any(|name| name.eq_ignore_ascii_case(key)),
+                "{key} kept"
+            );
+        }
     }
 }

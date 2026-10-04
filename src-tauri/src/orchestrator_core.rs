@@ -1316,6 +1316,7 @@ impl Core {
             .cloned()
             .ok_or_else(|| "codex is not installed".to_string())?;
         let mut command = Command::new(&launcher.program);
+        crate::cli_resolver::scrub_claude_session_command(&mut command);
         command
             .args(&launcher.args)
             .stdin(Stdio::piped())
@@ -1454,6 +1455,8 @@ impl Core {
         let is_claude = agent == "claude";
 
         let mut command = Command::new(&launcher.program);
+        // An Alethe started from a Claude Code session must not hand that session to its workers.
+        crate::cli_resolver::scrub_claude_session_command(&mut command);
         command
             .args(&launcher.args)
             .current_dir(PathBuf::from(&cwd))

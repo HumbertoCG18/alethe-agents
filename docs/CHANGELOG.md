@@ -205,6 +205,9 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ### Fixed
 
+- A Claude Code started in a terminal no longer runs as a child of the Claude Code session that
+  opened Alethe (an agent relaunching it, or `npm run app` typed in a Claude Code terminal): it keeps
+  its transcript, auto memory and status bar.
 - A campaign whose terminal was closed mid-task no longer keeps a green dot in the Campaigns map.
 - A file path in a terminal opens again when an agent printed it from another worktree of the
   project, or when Claude Code wrapped it onto the next line: the menu no longer says the path does

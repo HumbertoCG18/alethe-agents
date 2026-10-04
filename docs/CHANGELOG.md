@@ -180,6 +180,15 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
   pane, looked up in the campaign's checkout first; **Continue in the terminal** goes to the
   campaign's tab, or offers the agents when it has none; **Back to the queue** makes the task ready
   again for the next night. Nothing in the registry changes until you choose.
+- **Act on Gate 2 tasks from Pending.** A task under **Waiting for your Gate 2** opens the same
+  menu as a night entry when you click its id and title: **Conclude (Gate 2)** with the task's
+  evidence, **Open evidence** when it names a path, **Continue in the terminal**, and **Back to
+  the queue** for a night-window task. Its box still marks it done, and Escape closes the menu.
+- **Reorder the Todo tab's sections.** Drag Pending, Active, Campaigns, Findings or the Night card
+  by its header (a grip shows on hover), or press Alt+↑/Alt+↓ on the header, to move it; a click
+  still opens and closes it. Each project keeps its own order, and **Reset section order** in the
+  Todo settings puts the default back. In My todos, your own list stays in place and the other
+  sections move around it.
 
 ### Changed
 
@@ -225,6 +234,12 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ### Fixed
 
+- **Open evidence** on a night entry whose evidence is a folder opens its report (`relatorio.md`,
+  `README.md` or `handoff.md`, else its only Markdown file) in the viewer, or the folder in the
+  file explorer, instead of a pane that cannot read it. Evidence found nowhere, such as a report
+  moved since, shows a toast naming the path instead of a broken pane. Evidence is looked up when
+  you click it, and a path outside the repository's checkouts is never looked up on disk. The
+  evidence link on an entry now opens it the same way as the menu's Open evidence.
 - **Continue** on an Active campaign whose tab sits in a disabled terminal enables that terminal
   again and focuses the tab, instead of offering to open a new agent. Continue and Open also switch
   from Home to the workspace.

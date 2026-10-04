@@ -52,6 +52,10 @@ export function TodoSettingsModal() {
     projectId ? state.nightSettings[projectId] : undefined,
   )
   const setNightSettings = useTodosStore((state) => state.setNightSettings)
+  const ordered = useTodosStore((state) =>
+    projectId ? state.sectionOrder[projectId] !== undefined : false,
+  )
+  const setSectionOrder = useTodosStore((state) => state.setSectionOrder)
   const [night, setNight] = useState<NightSettings>(DEFAULT_NIGHT_SETTINGS)
   const [path, setPath] = useState('')
   const [source, setSource] = useState<ListSource>(savedSource)
@@ -223,6 +227,21 @@ export function TodoSettingsModal() {
             </>
           ) : null}
           <span className={controls.hint}>{t('todo.nightMode.hint')}</span>
+        </div>
+      ) : null}
+      {projectId ? (
+        <div className={controls.field}>
+          <span className={controls.label}>{t('todo.sectionOrderLabel')}</span>
+          {/* Applied at once, as the reset of the list is. */}
+          <button
+            type="button"
+            className={controls.btn}
+            onClick={() => setSectionOrder(projectId, null)}
+            disabled={!ordered}
+          >
+            {t('todo.resetSectionOrder')}
+          </button>
+          <span className={controls.hint}>{t('todo.sectionOrderHint')}</span>
         </div>
       ) : null}
       <div className={controls.field}>

@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { DEFAULT_NIGHT_SETTINGS } from '../../lib/nightScheduler'
 import type { PluginStorage } from '../../lib/plugins'
 import type { TodoItem } from '../../lib/types'
-import { hydrateTodos, resetTodosStoreForTests, useTodosStore } from './store'
+import { hydrateTodos, orderedSections, resetTodosStoreForTests, useTodosStore } from './store'
 
 function fakeStorage(initial: Record<string, unknown> = {}) {
   let record = { ...initial }
@@ -122,6 +122,55 @@ describe('hydrateTodos', () => {
     await hydrateTodos(storage, { todos: [legacyItem], storagePath: '' })
 
     expect(useTodosStore.getState().todos).toEqual([])
+  })
+
+  it('keeps each project’s section order, reading older or broken data as none', async () => {
+    await hydrateTodos(fakeStorage().storage, { todos: [], storagePath: '' })
+    expect(useTodosStore.getState().sectionOrder).toEqual({})
+
+    resetTodosStoreForTests()
+    const { storage, snapshot } = fakeStorage({
+      sectionOrder: { p1: ['campaigns', 7, 'pending'], p2: 'pending', p3: null },
+    })
+    await hydrateTodos(storage, { todos: [], storagePath: '' })
+    expect(useTodosStore.getState().sectionOrder).toEqual({ p1: ['campaigns', 'pending'] })
+
+    useTodosStore.getState().setSectionOrder('p4', ['findings', 'list'])
+    await Promise.resolve()
+    expect(snapshot().sectionOrder).toEqual({
+      p1: ['campaigns', 'pending'],
+      p4: ['findings', 'list'],
+    })
+    useTodosStore.getState().setSectionOrder('p1', null)
+    await Promise.resolve()
+    expect(snapshot().sectionOrder).toEqual({ p4: ['findings', 'list'] })
+  })
+})
+
+describe('orderedSections', () => {
+  it('shows the saved sections first in their order, and any other at its default place', () => {
+    expect(orderedSections(undefined)).toEqual([
+      'pending',
+      'list',
+      'campaigns',
+      'findings',
+      'night',
+    ])
+    expect(orderedSections(['night', 'findings', 'campaigns', 'list', 'pending'])).toEqual([
+      'night',
+      'findings',
+      'campaigns',
+      'list',
+      'pending',
+    ])
+    // Unknown and repeated ids are dropped; a section missing from it takes its default index.
+    expect(orderedSections(['campaigns', 'gone', 'pending', 'campaigns'])).toEqual([
+      'campaigns',
+      'list',
+      'pending',
+      'findings',
+      'night',
+    ])
   })
 })
 

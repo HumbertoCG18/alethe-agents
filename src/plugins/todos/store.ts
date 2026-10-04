@@ -21,9 +21,29 @@ const ACTIVE_CAMPAIGNS_KEY = 'activeCampaigns'
 const LIST_SOURCE_KEY = 'listSource'
 const NIGHT_SETTINGS_KEY = 'nightSettings'
 const NIGHT_RUN_KEY = 'nightRun'
+const SECTION_ORDER_KEY = 'sectionOrder'
 
 /** Where the list opens: the active campaign when the project has a registry, or the personal list. */
 export type ListSource = 'campaign' | 'mine'
+
+/**
+ * The Todo tab's top-level sections in their default order; `list` is the active campaign's
+ * section, or your own list's sections.
+ */
+const TODO_SECTIONS = ['pending', 'list', 'campaigns', 'findings', 'night'] as const
+type TodoSection = (typeof TODO_SECTIONS)[number]
+
+const isTodoSection = (id: string): id is TodoSection =>
+  (TODO_SECTIONS as readonly string[]).includes(id)
+
+/** The sections in `saved` order; a missing one takes its default index, an unknown one goes. */
+export function orderedSections(saved: readonly string[] | undefined): TodoSection[] {
+  const order = [...new Set(saved)].filter(isTodoSection)
+  TODO_SECTIONS.forEach((id, index) => {
+    if (!order.includes(id)) order.splice(index, 0, id)
+  })
+  return order
+}
 
 /**
  * The night scheduler's state, kept so a restart never starts a task twice: the one task running
@@ -69,6 +89,8 @@ type TodosState = {
   /** Modo noite, by project id; a project without an entry has it off. */
   nightSettings: Record<string, NightSettings>
   nightRun: NightRun
+  /** The Todo sections' order by project id; a project without one has the default order. */
+  sectionOrder: Record<string, string[]>
   hydrated: boolean
   createTodo: (title: string, tags?: string[], projectId?: string) => TodoItem | null
   createTodoFromPullRequest: (
@@ -89,6 +111,8 @@ type TodosState = {
   setNightSettings: (projectId: string, settings: NightSettings) => void
   /** Sets the run state and resolves once it is saved; rejects when the save fails. */
   setNightRun: (run: NightRun) => Promise<void>
+  /** Saves a project's section order; null puts the default back. */
+  setSectionOrder: (projectId: string, order: string[] | null) => void
 }
 
 let storage: PluginStorage | null = null
@@ -110,6 +134,7 @@ export const useTodosStore = create<TodosState>((set, get) => {
     listSource: 'campaign',
     nightSettings: {},
     nightRun: EMPTY_NIGHT_RUN,
+    sectionOrder: {},
     hydrated: false,
 
     createTodo: (rawTitle, rawTags = [], projectId) => {
@@ -232,6 +257,13 @@ export const useTodosStore = create<TodosState>((set, get) => {
       set({ nightRun })
       return storage ? storage.set(NIGHT_RUN_KEY, nightRun) : Promise.resolve()
     },
+
+    setSectionOrder: (projectId, order) => {
+      const { [projectId]: _previous, ...others } = get().sectionOrder
+      const sectionOrder = order ? { ...others, [projectId]: order } : others
+      void storage?.set(SECTION_ORDER_KEY, sectionOrder)
+      set({ sectionOrder })
+    },
   }
 })
 
@@ -274,6 +306,19 @@ function readNightRun(value: unknown): NightRun {
   return { current: valid ? (current as NightRun['current']) : null, nights }
 }
 
+/** Each project's stored order, without what is not a list of ids: none before it was saved. */
+function readSectionOrder(value: unknown): Record<string, string[]> {
+  if (!isRecord(value)) return {}
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter((entry): entry is [string, unknown[]] => Array.isArray(entry[1]))
+      .map(([projectId, order]) => [
+        projectId,
+        order.filter((id): id is string => typeof id === 'string'),
+      ]),
+  )
+}
+
 /**
  * Loads the plugin's own record, falling back to whatever the pre-plugin core
  * had stored. The legacy values are copied, never cleared: if this plugin is
@@ -306,6 +351,7 @@ export async function hydrateTodos(
     listSource,
     nightSettings: readNightSettings(record[NIGHT_SETTINGS_KEY]),
     nightRun: readNightRun(record[NIGHT_RUN_KEY]),
+    sectionOrder: readSectionOrder(record[SECTION_ORDER_KEY]),
     hydrated: true,
   })
 
@@ -324,6 +370,7 @@ export function resetTodosStoreForTests(): void {
     listSource: 'campaign',
     nightSettings: {},
     nightRun: EMPTY_NIGHT_RUN,
+    sectionOrder: {},
     hydrated: false,
   })
 }

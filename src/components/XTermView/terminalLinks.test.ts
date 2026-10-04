@@ -1,11 +1,14 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import {
   detectTerminalLinks,
   getLogicalTerminalLine,
+  locateTerminalPath,
   relativeTerminalPath,
   resolveTerminalFilePath,
   terminalLinkRange,
+  terminalRowsAround,
+  wrappedPathCandidates,
 } from './terminalLinks'
 
 describe('terminal links', () => {
@@ -208,5 +211,213 @@ describe('terminal links', () => {
     expect(detectTerminalLinks('see (/tmp/my folder/readme.md) now')[0].text).toBe(
       '/tmp/my folder/readme.md',
     )
+  })
+})
+
+// Claude Code wraps long lines itself, moving the cursor, so xterm sees separate rows and the link
+// stops at the row end (#54).
+describe('paths wrapped by the TUI', () => {
+  // The rows around `rows[at]`, whose first link is the clicked one.
+  const candidates = (rows: string[], at = 0) =>
+    wrappedPathCandidates(detectTerminalLinks(rows[at])[0], {
+      above: rows.slice(0, at).reverse(),
+      line: [rows[at]],
+      below: rows.slice(at + 1),
+    })
+  // Rows as xterm keeps them, `true` when soft-wrapped: a wide glyph is one character of the text.
+  const bufferOf = (...values: Array<[string, boolean?]>) => ({
+    length: values.length,
+    getLine: (index: number) =>
+      values[index] && {
+        isWrapped: Boolean(values[index][1]),
+        translateToString: () => values[index][0],
+      },
+  })
+  // The candidates for the first link on buffer row `at`, read as the link provider reads them.
+  const fromBuffer = (buffer: ReturnType<typeof bufferOf>, at: number) => {
+    const logical = getLogicalTerminalLine(buffer, at + 1)!
+    const [link] = detectTerminalLinks(logical.text)
+    return wrappedPathCandidates(link, terminalRowsAround(buffer, logical))
+  }
+  // The prompt of #54, printed by Claude Code in a pane 69 columns wide.
+  const prompt = [
+    '  dev) e um handoff curto em',
+    '        GPT-Tutor-Generator-noite/docs/reports/2026-10-03-piloto-noi',
+    '  te/handoff.md, com uma seção por tarefa',
+  ]
+  const promptPath = 'GPT-Tutor-Generator-noite/docs/reports/2026-10-03-piloto-noite/handoff.md'
+
+  it('offers the path joined with the leading token of the next row', () => {
+    expect(
+      candidates([
+        '  Escrevi C:\\repo\\docs\\reports\\2026-10-03-piloto-noi',
+        '  te\\handoff.md, com uma seção nova',
+        '  mais texto',
+      ]),
+    ).toEqual(['C:\\repo\\docs\\reports\\2026-10-03-piloto-noite\\handoff.md'])
+  })
+
+  it('joins a third row only when the second is all path', () => {
+    expect(
+      candidates([
+        'em /work/repo/docs/reports/2026-10-0',
+        '   3-piloto-noite/handoffs/abcdefghi',
+        '   j/handoff.md.',
+      ]),
+    ).toEqual([
+      '/work/repo/docs/reports/2026-10-03-piloto-noite/handoffs/abcdefghi',
+      '/work/repo/docs/reports/2026-10-03-piloto-noite/handoffs/abcdefghij/handoff.md',
+    ])
+  })
+
+  it('keeps a dot the row cut right after', () => {
+    expect(candidates(['C:\\repo\\docs\\handoff.', '  md agora'])).toEqual([
+      'C:\\repo\\docs\\handoff.md',
+    ])
+  })
+
+  // The clicked half is the second one when the first does not look like a path on its own.
+  it('offers the path joined with the end of the row above', () => {
+    // The row above is all path, so the one above it is tried too: `emGPT-...`, which no disk has.
+    expect(candidates(prompt, 2)).toEqual([promptPath, `em${promptPath}`])
+    // The same rows soft-wrapped by the terminal, padded to the width.
+    const padded = bufferOf([prompt[0].padEnd(69)], [prompt[1].padEnd(69), true], [prompt[2], true])
+    expect(fromBuffer(padded, 2)[0]).toBe(promptPath)
+  })
+
+  // Rows placed by the cursor stay apart when the pane is widened; no width is involved.
+  it('still rebuilds the path after the pane is widened', () => {
+    const rows = bufferOf(...prompt.map((row): [string] => [row]))
+    expect(fromBuffer(rows, 2)[0]).toBe(promptPath)
+  })
+
+  // Five wide glyphs fill ten columns with five characters, apart or soft-wrapped.
+  it('rebuilds a path cut on a row with wide glyphs', () => {
+    const wide = '界界界界界 abcdef/no'
+    expect(fromBuffer(bufferOf([wide], ['  i/hand.md']), 1)).toEqual(['abcdef/noi/hand.md'])
+    expect(fromBuffer(bufferOf([wide], ['  i/hand.md', true]), 1)).toEqual(['abcdef/noi/hand.md'])
+  })
+
+  it('offers nothing when the path does not reach the row end or nothing follows', () => {
+    expect(candidates(['C:\\repo\\a.md e mais', '  texto'])).toEqual([])
+    expect(candidates(['C:\\repo\\docs\\reports', '', '  texto'])).toEqual([])
+    expect(candidates(['C:\\repo\\docs\\reports', '  `code`'])).toEqual([])
+    expect(candidates(['https://example.com/docs', '  more'])).toEqual([])
+  })
+})
+
+describe('locating a clicked path', () => {
+  const lookup = (found: Record<string, string>) =>
+    vi.fn(async (_cwd: string, path: string) => found[path] ?? null)
+  // Every path given exists, where it was printed.
+  const everything = vi.fn(async (_cwd: string, path: string) => path)
+  const linkAt = (rows: string[], at: number) => {
+    const link = detectTerminalLinks(rows[at])[0]
+    const around = {
+      above: rows.slice(0, at).reverse(),
+      line: [rows[at]],
+      below: rows.slice(at + 1),
+    }
+    return { ...link, wrapped: wrappedPathCandidates(link, around) }
+  }
+
+  it('looks an absolute path up too, so another checkout can hold it', async () => {
+    const find = lookup({ 'C:\\repo\\docs\\x.md': 'C:\\repo-noite\\docs\\x.md' })
+    const [link] = detectTerminalLinks('C:\\repo\\docs\\x.md')
+    await expect(locateTerminalPath(link, 'C:\\repo', null, find)).resolves.toEqual({
+      target: 'C:\\repo-noite\\docs\\x.md',
+      fileKind: 'markdown',
+    })
+    expect(find).toHaveBeenCalledWith('C:\\repo', 'C:\\repo\\docs\\x.md')
+  })
+
+  it('keeps looking a relative path up as printed', async () => {
+    const find = lookup({ 'docs/x.md': 'C:\\repo-noite\\docs\\x.md' })
+    const [link] = detectTerminalLinks('./docs/x.md:12')
+    await expect(locateTerminalPath(link, 'C:\\repo', null, find)).resolves.toMatchObject({
+      target: 'C:\\repo-noite\\docs\\x.md',
+    })
+  })
+
+  // The Markdown actions follow the file found, not the cut half that was printed.
+  it('classifies a recovered path by the file it found', async () => {
+    const link = {
+      target: 'C:\\repo\\docs\\reports\\2026-10-03-piloto-noi',
+      wrapped: ['C:\\repo\\docs\\reports\\2026-10-03-piloto-noite\\handoff.md'],
+    }
+    const find = vi.fn(async (_cwd: string, path: string) => (path.endsWith('.md') ? path : null))
+    await expect(locateTerminalPath(link, 'C:\\repo', null, find)).resolves.toEqual({
+      target: 'C:\\repo\\docs\\reports\\2026-10-03-piloto-noite\\handoff.md',
+      fileKind: 'markdown',
+    })
+  })
+
+  // Prose around a file link that exists never redirects it, even to another file that exists.
+  it('keeps a file link that exists, whatever the rows around it join into', async () => {
+    const above = linkAt(['We completed reading', '  docs/x.md'], 1)
+    expect(above.wrapped).toEqual(['readingdocs/x.md'])
+    await expect(locateTerminalPath(above, 'C:\\repo', null, everything)).resolves.toMatchObject({
+      target: 'docs/x.md',
+    })
+    const below = linkAt(['  docs/x.md', 'tail of the prose'], 0)
+    expect(below.wrapped).toEqual(['docs/x.mdtail'])
+    await expect(locateTerminalPath(below, 'C:\\repo', null, everything)).resolves.toMatchObject({
+      target: 'docs/x.md',
+    })
+  })
+
+  it('takes the longest join that exists, not the last one', async () => {
+    const link = linkAt(['longdirectoryprefix/', '  abcdefghijklmno.md', '  tail'], 1)
+    const find = lookup({
+      'longdirectoryprefix/abcdefghijklmno.md': 'C:\\repo\\longdirectoryprefix\\abcdefghijklmno.md',
+      'abcdefghijklmno.mdtail': 'C:\\repo\\abcdefghijklmno.mdtail',
+    })
+    await expect(locateTerminalPath(link, 'C:\\repo', null, find)).resolves.toMatchObject({
+      target: 'C:\\repo\\longdirectoryprefix\\abcdefghijklmno.md',
+    })
+  })
+
+  // `.claude` looks like an extension, yet names a folder: it does not win as a file link would.
+  it('recovers the file past a dotted folder the row was cut after', async () => {
+    const link = linkAt(['C:\\repo\\.claude', '/worktrees/night/handoff.md'], 0)
+    const find = lookup({
+      'C:\\repo\\.claude': 'C:\\repo\\.claude',
+      'C:\\repo\\.claude/worktrees/night/handoff.md':
+        'C:\\repo\\.claude\\worktrees\\night\\handoff.md',
+    })
+    await expect(locateTerminalPath(link, 'C:\\repo', null, find)).resolves.toEqual({
+      target: 'C:\\repo\\.claude\\worktrees\\night\\handoff.md',
+      fileKind: 'markdown',
+    })
+  })
+
+  // A row cut right after a folder name leaves a link to the folder, which exists.
+  it('prefers the whole file to a folder the row was cut after', async () => {
+    const link = {
+      target: 'C:\\repo\\docs',
+      wrapped: ['C:\\repo\\docs\\handoff.md', 'C:\\repo\\docs\\handoff.md\\nope'],
+    }
+    const find = lookup({
+      'C:\\repo\\docs': 'C:\\repo\\docs',
+      'C:\\repo\\docs\\handoff.md': 'C:\\repo-noite\\docs\\handoff.md',
+    })
+    await expect(locateTerminalPath(link, 'C:\\repo', null, find)).resolves.toMatchObject({
+      target: 'C:\\repo-noite\\docs\\handoff.md',
+    })
+  })
+
+  it('keeps the printed path when nothing exists or the lookup fails', async () => {
+    await expect(
+      locateTerminalPath(
+        { target: 'C:\\repo\\a.md', wrapped: ['C:\\repo\\a.mdtexto'] },
+        'C:\\repo',
+        null,
+        lookup({}),
+      ),
+    ).resolves.toMatchObject({ target: 'C:\\repo\\a.md' })
+    const failing = vi.fn(async () => Promise.reject(new Error('ipc')))
+    await expect(
+      locateTerminalPath({ target: 'docs/x.md' }, 'C:\\repo', null, failing),
+    ).resolves.toEqual({ target: 'C:\\repo\\docs\\x.md', fileKind: 'markdown' })
   })
 })

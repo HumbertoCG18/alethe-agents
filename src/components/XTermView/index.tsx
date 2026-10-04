@@ -35,7 +35,7 @@ import { AgentInstallButton } from '../AgentInstall/AgentInstallButton'
 import { DotmCircular2 } from '../ui/dotm-circular-2'
 import {
   type DetectedTerminalLink,
-  relativeTerminalPath,
+  locateTerminalPath,
   resolveTerminalFilePath,
 } from './terminalLinks'
 import { applyPromptHistoryInput, loadPromptHistory, PROMPT_HISTORY_KEY } from './terminalWrite'
@@ -114,7 +114,6 @@ export function XTermView({
   const ptyIdRef = useRef<string | null>(null)
   const lastCtrlCRef = useRef(0)
   const linkMenuRef = useRef<HTMLDivElement | null>(null)
-  const linkActionsRef = useRef<LinkActionState | null>(null)
 
   const cliPathOverride = useProjectsStore((s) =>
     command && command !== 'shell' ? (s.cliPaths[command] ?? null) : null,
@@ -201,33 +200,18 @@ export function XTermView({
           ? resolveTerminalFilePath(link.target, cwd, homeRef.current)
           : link.target
       const request = ++linkMenuRequestRef.current
-      const show = (resolved: string) =>
+      const show = ({ target, fileKind }: Pick<LinkActionState, 'target' | 'fileKind'>) =>
         request === linkMenuRequestRef.current &&
-        setLinkActions({
-          text: link.text,
-          target: resolved,
-          kind: link.kind,
-          fileKind: link.fileKind,
-          x,
-          y,
-        })
-      const relative = link.kind === 'path' && cwd ? relativeTerminalPath(link.target) : null
-      if (!cwd || relative === null) {
-        show(target)
+        setLinkActions({ text: link.text, target, kind: link.kind, fileKind, x, y })
+      if (link.kind !== 'path' || !cwd) {
+        show({ target, fileKind: link.fileKind })
         return
       }
       // Agents often write in another worktree of the project while the pane stays in the main one.
-      void findRelativePath(cwd, relative).then(
-        (found) => show(found ?? target),
-        () => show(target),
-      )
+      void locateTerminalPath(link, cwd, homeRef.current, findRelativePath).then(show)
     },
     [cwd],
   )
-
-  useEffect(() => {
-    linkActionsRef.current = linkActions
-  }, [linkActions])
 
   useEffect(() => {
     if (!linkActions) return
@@ -381,7 +365,6 @@ export function XTermView({
     terminalRef,
     ptyIdRef,
     lastCtrlCRef,
-    linkActionsRef,
     spawnedAtRef,
     usedResumeRef,
     earlyExitRetriedRef,
@@ -395,7 +378,7 @@ export function XTermView({
     setBootPhase,
     setMemoryWait,
     setCommandNotFound,
-    setLinkActions,
+    hideLinkActions,
     setRetryKey,
     setDropActive,
     showLinkActionsMenu,

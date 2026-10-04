@@ -12,6 +12,7 @@ import { useTerminalsStore } from '../../stores/terminalsStore'
 import { useXtermSession } from './useXtermSession'
 
 const hooks = vi.hoisted(() => new Set<(event: { payload: AgentHookPayload }) => void>())
+const scrolls = vi.hoisted(() => [] as Array<() => void>)
 vi.mock('@tauri-apps/api/event', () => ({
   listen: vi.fn(async (_name, handler) => {
     hooks.add(handler)
@@ -35,7 +36,8 @@ vi.mock('@xterm/xterm', () => ({
     registerLinkProvider() {
       return { dispose() {} }
     }
-    onScroll() {
+    onScroll(handler: () => void) {
+      scrolls.push(handler)
       return { dispose() {} }
     }
     attachCustomKeyEventHandler() {}
@@ -95,7 +97,6 @@ function params(): Parameters<typeof useXtermSession>[0] {
     terminalRef: ref(null),
     ptyIdRef: ref(null),
     lastCtrlCRef: ref(0),
-    linkActionsRef: ref(null),
     spawnedAtRef: ref(0),
     usedResumeRef: ref(false),
     earlyExitRetriedRef: ref(false),
@@ -108,7 +109,7 @@ function params(): Parameters<typeof useXtermSession>[0] {
     onAgentCompleteRef: ref(vi.fn()),
     setBootPhase: vi.fn(),
     setCommandNotFound: vi.fn(),
-    setLinkActions: vi.fn(),
+    hideLinkActions: vi.fn(),
     setRetryKey: vi.fn(),
     setDropActive: vi.fn(),
     showLinkActionsMenu: vi.fn(),
@@ -222,5 +223,15 @@ describe('Claude terminal session lifecycle', () => {
     expect(original).toHaveBeenLastCalledWith('new-chat')
     expect(input.onSessionIdRef.current).not.toHaveBeenCalled()
     expect(peekSession('tab-0')?.claudeSessionId).toBe('new-chat')
+  })
+
+  // A link lookup still pending when the terminal scrolls must not open the menu where it was.
+  it('drops a pending link menu when the terminal scrolls', async () => {
+    scrolls.length = 0
+    const input = params()
+    renderHook(() => useXtermSession(input))
+    await waitFor(() => expect(scrolls).toHaveLength(1))
+    act(() => scrolls[0]())
+    expect(input.hideLinkActions).toHaveBeenCalled()
   })
 })

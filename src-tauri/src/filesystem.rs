@@ -2,7 +2,7 @@ use notify::{Config, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf, Prefix};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter};
 
@@ -405,11 +405,13 @@ pub fn unwatch_file(state: tauri::State<'_, FileWatchers>, path: String) -> Resu
     Ok(())
 }
 
-/// Where a relative path printed in a terminal really is. Agents often write
-/// in another git worktree of the project while the pane stays in the main
-/// checkout, so when the path is not under `cwd` it is looked up under every
-/// worktree root, and under the worktree whose folder is the path's first
-/// segment (`repo-feature/docs/x.md`). The most recently modified match wins.
+/// Where a path printed in a terminal really is. Agents often write in another
+/// git worktree of the project while the pane stays in the main checkout, so
+/// when a relative path is not under `cwd` it is looked up under every worktree
+/// root, and under the worktree whose folder is the path's first segment
+/// (`repo-feature/docs/x.md`). A missing absolute path inside one checkout is
+/// looked up at the same place in the others. The most recently modified match
+/// wins.
 #[tauri::command]
 pub async fn find_relative_path(cwd: String, path: String) -> Option<String> {
     tokio::task::spawn_blocking(move || {
@@ -421,13 +423,13 @@ pub async fn find_relative_path(cwd: String, path: String) -> Option<String> {
     .map(|found| found.to_string_lossy().into_owned())
 }
 
-fn find_relative_path_inner(cwd: &Path, relative: &str) -> Option<PathBuf> {
-    let relative = Path::new(relative);
-    if relative.as_os_str().is_empty() || relative.has_root() {
+fn find_relative_path_inner(cwd: &Path, path: &str) -> Option<PathBuf> {
+    let path = Path::new(path);
+    if path.as_os_str().is_empty() {
         return None;
     }
     // Collecting the components turns git's `C:/...` into native separators.
-    let direct: PathBuf = cwd.join(relative).components().collect();
+    let direct: PathBuf = cwd.join(path).components().collect();
     if direct.exists() {
         return Some(direct);
     }
@@ -436,24 +438,80 @@ fn find_relative_path_inner(cwd: &Path, relative: &str) -> Option<PathBuf> {
     if !output.status.success() {
         return None;
     }
-    let mut components = relative.components();
-    let first = components.next()?.as_os_str().to_owned();
-    let rest = components.as_path();
-    String::from_utf8_lossy(&output.stdout)
+    let roots: Vec<PathBuf> = String::from_utf8_lossy(&output.stdout)
         .lines()
         .filter_map(|line| line.strip_prefix("worktree "))
         .map(PathBuf::from)
-        .flat_map(|root| {
-            let named = (root.file_name() == Some(first.as_os_str())).then(|| root.join(rest));
-            [Some(root.join(relative)), named]
-        })
-        .flatten()
+        .collect();
+    let candidates: Vec<PathBuf> = if path.has_root() {
+        // The innermost checkout holding it, since a worktree can live inside the main one.
+        let inner = roots
+            .iter()
+            .filter_map(|root| strip_checkout(path, root))
+            .min_by_key(|inner| inner.components().count())?;
+        roots.iter().map(|root| root.join(&inner)).collect()
+    } else {
+        let mut components = path.components();
+        let first = components.next()?.as_os_str().to_owned();
+        let rest = components.as_path();
+        roots
+            .iter()
+            .flat_map(|root| {
+                let named = (root.file_name() == Some(first.as_os_str())).then(|| root.join(rest));
+                [Some(root.join(path)), named]
+            })
+            .flatten()
+            .collect()
+    };
+    candidates
+        .into_iter()
         .filter_map(|candidate| {
             let modified = fs::metadata(&candidate).ok()?.modified().ok()?;
             Some((modified, candidate.components().collect::<PathBuf>()))
         })
         .max_by_key(|(modified, _)| *modified)
         .map(|(_, candidate)| candidate)
+}
+
+/// `path` relative to the checkout `root`, refused unless it is plain names: joined to the other
+/// checkouts, a `..` would lead out of them. Windows compares the components as its file system
+/// does; the separators never matter since both are parsed as such.
+fn strip_checkout(path: &Path, root: &Path) -> Option<PathBuf> {
+    let mut rest = path.components();
+    for part in root.components() {
+        let next = rest.next()?;
+        let same = if cfg!(windows) {
+            windows_key(part) == windows_key(next)
+        } else {
+            part == next
+        };
+        if !same {
+            return None;
+        }
+    }
+    rest.clone()
+        .all(|part| matches!(part, Component::Normal(_)))
+        .then(|| rest.as_path().to_path_buf())
+}
+
+/// A path component without case, reading a verbatim prefix (`\\?\C:`, `\\?\UNC\server\share`)
+/// as the plain one it stands for.
+fn windows_key(part: Component) -> String {
+    let key = match part {
+        Component::Prefix(prefix) => match prefix.kind() {
+            Prefix::Disk(drive) | Prefix::VerbatimDisk(drive) => format!("{}:", drive as char),
+            Prefix::UNC(server, share) | Prefix::VerbatimUNC(server, share) => {
+                format!(
+                    r"\\{}\{}",
+                    server.to_string_lossy(),
+                    share.to_string_lossy()
+                )
+            }
+            _ => part.as_os_str().to_string_lossy().into_owned(),
+        },
+        _ => part.as_os_str().to_string_lossy().into_owned(),
+    };
+    key.to_lowercase()
 }
 
 #[cfg(test)]
@@ -582,5 +640,94 @@ mod tests {
             );
         }
         let _ = fs::remove_dir_all(&parent);
+    }
+
+    // An agent in the main checkout prints the absolute path of a file that only exists, untracked,
+    // in a sibling worktree (#54).
+    #[test]
+    fn finds_an_absolute_path_of_another_checkout() {
+        let parent = scratch("absolute-path");
+        let main = parent.join("repo");
+        fs::create_dir_all(&main).unwrap();
+        checked_output(&main, &["init", "-b", "main"]).unwrap();
+        checked_output(&main, &["config", "user.name", "Alethe Test"]).unwrap();
+        checked_output(&main, &["config", "user.email", "alethe@example.invalid"]).unwrap();
+        fs::write(main.join("a.txt"), "a\n").unwrap();
+        checked_output(&main, &["add", "-A"]).unwrap();
+        checked_output(&main, &["commit", "-m", "base"]).unwrap();
+        let add_worktree = |worktree: &Path, branch: &str| {
+            let at = worktree.to_str().unwrap();
+            checked_output(&main, &["worktree", "add", "-b", branch, at, "HEAD"]).unwrap();
+        };
+        let night = parent.join("repo-night");
+        add_worktree(&night, "night");
+        // Nested like Claude Code's own worktrees: the path belongs to it, not to the main checkout.
+        let nested = main.join(".claude").join("worktrees").join("nested");
+        add_worktree(&nested, "nested");
+        fs::create_dir_all(night.join("docs")).unwrap();
+        let handoff = night.join("docs").join("handoff.md");
+        fs::write(&handoff, "night").unwrap();
+        let find = |path: &Path| find_relative_path_inner(&main, path.to_str().unwrap());
+
+        assert_eq!(find(&main.join("a.txt")), Some(main.join("a.txt")));
+        assert_eq!(
+            find(&main.join("docs").join("handoff.md")),
+            Some(handoff.clone())
+        );
+        assert_eq!(
+            find(&nested.join("docs").join("handoff.md")),
+            Some(handoff.clone())
+        );
+        assert_eq!(find(&parent.join("docs").join("handoff.md")), None);
+        assert_eq!(find(&main.join("docs").join("missing.md")), None);
+        // A `..` never carries the lookup out of a checkout: joined to the nested worktree, the one
+        // printed from the main checkout would reach a file that no checkout holds.
+        fs::write(nested.join("..").join("private.md"), "private").unwrap();
+        assert_eq!(find(&main.join("..").join("private.md")), None);
+        if cfg!(windows) {
+            // Windows compares checkouts without case, whichever separator was printed.
+            let printed = format!("{}/docs/handoff.md", main.to_str().unwrap().to_uppercase());
+            assert_eq!(
+                find_relative_path_inner(&main, &printed.replace('\\', "/")),
+                Some(handoff.clone())
+            );
+            // A verbatim path names the same checkout.
+            let verbatim = format!(r"\\?\{}", main.join("docs").join("handoff.md").display());
+            assert_eq!(
+                find_relative_path_inner(&main, &verbatim),
+                Some(handoff.clone())
+            );
+        }
+
+        for worktree in [&night, &nested] {
+            let at = worktree.to_str().unwrap();
+            let _ = checked_output(&main, &["worktree", "remove", "--force", at]);
+        }
+        let _ = fs::remove_dir_all(&parent);
+    }
+
+    // Git prints `//server/share/repo`; a printed path may come canonicalized, as `\\?\UNC\...`.
+    #[cfg(windows)]
+    #[test]
+    fn a_verbatim_prefix_names_the_same_checkout() {
+        let inner = Some(PathBuf::from(r"docs\x.md"));
+        assert_eq!(
+            strip_checkout(
+                Path::new(r"\\?\UNC\server\share\repo\docs\x.md"),
+                Path::new("//server/share/repo")
+            ),
+            inner
+        );
+        assert_eq!(
+            strip_checkout(Path::new(r"\\?\c:\Repo\docs\x.md"), Path::new("C:/repo")),
+            inner
+        );
+        assert_eq!(
+            strip_checkout(
+                Path::new(r"\\other\share\repo\docs\x.md"),
+                Path::new("//server/share/repo")
+            ),
+            None
+        );
     }
 }

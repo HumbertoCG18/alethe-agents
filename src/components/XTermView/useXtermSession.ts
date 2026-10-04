@@ -93,6 +93,8 @@ import {
   detectTerminalLinks,
   getLogicalTerminalLine,
   makeXtermLink,
+  terminalRowsAround,
+  wrappedPathCandidates,
 } from './terminalLinks'
 import {
   TERMINAL_WRITE_FALLBACK_MS,
@@ -101,7 +103,7 @@ import {
   writePtyChunked,
   writePtyWithTimeout,
 } from './terminalWrite'
-import { getXtermTheme, type LinkActionState } from './xtermThemes'
+import { getXtermTheme } from './xtermThemes'
 
 // Early exits trigger a single fresh-session retry.
 const EARLY_EXIT_MS = 4000
@@ -156,7 +158,6 @@ export function useXtermSession(params: {
   terminalRef: MutableRefObject<Terminal | null>
   ptyIdRef: MutableRefObject<string | null>
   lastCtrlCRef: MutableRefObject<number>
-  linkActionsRef: MutableRefObject<LinkActionState | null>
   spawnedAtRef: MutableRefObject<number>
   usedResumeRef: MutableRefObject<boolean>
   earlyExitRetriedRef: MutableRefObject<boolean>
@@ -172,7 +173,8 @@ export function useXtermSession(params: {
     SetStateAction<{ availableMb: number; waitedMs: number; thresholdMb: number } | null>
   >
   setCommandNotFound: Dispatch<SetStateAction<string | null>>
-  setLinkActions: Dispatch<SetStateAction<LinkActionState | null>>
+  /** Closes the link menu and drops a lookup still pending for it. */
+  hideLinkActions: () => void
   setRetryKey: Dispatch<SetStateAction<number>>
   setDropActive: Dispatch<SetStateAction<boolean>>
   showLinkActionsMenu: (event: MouseEvent, link: DetectedTerminalLink) => void
@@ -201,7 +203,6 @@ export function useXtermSession(params: {
     terminalRef,
     ptyIdRef,
     lastCtrlCRef,
-    linkActionsRef,
     spawnedAtRef,
     usedResumeRef,
     earlyExitRetriedRef,
@@ -215,7 +216,7 @@ export function useXtermSession(params: {
     setBootPhase,
     setMemoryWait,
     setCommandNotFound,
-    setLinkActions,
+    hideLinkActions,
     setRetryKey,
     setDropActive,
     showLinkActionsMenu,
@@ -377,17 +378,22 @@ export function useXtermSession(params: {
           callback(undefined)
           return
         }
+        // The rows around the logical line, where a TUI that wraps by itself cuts a path.
+        const rows = terminalRowsAround(terminal.buffer.active, logicalLine)
         const links = detectTerminalLinks(logicalLine.text).map((link) =>
-          makeXtermLink(logicalLine.startLine, terminal.cols, link, {
-            openMenu: showLinkActionsMenu,
-          }),
+          makeXtermLink(
+            logicalLine.startLine,
+            terminal.cols,
+            { ...link, wrapped: wrappedPathCandidates(link, rows) },
+            { openMenu: showLinkActionsMenu },
+          ),
         )
         callback(links.length > 0 ? links : undefined)
       },
     })
 
     linkScrollDisposable = terminal.onScroll(() => {
-      if (linkActionsRef.current) setLinkActions(null)
+      hideLinkActions()
     })
 
     terminal.focus()
@@ -1637,7 +1643,7 @@ export function useXtermSession(params: {
       linkScrollDisposable?.dispose()
       completionMonitor?.dispose()
       completionMonitor = null
-      setLinkActions(null)
+      hideLinkActions()
       if (terminalRef.current === terminal) terminalRef.current = null
       ptyIdRef.current = null
       if (resyncTerminalRef.current === doResync) resyncTerminalRef.current = null

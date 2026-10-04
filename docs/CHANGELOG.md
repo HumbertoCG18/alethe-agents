@@ -206,6 +206,9 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 ### Fixed
 
 - A campaign whose terminal was closed mid-task no longer keeps a green dot in the Campaigns map.
+- A file path in a terminal opens again when an agent printed it from another worktree of the
+  project, or when Claude Code wrapped it onto the next line: the menu no longer says the path does
+  not exist.
 - Checking, adding or undoing a campaign task in the Todo List shows at once, instead of waiting
   for the list to re-read the project's worktrees.
 - The Todo List settings in Portuguese have their accents back ("Configurações", "Pasta padrão",

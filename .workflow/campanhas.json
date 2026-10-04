@@ -220,6 +220,16 @@
           "origem": "USER",
           "evidencia": "PR #66 integrado na dev; revisão Codex sem achados; vitest 956",
           "resultado": "aguarda o Gate 2 do usuário"
+        },
+        {
+          "id": "TODO-22",
+          "titulo": "Continuar no terminal sem aba abre o Claude Code com a Orquestração",
+          "nivel": "T1",
+          "estado": "em execução",
+          "depende_de": [],
+          "origem": "USER",
+          "evidencia": "PR #69 integrado na dev; revisão Codex com achados corrigidos; testes verdes",
+          "resultado": "aguarda o Gate 2 do usuário"
         }
       ]
     },
@@ -488,6 +498,36 @@
           "origem": "CODE",
           "achado": "ACH-0005",
           "evidencia": "PR #61 integrado na dev; revisão Codex (1 MAJOR, 2 MINOR corrigidos); vitest 941",
+          "resultado": "aguarda o Gate 2 do usuário"
+        },
+        {
+          "id": "UI-05",
+          "titulo": "Confirmação nativa permitida na janela da Orquestração, com falha tratada",
+          "nivel": "T1",
+          "estado": "em execução",
+          "depende_de": [],
+          "origem": "USER",
+          "evidencia": "PR #69 integrado na dev; revisão Codex com achados corrigidos; testes verdes",
+          "resultado": "aguarda o Gate 2 do usuário"
+        },
+        {
+          "id": "UI-06",
+          "titulo": "Fechamento: log por etapa, saída forçada após 10 s, teardown de 4 s e teto dos logs",
+          "nivel": "T2",
+          "estado": "em execução",
+          "depende_de": [],
+          "origem": "USER",
+          "evidencia": "PR #69 integrado na dev; revisão Codex com achados corrigidos; testes verdes",
+          "resultado": "aguarda o Gate 2 do usuário"
+        },
+        {
+          "id": "UI-07",
+          "titulo": "window.confirm não pergunta: migrar as chamadas para um askConfirm assíncrono",
+          "nivel": "T2",
+          "estado": "em execução",
+          "depende_de": [],
+          "origem": "USER",
+          "evidencia": "PR #70 integrado na dev; revisão Codex com achados corrigidos; testes verdes",
           "resultado": "aguarda o Gate 2 do usuário"
         }
       ]

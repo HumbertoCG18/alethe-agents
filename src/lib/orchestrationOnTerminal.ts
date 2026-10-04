@@ -1,5 +1,6 @@
 import { useProjectsStore } from '../stores/projectsStore'
 import { hasOrchestratorTools, waitForOrchestratorTools } from './claudeMcpConfigs'
+import type { Terminal } from './types'
 
 /** How long a restarted (or resumed) Claude gets to come back with the orchestrator tools. */
 const TOOLS_TIMEOUT_MS = 20_000
@@ -50,12 +51,9 @@ export async function startOrchestrationOn({
     const needsRestart = !hasOrchestratorTools(ptyId)
     if (needsRestart && !(await confirmRestart())) return 'declined'
 
-    // Same as starting a planner from the new-terminal dialog: the feature has to be on for the
-    // launch to include the orchestrator tools. Only after the user agreed to go ahead.
-    const { preferences, setPreferences } = useProjectsStore.getState()
-    if (!preferences.enabledFeatures.orchestrator) {
-      setPreferences({ enabledFeatures: { ...preferences.enabledFeatures, orchestrator: true } })
-    }
+    // Same as starting a planner from the new-terminal dialog. Only after the user agreed to go
+    // ahead.
+    enableOrchestrator()
     if (needsRestart) {
       if (!(await restart())) return 'failed'
       if (!(await waitForOrchestratorTools(ptyId, TOOLS_TIMEOUT_MS))) return 'failed'
@@ -66,11 +64,38 @@ export async function startOrchestrationOn({
     if (!project?.terminals.some((terminal) => terminal.id === terminalId)) return 'failed'
     if (hasBoard(projectId, terminalId)) return 'ready'
 
-    const { createOrchestratorPane, groupPanes } = useProjectsStore.getState()
-    const board = createOrchestratorPane(projectId, cwd)
-    groupPanes(projectId, [terminalId, board.id], { kind: 'orchestration' })
+    addBoard(projectId, terminalId, cwd)
     return 'ready'
   } finally {
     starting.delete(terminalId)
   }
+}
+
+/** The feature has to be on for an agent's launch to include the orchestrator tools. */
+function enableOrchestrator() {
+  const { preferences, setPreferences } = useProjectsStore.getState()
+  if (!preferences.enabledFeatures.orchestrator) {
+    setPreferences({ enabledFeatures: { ...preferences.enabledFeatures, orchestrator: true } })
+  }
+}
+
+function addBoard(projectId: string, terminalId: string, cwd: string) {
+  const { createOrchestratorPane, groupPanes } = useProjectsStore.getState()
+  const board = createOrchestratorPane(projectId, cwd)
+  groupPanes(projectId, [terminalId, board.id], { kind: 'orchestration' })
+}
+
+/**
+ * Opens a new agent terminal as a planner, grouped with its own board. The feature is turned on
+ * before `create` runs, so the planner gets the orchestrator tools on its first mount.
+ */
+export async function createOrchestratedTerminal(
+  projectId: string,
+  cwd: string,
+  create: () => Terminal | Promise<Terminal>,
+): Promise<Terminal> {
+  enableOrchestrator()
+  const terminal = await create()
+  addBoard(projectId, terminal.id, cwd)
+  return terminal
 }

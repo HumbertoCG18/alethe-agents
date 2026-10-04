@@ -277,25 +277,17 @@
   color: var(--fg-muted);
 }
 
-.tab[data-state='running'] .dot {
+/* A planner tab's dot is its terminal's pty status, in the terminal status colours. */
+.tab .dot {
+  background: var(--status-stopped);
+}
+
+.tab[data-status='working'] .dot {
   background: var(--status-working);
 }
 
-.tab[data-state='queued'] .dot {
+.tab[data-status='waiting'] .dot {
   background: var(--status-waiting);
-}
-
-.tab[data-state='interrupted'] .dot {
-  background: transparent;
-  box-shadow: inset 0 0 0 1.5px var(--status-waiting);
-}
-
-.tab[data-state='failed'] .dot {
-  background: var(--status-offline);
-}
-
-.tab[data-state='finished'] .dot {
-  background: var(--status-stopped);
 }
 
 .tabName {
@@ -1226,7 +1218,6 @@
 }
 
 /* Blocked is the only dot that breathes: it is the one state costing a worker right now. */
-.tab[data-state='blocked'] .dot,
 .run[data-lane='blocked'] .dot,
 .worker[data-status='blocked'] .dot,
 .railRow[data-status='blocked'] .dot,
@@ -1963,7 +1954,6 @@
     transition: none;
   }
 
-  .tab[data-state='blocked'] .dot,
   .run[data-lane='blocked'] .dot,
   .worker[data-status='blocked'] .dot,
   .railRow[data-status='blocked'] .dot,

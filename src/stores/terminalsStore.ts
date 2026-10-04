@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 
-import type { PtyStatus } from '../lib/types'
+import type { PtyStatus, SubTab } from '../lib/types'
 
 export const IO_TIMESTAMP_THROTTLE_MS = 250
 
@@ -31,6 +31,12 @@ export type PtyRuntime = {
   poolState?: 'ACTIVE' | 'HIBERNATING' | 'HIBERNATED' | 'RESTORING' | 'FAILED'
   snapshot?: TerminalSnapshot | null
 }
+
+/** Whether any of `tabs` runs in a pty that is working now. */
+export const anyTabWorking = (
+  tabs: readonly Pick<SubTab, 'ptyId'>[],
+  byPtyId: Readonly<Record<string, Pick<PtyRuntime, 'status'>>>,
+): boolean => tabs.some((tab) => !!tab.ptyId && byPtyId[tab.ptyId]?.status === 'working')
 
 type TerminalsState = {
   byPtyId: Record<string, PtyRuntime>

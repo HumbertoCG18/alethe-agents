@@ -19,6 +19,7 @@ import {
 } from '../../lib/agentProviders'
 import { pickDirectory } from '../../lib/dialog'
 import { useT } from '../../lib/i18n'
+import { createOrchestratedTerminal } from '../../lib/orchestrationOnTerminal'
 import { basename, pathSegments } from '../../lib/paths'
 import { formatShortcut } from '../../lib/platform'
 import { DEFAULT_GRID_ID } from '../../lib/projectGrids'
@@ -59,10 +60,7 @@ export function NewTerminalModal() {
   } | null
   const closeModal = useUiStore((s) => s.closeModal)
   const createAgentTerminal = useProjectsStore((s) => s.createAgentTerminal)
-  const createOrchestratorPane = useProjectsStore((s) => s.createOrchestratorPane)
-  const groupPanes = useProjectsStore((s) => s.groupPanes)
   const alwaysStartUnrestricted = useProjectsStore((s) => s.preferences.alwaysStartUnrestricted)
-  const enabledFeatures = useProjectsStore((s) => s.preferences.enabledFeatures)
   const setPreferences = useProjectsStore((s) => s.setPreferences)
   const project = useProjectsStore((s) =>
     context?.projectId ? (s.projects.find((p) => p.id === context.projectId) ?? null) : null,
@@ -205,20 +203,14 @@ export function NewTerminalModal() {
         initialInput: orchestrating && trimmedGoal ? trimmedGoal : undefined,
       },
     }
-    // The planner must receive the orchestration MCP config on its first mount. Update the feature
-    // before adding the terminal so no restart is needed.
-    setPreferences({
-      ...(orchestrating ? { enabledFeatures: { ...enabledFeatures, orchestrator: true } } : {}),
-      lastTerminalCreation: creation,
-    })
-    const terminal = await createAgentTerminal(context.projectId, {
-      ...creation,
-      gridId: selectedGridId === UNGROUPED_GRID ? undefined : selectedGridId,
-    })
-    if (orchestrating) {
-      const canvas = createOrchestratorPane(context.projectId, finalCwd)
-      groupPanes(context.projectId, [terminal.id, canvas.id], { kind: 'orchestration' })
-    }
+    setPreferences({ lastTerminalCreation: creation })
+    const { projectId } = context
+    const create = () =>
+      createAgentTerminal(projectId, {
+        ...creation,
+        gridId: selectedGridId === UNGROUPED_GRID ? undefined : selectedGridId,
+      })
+    await (orchestrating ? createOrchestratedTerminal(projectId, finalCwd, create) : create())
     if (createMore && !orchestrating) return
     reset()
     closeModal()

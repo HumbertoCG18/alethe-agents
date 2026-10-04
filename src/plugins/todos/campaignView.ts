@@ -12,6 +12,7 @@ import {
   type CampaignRegistry,
   type CampaignTab,
   type CampaignTask,
+  campaignWorkers,
   isoDay,
   liveTaskWorkers,
   nightPrompt,
@@ -23,6 +24,7 @@ import {
   type TaskWorkers,
 } from '../../lib/campaigns'
 import { type MessageKey, type TFunction, useT } from '../../lib/i18n'
+import { createOrchestratedTerminal } from '../../lib/orchestrationOnTerminal'
 import {
   campaignRegistryWrite,
   findRelativePath,
@@ -38,8 +40,9 @@ import {
   worktreeCheckouts,
 } from '../../lib/tauri'
 import { getProjectDefaultCwd } from '../../lib/terminalFactory'
-import type { SubTab } from '../../lib/types'
+import type { PtyStatus, SubTab, Terminal } from '../../lib/types'
 import { selectActiveProject, useProjectsStore } from '../../stores/projectsStore'
+import { anyTabWorking, type PtyRuntime } from '../../stores/terminalsStore'
 import { useUiStore } from '../../stores/uiStore'
 import { useTodosStore } from './store'
 
@@ -237,10 +240,11 @@ function focusTerminal(projectId: string, terminalId: string) {
 }
 
 /**
- * Focuses the `agent` tab opened for this campaign, or opens one with its resume prompt, and
- * returns its terminal id. A tab opened by hand, or for another campaign, is never reused even in
- * the same checkout: it would not get this campaign's prompt. A `nightTask` (the night scheduler)
- * always gets a fresh tab, with the night prompt for that task.
+ * Focuses the `agent` tab opened for this campaign, or opens one with its resume prompt, as a
+ * planner grouped with an orchestration board, and returns its terminal id. A tab opened by hand,
+ * or for another campaign, is never reused even in the same checkout: it would not get this
+ * campaign's prompt. A `nightTask` (the night scheduler) always gets a fresh plain tab, with the
+ * night prompt for that task.
  */
 export async function openCampaign(
   projectId: string,
@@ -263,23 +267,30 @@ export async function openCampaign(
       ? await findRelativePath(registry.main, campaign.handoff).catch(() => null)
       : null
     // Checked again: the tab may have been opened while the handoff was looked up.
-    terminalId =
-      activateTab(projectId, running) ??
-      useProjectsStore.getState().createTerminal(projectId, {
-        name: nightTask?.id ?? campaign.id,
-        cwd,
-        firstTab: {
-          type: agent,
+    terminalId = activateTab(projectId, running)
+    if (!terminalId) {
+      // createTerminal, not createAgentTerminal: the tab belongs in the campaign's checkout, which
+      // the project's automatic worktree isolation would replace with a new one.
+      const create = () =>
+        useProjectsStore.getState().createTerminal(projectId, {
+          name: nightTask?.id ?? campaign.id,
           cwd,
-          campaignId: campaign.id,
-          // Night work runs unattended in Claude's auto mode, never bypassing permissions: a
-          // denied tool call becomes part of the task's result.
-          extraArgs: nightTask ? ['--permission-mode', 'auto'] : undefined,
-          initialInput: nightTask
-            ? nightPrompt(campaign, nightTask, registry.path, handoff)
-            : resumePrompt(campaign, registry.path, handoff),
-        },
-      }).id
+          firstTab: {
+            type: agent,
+            cwd,
+            campaignId: campaign.id,
+            // Night work runs unattended in Claude's auto mode, never bypassing permissions: a
+            // denied tool call becomes part of the task's result.
+            extraArgs: nightTask ? ['--permission-mode', 'auto'] : undefined,
+            initialInput: nightTask
+              ? nightPrompt(campaign, nightTask, registry.path, handoff)
+              : resumePrompt(campaign, registry.path, handoff),
+          },
+        })
+      // The user's tab is a planner with its own board; the night's stays a plain tab.
+      terminalId = (nightTask ? create() : await createOrchestratedTerminal(projectId, cwd, create))
+        .id
+    }
   }
   focusTerminal(projectId, terminalId)
   return terminalId
@@ -290,6 +301,34 @@ export function continueCampaign(projectId: string, campaign: Campaign): boolean
   const terminalId = activateTab(projectId, (tab) => tab.campaignId === campaign.id)
   if (terminalId) focusTerminal(projectId, terminalId)
   return terminalId !== null
+}
+
+/** What a campaign with something live for it shows: a subset of the pty statuses. */
+export type CampaignLive = Extract<PtyStatus, 'working' | 'stopped'>
+
+/**
+ * The campaigns with a tab opened for them in `terminals`, or a live worker on one of their tasks:
+ * `working` while one of those tabs works or one of those workers runs, else `stopped`. Campaigns
+ * with neither are left out.
+ */
+export function campaignLiveStatus(
+  campaigns: readonly Campaign[],
+  terminals: readonly Pick<Terminal, 'tabs'>[],
+  byPtyId: Readonly<Record<string, Pick<PtyRuntime, 'status'>>>,
+  workers: ReadonlyMap<string, TaskWorkers>,
+): Map<string, CampaignLive> {
+  const tabs = terminals.flatMap((terminal) => terminal.tabs)
+  const live = new Map<string, CampaignLive>()
+  for (const campaign of campaigns) {
+    const own = tabs.filter((tab) => tab.campaignId === campaign.id)
+    const { running, queued } = campaignWorkers(
+      campaign.tasks.map((task) => task.id),
+      workers,
+    )
+    if (own.length === 0 && running + queued === 0) continue
+    live.set(campaign.id, running > 0 || anyTabWorking(own, byPtyId) ? 'working' : 'stopped')
+  }
+  return live
 }
 
 type TaskJob = Pick<OrchestratorJob, 'task' | 'status' | 'cwd'>

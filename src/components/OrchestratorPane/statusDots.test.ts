@@ -21,4 +21,12 @@ describe('worker status dots', () => {
     }
     expect(dotColor(".railRow[data-status='running']")).toBe('var(--status-working)')
   })
+
+  // A planner tab's dot is its terminal's status, in the terminal status colours.
+  it('show a planner tab by its pty status, stopped by default', () => {
+    expect(dotColor('.tab')).toBe('var(--status-stopped)')
+    expect(dotColor(".tab[data-status='working']")).toBe('var(--status-working)')
+    expect(dotColor(".tab[data-status='waiting']")).toBe('var(--status-waiting)')
+    expect(css).not.toMatch(/\.tab\[data-state='[a-z]+'\] \.dot/)
+  })
 })

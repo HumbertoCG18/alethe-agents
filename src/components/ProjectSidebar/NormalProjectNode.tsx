@@ -5,7 +5,7 @@ import { ChevronDown, Folder, MoreHorizontal, Network, Pause, Plus } from 'lucid
 import { useT } from '../../lib/i18n'
 import { type SidebarDropEdge } from '../../lib/sidebarDrag'
 import { type Project, type Terminal } from '../../lib/types'
-import { useTerminalsStore } from '../../stores/terminalsStore'
+import { anyTabWorking, useTerminalsStore } from '../../stores/terminalsStore'
 import { useUiStore } from '../../stores/uiStore'
 import { Collapse } from '../ui/Collapse'
 import { DotmCircular2 } from '../ui/dotm-circular-2'
@@ -63,14 +63,7 @@ export function NormalProjectNode({
 
   const allDisabled = visibleTerminals.length > 0 && visibleTerminals.every((term) => term.disabled)
   const runningCount = useTerminalsStore((state) =>
-    visibleTerminals.reduce(
-      (n, term) =>
-        n +
-        (term.tabs.some((tab) => tab.ptyId && state.byPtyId[tab.ptyId]?.status === 'working')
-          ? 1
-          : 0),
-      0,
-    ),
+    visibleTerminals.reduce((n, term) => n + (anyTabWorking(term.tabs, state.byPtyId) ? 1 : 0), 0),
   )
   const focusedTerminalId = useUiStore((s) =>
     s.activeTerminal?.projectId === project.id ? s.activeTerminal?.terminalId : undefined,

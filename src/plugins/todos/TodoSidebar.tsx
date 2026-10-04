@@ -1,6 +1,5 @@
 import {
   Check,
-  ChevronDown,
   ExternalLink,
   FolderKanban,
   GripVertical,
@@ -43,6 +42,7 @@ import {
 import { FindingsCard } from './FindingsCard'
 import { TODO_SETTINGS_MODAL_ID } from './manifest'
 import { NightCard, NightStatus } from './NightCard'
+import { SectionToggle } from './SectionToggle'
 import { useTodosStore } from './store'
 import styles from './TodoSidebar.module.css'
 
@@ -301,22 +301,13 @@ export function TodoSidebar() {
     const collapsed = collapsedSections.has(key)
     return (
       <section key={key} className={styles.section}>
-        <div className={styles.sectionHeader}>
-          <button
-            type="button"
-            className={styles.sectionToggle}
-            onClick={() => toggleSection(key)}
-            aria-expanded={!collapsed}
-          >
-            <ChevronDown
-              size={13}
-              className={`${styles.sectionChevron} ${collapsed ? styles.sectionChevronClosed : ''}`}
-            />
-            {iconUrl ? <img src={iconUrl} alt="" className={styles.sectionIcon} /> : null}
-            <span className={styles.sectionName}>{label}</span>
-            <span className={styles.sectionCount}>{items.length}</span>
-            <span className={styles.sectionRule} />
-          </button>
+        <SectionToggle
+          name={label}
+          count={items.length}
+          open={!collapsed}
+          onToggle={() => toggleSection(key)}
+          icon={iconUrl ? <img src={iconUrl} alt="" className={styles.sectionIcon} /> : null}
+        >
           {!completedSection ? (
             <button
               type="button"
@@ -328,7 +319,7 @@ export function TodoSidebar() {
               <Plus size={13} />
             </button>
           ) : null}
-        </div>
+        </SectionToggle>
         {!collapsed && items.length > 0 ? (
           <div className={styles.list}>
             {items.map((todo) => {

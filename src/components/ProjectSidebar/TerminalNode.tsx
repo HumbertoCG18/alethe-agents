@@ -5,7 +5,7 @@ import { useSidebarChatTitle } from '../../hooks/useSidebarChatTitle'
 import { useT } from '../../lib/i18n'
 import { type AgentType, type Project, type Terminal } from '../../lib/types'
 import { useProjectsStore } from '../../stores/projectsStore'
-import { useTerminalsStore } from '../../stores/terminalsStore'
+import { anyTabWorking, useTerminalsStore } from '../../stores/terminalsStore'
 import { Favicon } from '../Favicon'
 import { AgentIcon } from '../icons/AgentIcons'
 import { DotmCircular2 } from '../ui/dotm-circular-2'
@@ -47,9 +47,7 @@ export function TerminalNode({
       ? [activeTab.type, ...uniqueTypes.filter((type) => type !== activeTab.type)]
       : uniqueTypes
   const hasUnreadCompletion = terminal.tabs.some((tab) => tab.completionUnread)
-  const isWorking = useTerminalsStore((state) =>
-    terminal.tabs.some((tab) => tab.ptyId && state.byPtyId[tab.ptyId]?.status === 'working'),
-  )
+  const isWorking = useTerminalsStore((state) => anyTabWorking(terminal.tabs, state.byPtyId))
 
   return (
     <div

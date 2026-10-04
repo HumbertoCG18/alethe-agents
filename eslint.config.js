@@ -71,6 +71,20 @@ export default tseslint.config(
           ],
         },
       ],
+      // tauri-plugin-dialog replaces window.confirm with an async function: its Promise is always
+      // truthy, so a synchronous check proceeds without asking. Use askConfirm from lib/dialog.
+      'no-restricted-globals': [
+        'error',
+        { name: 'confirm', message: 'Use `await askConfirm(...)` from lib/dialog.' },
+      ],
+      'no-restricted-properties': [
+        'error',
+        ...['window', 'globalThis', 'self'].map((object) => ({
+          object,
+          property: 'confirm',
+          message: 'Use `await askConfirm(...)` from lib/dialog.',
+        })),
+      ],
     },
   },
   {

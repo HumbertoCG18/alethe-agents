@@ -1,6 +1,7 @@
 import { ArchiveRestore, FolderArchive, Trash2 } from 'lucide-react'
 import { useMemo } from 'react'
 
+import { askConfirm } from '../../../lib/dialog'
 import { useT } from '../../../lib/i18n'
 import { useProjectsStore } from '../../../stores/projectsStore'
 import styles from '../PreferencesModal.module.css'
@@ -48,9 +49,9 @@ export function OrganizationPage() {
                   className={styles.iconActionDanger}
                   title={t('prefs.deleteArchivedGroup')}
                   aria-label={t('prefs.deleteArchivedGroup')}
-                  onClick={() => {
+                  onClick={async () => {
                     if (
-                      window.confirm(t('prefs.deleteArchivedGroupConfirm', { name: group.name }))
+                      await askConfirm(t('prefs.deleteArchivedGroupConfirm', { name: group.name }))
                     ) {
                       deleteGroup(group.id, 'unassign')
                     }

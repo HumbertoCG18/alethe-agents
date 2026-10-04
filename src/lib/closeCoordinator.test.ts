@@ -20,7 +20,6 @@ describe('createCloseCoordinator', () => {
     const order: string[] = []
     const coordinator = createCloseCoordinator({
       confirmNative: async () => true,
-      confirmFallback: () => false,
       beforeClose: async () => {
         order.push('persist')
       },
@@ -42,7 +41,6 @@ describe('createCloseCoordinator', () => {
     let quit = 0
     const coordinator = createCloseCoordinator({
       confirmNative: async () => false,
-      confirmFallback: () => false,
       destroyWindow: async () => {
         destroyed += 1
       },
@@ -59,15 +57,23 @@ describe('createCloseCoordinator', () => {
     expect(quit).toBe(0)
   })
 
-  it('native dialog failure uses the browser confirmation fallback', async () => {
+  it('native dialog failure keeps the app open, reports it and lets the user retry', async () => {
     const failures: CloseFailureStage[] = []
+    let confirmCalls = 0
     let quit = 0
+    let destroyed = 0
+    let persisted = 0
     const coordinator = createCloseCoordinator({
       confirmNative: async () => {
+        confirmCalls += 1
         throw new Error('dialog unavailable')
       },
-      confirmFallback: () => true,
-      destroyWindow: async () => {},
+      beforeClose: async () => {
+        persisted += 1
+      },
+      destroyWindow: async () => {
+        destroyed += 1
+      },
       quitApp: async () => {
         quit += 1
       },
@@ -75,16 +81,19 @@ describe('createCloseCoordinator', () => {
     })
 
     await coordinator.handleCloseRequest(closeEvent())
+    await coordinator.handleCloseRequest(closeEvent())
 
-    expect(quit).toBe(1)
-    expect(failures).toEqual(['confirm'])
+    expect(confirmCalls).toBe(2)
+    expect(persisted).toBe(0)
+    expect(quit).toBe(0)
+    expect(destroyed).toBe(0)
+    expect(failures).toEqual(['confirm', 'confirm'])
   })
 
   it('the window is never destroyed while the quit command succeeds', async () => {
     let destroyed = 0
     const coordinator = createCloseCoordinator({
       confirmNative: async () => true,
-      confirmFallback: () => false,
       destroyWindow: async () => {
         destroyed += 1
       },
@@ -101,7 +110,6 @@ describe('createCloseCoordinator', () => {
     let destroyed = 0
     const coordinator = createCloseCoordinator({
       confirmNative: async () => true,
-      confirmFallback: () => false,
       destroyWindow: async () => {
         destroyed += 1
       },
@@ -121,7 +129,6 @@ describe('createCloseCoordinator', () => {
     let destroyed = 0
     const coordinator = createCloseCoordinator({
       confirmNative: async () => true,
-      confirmFallback: () => false,
       destroyWindow: async () => {
         destroyed += 1
       },
@@ -144,7 +151,6 @@ describe('createCloseCoordinator', () => {
           resolveConfirm = resolve
         })
       },
-      confirmFallback: () => false,
       destroyWindow: async () => {},
       quitApp: async () => {},
     })
@@ -169,7 +175,6 @@ describe('createCloseCoordinator', () => {
         confirmCalls += 1
         return true
       },
-      confirmFallback: () => false,
       destroyWindow: async () => {
         throw new Error('destroy failed')
       },

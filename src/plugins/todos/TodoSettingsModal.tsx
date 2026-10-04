@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react'
 
 import controls from '../../components/modals/controls.module.css'
 import { Modal } from '../../components/modals/Modal'
-import { pickDirectory } from '../../lib/dialog'
+import { askConfirm, pickDirectory } from '../../lib/dialog'
 import { useT } from '../../lib/i18n'
 import { DEFAULT_NIGHT_SETTINGS, type NightSettings } from '../../lib/nightScheduler'
 import { ensureTodoTemplate } from '../../lib/tauri'
@@ -118,8 +118,8 @@ export function TodoSettingsModal() {
     }
   }
 
-  const resetDefault = () => {
-    if (!window.confirm(t('todo.resetDefaultConfirm'))) return
+  const resetDefault = async () => {
+    if (!(await askConfirm(t('todo.resetDefaultConfirm')))) return
     resetTodosToDefault()
     closeModal()
   }

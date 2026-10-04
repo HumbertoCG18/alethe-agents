@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 
 import { CORE_AGENTS } from '../../../lib/agentCanvasConfig'
 import { AGENT_LIBRARY } from '../../../lib/agentLibrary'
+import { askConfirm } from '../../../lib/dialog'
 import { useT } from '../../../lib/i18n'
 import {
   economyAgentsEnabled,
@@ -88,9 +89,9 @@ export function useInstalledAgents(session: Session | null) {
           setRestartHint(true)
           refreshInstalled()
         })
-        .catch((err) => {
+        .catch(async (err) => {
           if (String(err) === 'conflict') {
-            if (window.confirm(t('ws.confirmOverwriteForeignAgent', { name }))) {
+            if (await askConfirm(t('ws.confirmOverwriteForeignAgent', { name }))) {
               installAgent(name, true)
             }
             return
@@ -102,12 +103,12 @@ export function useInstalledAgents(session: Session | null) {
   )
 
   const uninstallAgent = useCallback(
-    (agent: InstalledAgent) => {
+    async (agent: InstalledAgent) => {
       if (!session) return
       const msg = agent.from_alethe
         ? t('ws.confirmRemoveAgent', { name: agent.name })
         : t('ws.confirmRemoveForeignAgent', { name: agent.name })
-      if (!window.confirm(msg)) return
+      if (!(await askConfirm(msg))) return
       uninstallAgentCmd(session.folder, agent.name, true)
         .then(() => {
           console.log('[AgentCanvasPOC] agent removido:', agent.name)

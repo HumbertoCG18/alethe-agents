@@ -21,7 +21,7 @@ import {
 
 import { relaunchAgentPty } from '../../lib/agentRelaunch'
 import { graphifyRepoOf } from '../../lib/claudeMcpConfigs'
-import { pickFile, saveFile } from '../../lib/dialog'
+import { askConfirm, pickFile, saveFile } from '../../lib/dialog'
 import { useT } from '../../lib/i18n'
 import {
   getPtyCwd,
@@ -310,9 +310,9 @@ export function createSidebarMenus(deps: SidebarMenuDeps) {
       label: t('ui.sidebar.deleteProject'),
       icon: <Trash2 size={14} />,
       danger: true,
-      onClick: () => {
+      onClick: async () => {
         if (
-          window.confirm(
+          await askConfirm(
             t('ui.sidebar.confirmDeleteProject', {
               name: project.name,
               count: project.terminals.length,
@@ -425,9 +425,9 @@ export function createSidebarMenus(deps: SidebarMenuDeps) {
       kind: 'item',
       label: t('ui.sidebar.deleteGroupAndProjects'),
       danger: true,
-      onClick: () => {
+      onClick: async () => {
         if (
-          window.confirm(
+          await askConfirm(
             t('ui.sidebar.confirmDeleteGroupCascade', {
               name: group.name,
               count: group.projectIds.length,
@@ -494,8 +494,8 @@ export function createSidebarMenus(deps: SidebarMenuDeps) {
     }
   }
 
-  const confirmAndDeleteTerminal = (projectId: string, term: Terminal) => {
-    if (window.confirm(t('ui.sidebar.confirmDeleteTerminal', { name: term.name }))) {
+  const confirmAndDeleteTerminal = async (projectId: string, term: Terminal) => {
+    if (await askConfirm(t('ui.sidebar.confirmDeleteTerminal', { name: term.name }))) {
       void actions.deleteTerminalWithWorktreeCleanup(projectId, term.id)
     }
   }

@@ -2,7 +2,7 @@ import { Activity, Minus, Plus, RotateCcw } from 'lucide-react'
 import { useState } from 'react'
 
 import { cliPathMatchesAgent } from '../../../lib/agentCliPath'
-import { pickFile } from '../../../lib/dialog'
+import { askConfirm, pickFile } from '../../../lib/dialog'
 import { useT, useTDynamic } from '../../../lib/i18n'
 import { isMacOS } from '../../../lib/platform'
 import { countLiveResumablePanes, resetLastSession } from '../../../lib/resetLastSession'
@@ -77,7 +77,7 @@ export function TerminalPage({ enabledCount }: { enabledCount: number }) {
       return
     }
 
-    if (count > 1 && !window.confirm(t('prefs.resetSessionConfirm', { count }))) return
+    if (count > 1 && !(await askConfirm(t('prefs.resetSessionConfirm', { count })))) return
     setResetting(true)
     try {
       const { resumed, total } = await resetLastSession()

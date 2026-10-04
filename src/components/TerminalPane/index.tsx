@@ -19,6 +19,7 @@ import { memo, useEffect, useMemo, useRef, useState } from 'react'
 
 import { relaunchAgentPty } from '../../lib/agentRelaunch'
 import { graphifyRepoOf } from '../../lib/claudeMcpConfigs'
+import { askConfirm } from '../../lib/dialog'
 import { buildGhosttyCommand } from '../../lib/ghosttyCommand'
 import { useT } from '../../lib/i18n'
 import { startOrchestrationOn } from '../../lib/orchestrationOnTerminal'
@@ -318,8 +319,8 @@ export const TerminalPane = memo(function TerminalPane({
 
   const onDisable = () => setTerminalDisabled(projectId, terminal.id, !terminal.disabled)
 
-  const onDelete = () => {
-    if (!window.confirm(t('ui.sidebar.confirmDeleteTerminal', { name: terminal.name }))) return
+  const onDelete = async () => {
+    if (!(await askConfirm(t('ui.sidebar.confirmDeleteTerminal', { name: terminal.name })))) return
     const handoffIds = terminal.tabs.flatMap((tab) => (tab.handoff ? [tab.handoff.id] : []))
     void Promise.allSettled(handoffIds.map((id) => completeAgentHandoff(id))).then(() =>
       deleteTerminalWithWorktreeCleanup(projectId, terminal.id),

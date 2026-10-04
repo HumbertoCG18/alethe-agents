@@ -2749,6 +2749,8 @@ export const ptBR: Record<MessageKey, string> = {
   'multiAgent.cleanOrphans': 'Limpar worktrees órfãs ({count})',
   'multiAgent.cleaningOrphans': 'Limpando…',
   'multiAgent.orphanCleanupTitle': 'Limpeza de worktrees órfãs',
+  'multiAgent.removeAgentEnvConfirm':
+    'Tem certeza que deseja excluir o ambiente do agente "{agentId}"?',
   'multiAgent.orphanCleanupSummary':
     '{cleaned} totalmente limpos, {partial} parcialmente limpos, {waiting} aguardando unlock manual, {failed} falhas.',
   'multiAgent.orphanAdminLocked':

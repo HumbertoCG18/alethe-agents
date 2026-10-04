@@ -15,6 +15,7 @@ import {
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
+import { askConfirm } from '../../lib/dialog'
 import { readableError } from '../../lib/errors'
 import { type MessageKey, useT } from '../../lib/i18n'
 import {
@@ -154,7 +155,7 @@ export function GitControl({ projectId, cwd, ptyId, terminalName }: GitControlPr
     }
     if (status.staged.length === 0) {
       if (allStageable.length === 0) return
-      if (!window.confirm(t('git.confirm.stageAllCommit'))) return
+      if (!(await askConfirm(t('git.confirm.stageAllCommit')))) return
     }
     await run(async () => {
       if (status.staged.length === 0) await gitStage(status.repoRoot, allStageable)
@@ -406,8 +407,8 @@ function ChangeGroup({
   if (items.length === 0) return null
   const paths = uniquePaths(items)
   const primaryTitle = kind === 'staged' ? t('git.unstageAll') : t('git.stageAll')
-  const confirmDiscard = (selected: string[]) => {
-    if (onDiscard && window.confirm(t('git.confirm.discard', { count: selected.length })))
+  const confirmDiscard = async (selected: string[]) => {
+    if (onDiscard && (await askConfirm(t('git.confirm.discard', { count: selected.length }))))
       onDiscard(selected)
   }
   return (

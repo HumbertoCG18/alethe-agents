@@ -245,6 +245,12 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 - A quit that stalls no longer leaves Alethe hung: it closes by itself 10 seconds after you quit.
   Each quit step is written to `app-events.log`, and `resource.log` and `app-events.log` stop
   growing past 2 MB (the previous part is kept as `.1`).
+- **Confirmations ask again before destructive actions.** Deleting a terminal, pane, tab, project,
+  group, file or agent, resetting a branch with `--hard`, discarding git changes, rejecting a merge,
+  merging a pull request, resetting or erasing app data and the other actions that ask "Are you
+  sure?" ran right away without showing the question. They now open the native dialog and Cancel
+  does nothing. If the dialog cannot open, the action is not run; when that happens on closing
+  Alethe, the app stays open with an error toast instead of closing without asking.
 - Checking a campaign task in the Todo tab, or concluding it from Pending, keeps what its `resultado`
   already said (a measurement, say) after the day it was checked, instead of replacing it; a
   "waiting for the Gate 2" note it answers is dropped, and undo puts the original back.

@@ -4,8 +4,9 @@
  */
 
 /*
- * Active, Open and Finished nest under the Campaigns header as projects nest under a group in the
- * project sidebar (NormalProjectSidebar .groupBody): indented along a faint guide line.
+ * Sub-groups (the Campaigns map's, Pending's) nest under their section header as projects nest
+ * under a group in the project sidebar (NormalProjectSidebar .groupBody): indented along a faint
+ * guide line.
  */
 .groups {
   margin-left: 3px;

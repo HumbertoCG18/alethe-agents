@@ -8,6 +8,7 @@ import {
   type CampaignWindow,
   campaignWorkers,
   type RegistryError,
+  type TaskState,
   type TaskWorkers,
 } from '../../lib/campaigns'
 import { intlLocale, type MessageKey, type TFunction, useT } from '../../lib/i18n'
@@ -47,8 +48,8 @@ const ERROR_KEYS: Record<RegistryError['kind'], MessageKey> = {
   cycle: 'todo.campaigns.errorCycle',
 }
 
-// Orchestration board lanes, so dots and chips read the same as the board's. Outside Active nothing
-// is live for the campaign, so a task left in progress reads as interrupted, not running.
+// Orchestration board lanes, so dots and chips read the same as the board's. They show only while
+// nothing is live for the campaign, so a task left in progress reads as interrupted, not running.
 const SITUATION_LANES: Record<CampaignSituation['kind'], string> = {
   running: 'interrupted',
   ready: 'queued',
@@ -73,17 +74,19 @@ function situationLabel(t: TFunction, situation: CampaignSituation): string {
 }
 
 /**
- * Active: a tab is open for it or a worker is live on one of its tasks. Open: anything else not
- * finished. Finished: done, even when active.
+ * In progress: one of its tasks is done or in progress, a tab is open for it, or a worker is live
+ * on one of its tasks. Not started: anything else not finished. Finished: done, even when live.
  */
-const GROUPS = ['active', 'open', 'finished'] as const
+const GROUPS = ['inProgress', 'notStarted', 'finished'] as const
 type Group = (typeof GROUPS)[number]
 
 const GROUP_KEYS: Record<Group, MessageKey> = {
-  active: 'todo.campaigns.groupActive',
-  open: 'todo.campaigns.groupOpen',
+  inProgress: 'todo.campaigns.groupInProgress',
+  notStarted: 'todo.campaigns.groupNotStarted',
   finished: 'todo.campaigns.groupFinished',
 }
+
+const STARTED: ReadonlySet<TaskState> = new Set(['concluída', 'em execução'])
 
 const LIVE_KEYS: Record<CampaignLive, MessageKey> = {
   working: 'todo.campaigns.liveRunning',
@@ -126,7 +129,11 @@ export function CampaignsSection({
     (a, b) => Number(b.id === activeId) - Number(a.id === activeId),
   )
   const groupOf = (campaign: Campaign): Group =>
-    campaign.situation.kind === 'done' ? 'finished' : live.has(campaign.id) ? 'active' : 'open'
+    campaign.situation.kind === 'done'
+      ? 'finished'
+      : live.has(campaign.id) || campaign.tasks.some((task) => STARTED.has(task.state))
+        ? 'inProgress'
+        : 'notStarted'
   const toggleGroup = (group: Group) =>
     setClosed((current) => {
       const next = new Set(current)
@@ -197,11 +204,7 @@ export function CampaignsSection({
                   onToggle={() => toggleGroup(group)}
                   variant="sub"
                 />
-                {open
-                  ? members.map((campaign) =>
-                      row(campaign, group === 'active' ? live.get(campaign.id) : undefined),
-                    )
-                  : null}
+                {open ? members.map((campaign) => row(campaign, live.get(campaign.id))) : null}
               </div>
             )
           })}
@@ -224,7 +227,7 @@ function CampaignRow({
   campaign: Campaign
   checkouts: GitCheckouts
   active: boolean
-  /** Its live state, in the Active group; the dot then follows it instead of the registry. */
+  /** Its live state, when a tab or worker is live for it; the dot then follows it. */
   live?: CampaignLive
   /** Its live workers, as "2 running · 1 queued"; null when none or not the active campaign. */
   workers: string | null

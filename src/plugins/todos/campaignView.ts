@@ -15,13 +15,18 @@ import {
   campaignWorkers,
   isoDay,
   liveTaskWorkers,
+  type NightDiary,
+  nightDiaryFiles,
+  type NightEntry,
   nightPrompt,
   parseCampaigns,
+  parseNightDiary,
   registryPath,
   resumePrompt,
   setCampaignTaskState,
   type TaskState,
   type TaskWorkers,
+  workflowPath,
 } from '../../lib/campaigns'
 import { type MessageKey, type TFunction, useT } from '../../lib/i18n'
 import { createOrchestratedTerminal } from '../../lib/orchestrationOnTerminal'
@@ -29,6 +34,7 @@ import {
   campaignRegistryWrite,
   findRelativePath,
   type GitCheckouts,
+  listDirectory,
   listenFileChanged,
   listenOrchestratorJobs,
   type OrchestratorJob,
@@ -45,6 +51,7 @@ import { selectActiveProject, useProjectsStore } from '../../stores/projectsStor
 import { anyTabWorking, type PtyRuntime } from '../../stores/terminalsStore'
 import { useUiStore } from '../../stores/uiStore'
 import { useTodosStore } from './store'
+import { createWatchSet } from './watchSet'
 
 export const STATE_KEYS: Record<TaskState, MessageKey> = {
   proposta: 'todo.campaigns.stateProposed',
@@ -388,6 +395,70 @@ export function useTaskWorkers(registry: Registry | null): ReadonlyMap<string, T
     () => (checkouts ? liveTaskWorkers(jobs, checkouts) : new Map()),
     [jobs, checkouts],
   )
+}
+
+/**
+ * The latest readable diary in `<main>/.workflow/local/noites`. Once the folder exists it is
+ * watched (watch_file on a folder reports the files written in it), and so is every diary in it,
+ * so an edit that fixes a malformed newest one is seen. Coming back to the window re-reads it too,
+ * for the folder's creation.
+ */
+export function useNightDiary(main: string | null): NightDiary | null {
+  const [state, setState] = useState<{ main: string; diary: NightDiary } | null>(null)
+
+  useEffect(() => {
+    if (!main) return
+    const folder = workflowPath(main, 'local', 'noites')
+    let cancelled = false
+    let latest = 0
+    const watches = createWatchSet()
+    const reload = async () => {
+      const request = ++latest
+      const stale = () => cancelled || request !== latest
+      const files = await listDirectory(folder).then(nightDiaryFiles, () => null)
+      if (stale()) return
+      if (files) for (const path of [folder, ...files]) watches.watch(path)
+      for (const path of files ?? []) {
+        const text = await readTextFile(path).catch(() => null)
+        if (stale()) return
+        const diary = text === null ? null : parseNightDiary(text)
+        if (!diary) continue
+        setState({ main, diary })
+        return
+      }
+      setState(null)
+    }
+    void reload()
+    const unlisten = listenFileChanged((path) => {
+      if (watches.has(path)) void reload()
+    })
+    const retry = () => {
+      if (document.visibilityState !== 'hidden') void reload()
+    }
+    window.addEventListener('focus', retry)
+    document.addEventListener('visibilitychange', retry)
+    return () => {
+      cancelled = true
+      window.removeEventListener('focus', retry)
+      document.removeEventListener('visibilitychange', retry)
+      watches.clear()
+      void unlisten.then((stop) => stop()).catch(() => {})
+    }
+  }, [main])
+
+  return state && state.main === main ? state.diary : null
+}
+
+/**
+ * Whether a night entry still waits on the user: it waits on you, and its task, still in the
+ * registry, was neither concluded nor put back in the queue.
+ */
+export function nightUndecided(entry: NightEntry, campaigns: readonly Campaign[]): boolean {
+  if (entry.result !== 'aguarda-voce') return false
+  const state = campaigns
+    .flatMap((campaign) => campaign.tasks)
+    .find((task) => task.id === entry.task)?.state
+  return state !== undefined && state !== 'concluída' && state !== 'pronta'
 }
 
 /** "2 running · 1 queued"; null when nothing is live. */

@@ -551,6 +551,11 @@
   gap: 1px;
 }
 
+/* The active campaign's add field, under its tabs inside its section. */
+.section > .addForm {
+  padding: 6px 0 4px;
+}
+
 .todoRow {
   min-height: 36px;
   display: grid;

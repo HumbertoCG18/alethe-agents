@@ -133,6 +133,37 @@ function warnAiMemoryMissing(): void {
 
 type BootPhase = 'preparing' | 'queued' | 'spawning' | 'attaching' | 'ready'
 
+/** When the initial input's Enter is sent again, after the first. */
+const INITIAL_ENTER_RETRIES_MS = [1_200, 3_000, 6_000]
+
+/**
+ * Submits initial input already typed into `ptyId`: Enter after 150 ms, then again at each retry,
+ * since a CLI still drawing its first screen, or sitting on a trust prompt, swallows the first
+ * returns and leaves the text typed but unsent (extra ones only submit empty). No Enter goes while
+ * the pty is `working`, where it could confirm whatever the agent asks next, and the retries stop
+ * for good once it has been: the agent took the prompt.
+ */
+export async function submitInitialInput(ptyId: string): Promise<void> {
+  const working = () => useTerminalsStore.getState().byPtyId[ptyId]?.status === 'working'
+  await new Promise((resolve) => window.setTimeout(resolve, 150))
+  if (working()) return
+  await writePty(ptyId, '\r')
+  let stopped = false
+  const unsubscribe = useTerminalsStore.subscribe((state) => {
+    if (state.byPtyId[ptyId]?.status === 'working') stopped = true
+  })
+  INITIAL_ENTER_RETRIES_MS.forEach((delay, index) => {
+    window.setTimeout(() => {
+      if (index === INITIAL_ENTER_RETRIES_MS.length - 1) unsubscribe()
+      if (stopped || working()) {
+        stopped = true
+        return
+      }
+      void writePty(ptyId, '\r').catch(() => {})
+    }, delay)
+  })
+}
+
 export function useXtermSession(params: {
   ptyId: string
   command?: AgentType | null
@@ -1567,13 +1598,7 @@ export function useXtermSession(params: {
                 }
               } else {
                 await writePtyChunked(response.id, prompt, terminal.modes.bracketedPasteMode)
-                await new Promise((resolve) => window.setTimeout(resolve, 150))
-                await writePty(response.id, '\r')
-                // A CLI still drawing its first screen, or sitting on a trust prompt, swallows the
-                // first returns, so the text stays typed but unsent. Extra ones only submit empty.
-                for (const delay of [1_200, 3_000, 6_000]) {
-                  window.setTimeout(() => void writePty(response.id, '\r').catch(() => {}), delay)
-                }
+                await submitInitialInput(response.id)
               }
               onInitialInputSentRef.current?.()
             } catch (error) {

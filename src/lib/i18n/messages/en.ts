@@ -730,6 +730,24 @@ export const en = {
   'todo.campaignWrite.duplicate': '{campaign} already has this task: {id}',
   'todo.campaignWrite.invalid': 'The registry would become invalid; nothing was written.',
   'todo.campaignWrite.requeued': '{id} is back in the queue for the next night.',
+  'todo.campaignControls.title': 'Campaign',
+  'todo.campaignControls.continue': 'Continue campaign',
+  'todo.campaignControls.nothingReady': 'Nothing ready to resume',
+  'todo.campaignControls.pause': 'Pause campaign',
+  'todo.campaignControls.cancel': 'Cancel campaign',
+  'todo.campaignControls.cancelConfirm':
+    'Cancel campaign {id}? Its agents are interrupted and their tabs closed, its running and queued workers are cancelled, and its tasks in progress go back to Ready. Nothing is concluded or deleted.',
+  'todo.campaignControls.keep': 'Keep running',
+  'todo.campaignControls.cancelledTitle': 'Campaign {id} cancelled',
+  'todo.campaignControls.cancelled':
+    'Tabs closed: {tabs} · workers cancelled: {jobs} · tasks back to Ready: {tasks}',
+  'todo.campaignControls.leftInInput':
+    'The agent of {id} started working, so the prompt was left in its input without Enter.',
+  'todo.campaignControls.cancelFailed':
+    'Could not list the orchestration workers, so nothing was cancelled: {message}',
+  'todo.campaignControls.cancelledPartly':
+    'Tabs closed: {tabs} · workers cancelled: {jobs} · tasks back to Ready: {tasks}. Workers still live on {ids}: those tasks stay in progress.',
+  'todo.campaignControls.sendFailed': 'Could not send the prompt to {id}: {message}',
   'todo.workers.running': '{count} running',
   'todo.workers.queued': '{count} queued',
   'todo.night.title': 'Night of {date}',

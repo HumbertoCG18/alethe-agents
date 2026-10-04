@@ -189,6 +189,17 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
   still opens and closes it. Each project keeps its own order, and **Reset section order** in the
   Todo settings puts the default back. In My todos, your own list stays in place and the other
   sections move around it.
+- **Campaign controls in the Active section.** A collapsed **Campaign** group under the add field
+  continues, pauses or cancels the campaign. **Continue campaign**, while nothing runs for it,
+  picks the task in progress, else the first ready one with its prerequisites done, and asks the
+  campaign's agent tab to resume from it, by its registry and handoff; without a tab it opens Claude
+  Code with its orchestration board. It is disabled, saying so, when nothing is ready. While the
+  campaign runs, **Pause campaign** sends Esc to its working agent tabs and leaves its workers
+  running, and **Cancel campaign**, after you confirm, also cancels its running and queued workers,
+  closes its tabs, and puts its tasks in progress back to Ready; nothing is concluded or deleted.
+  Cancel does nothing when the workers cannot be listed, and a task whose worker is still live
+  stays in progress, named in the summary. A prompt is never submitted into an agent that started
+  working meanwhile: it is left in the input, and a toast says so.
 
 ### Changed
 
@@ -240,6 +251,9 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ### Fixed
 
+- A new agent tab's first prompt (a campaign, a night task, the new-terminal dialog) is no longer
+  confirmed with Enter while the agent is working: no Enter is sent while it works, and the extra
+  Enters sent for a CLI still starting stop for good once it has started working.
 - **Open orchestration** on a Claude terminal no longer fails silently when the restart
   confirmation cannot open: a toast says so, and nothing is changed.
 - A quit that stalls no longer leaves Alethe hung: it closes by itself 10 seconds after you quit.

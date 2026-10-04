@@ -625,6 +625,56 @@
   gap: 1px;
 }
 
+/* The active campaign's controls, between its add field and its rows. */
+.campaignControls {
+  margin-bottom: 4px;
+}
+
+.controlRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0 4px;
+}
+
+.controlButton {
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--fg-muted);
+  background: var(--bg-sunken);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.controlButton:not([data-tone]):hover:not(:disabled),
+.controlButton:not([data-tone]):focus-visible {
+  color: var(--fg);
+  border-color: var(--border-strong);
+}
+
+.controlButton[data-tone='pause'] {
+  color: var(--status-waiting);
+  border-color: var(--status-waiting);
+  background: var(--status-waiting-soft);
+}
+
+.controlButton[data-tone='cancel'] {
+  color: var(--status-offline);
+  border-color: var(--status-offline);
+  background: var(--status-offline-soft);
+}
+
+.controlButton:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 /* The active campaign's add field, under its tabs inside its section. */
 .section > .addForm {
   padding: 6px 0 4px;

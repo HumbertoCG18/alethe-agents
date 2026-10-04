@@ -4,14 +4,17 @@ import {
   FolderKanban,
   GripVertical,
   ListTodo,
+  Pause,
   Pencil,
+  Play,
   Plus,
   Settings,
+  Square,
   Tag,
   Trash2,
   X,
 } from 'lucide-react'
-import { type RefObject, useEffect, useRef, useState } from 'react'
+import { type RefObject, useEffect, useId, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 
 import { DotmCircular2 } from '../../components/ui/dotm-circular-2'
@@ -25,21 +28,29 @@ import {
   type CampaignTask,
   campaignTaskView,
   type NightDiary,
+  resumeTask,
   type TaskWorkers,
 } from '../../lib/campaigns'
+import { askConfirm } from '../../lib/dialog'
 import { useT } from '../../lib/i18n'
 import { formatShortcut } from '../../lib/platform'
 import { type PlanningStatus, readPlanningStatus } from '../../lib/tauri'
 import { TODO_TITLE_MAX_LENGTH } from '../../lib/todos'
 import type { Terminal, TodoItem } from '../../lib/types'
 import { selectActiveProject, useProjectsStore } from '../../stores/projectsStore'
+import { useTerminalsStore } from '../../stores/terminalsStore'
 import { useUiStore } from '../../stores/uiStore'
 import { CampaignsSection } from './CampaignsSection'
 import campaignStyles from './CampaignsSection.module.css'
 import {
+  type CampaignCancel,
   type CampaignEdits,
+  campaignLiveStatus,
+  cancelCampaign,
   nightUndecided,
+  pauseCampaign,
   type Registry,
+  resumeCampaign,
   STATE_KEYS,
   TASK_LANES,
   useCampaignEdits,
@@ -652,6 +663,14 @@ export function TodoSidebar() {
             <>
               {filters}
               {composer}
+              {view.registry ? (
+                <CampaignControls
+                  campaign={campaign}
+                  registry={view.registry}
+                  edits={edits}
+                  workers={workers}
+                />
+              ) : null}
               <CampaignTaskRows
                 campaign={campaign}
                 filter={filter}
@@ -886,6 +905,163 @@ function PendingSection({
         </div>
       ) : null}
     </section>
+  )
+}
+
+// Stable fallback, so the selector below returns the same value while nothing changes.
+const NO_TERMINALS: Terminal[] = []
+
+/**
+ * The selected campaign's controls, collapsed under its add field: Continue while it is not
+ * running (the same rule as the Campaigns map's dot), else Pause and Cancel.
+ */
+function CampaignControls({
+  campaign,
+  registry,
+  edits,
+  workers,
+}: {
+  campaign: Campaign
+  registry: Registry
+  edits: CampaignEdits
+  workers: ReadonlyMap<string, TaskWorkers>
+}) {
+  const t = useT()
+  const pushToast = useUiStore((state) => state.pushToast)
+  const [open, setOpen] = useState(false)
+  // One control at a time: the ref is set before any await, so a second click cannot slip in.
+  const acting = useRef(false)
+  const [busy, setBusy] = useState(false)
+  const hint = useId()
+  const { projectId, path } = registry
+  const { id } = campaign
+  const terminals = useProjectsStore(
+    (state) =>
+      state.projects.find((project) => project.id === projectId)?.terminals ?? NO_TERMINALS,
+  )
+  // A boolean, so output on a pty does not re-render the list.
+  const running = useTerminalsStore(
+    (state) =>
+      campaignLiveStatus([campaign], terminals, state.byPtyId, workers).get(id) === 'working',
+  )
+  const task = resumeTask(campaign)
+
+  /** Runs `action` unless another control is running; the controls are disabled meanwhile. */
+  const once = (action: () => Promise<void>) => () => {
+    if (acting.current) return
+    acting.current = true
+    setBusy(true)
+    void action().finally(() => {
+      acting.current = false
+      setBusy(false)
+    })
+  }
+  const resume = async () => {
+    if (!task) return
+    try {
+      if (await resumeCampaign(projectId, campaign, registry, task)) return
+      pushToast({
+        title: t('todo.campaignControls.continue'),
+        body: t('todo.campaignControls.leftInInput', { id }),
+      })
+    } catch (error) {
+      pushToast({
+        title: t('todo.campaignControls.continue'),
+        body: t('todo.campaignControls.sendFailed', { id, message: String(error) }),
+      })
+    }
+  }
+  const cancel = async () => {
+    const agreed = await askConfirm(t('todo.campaignControls.cancelConfirm', { id }), {
+      title: t('todo.campaignControls.cancel'),
+      kind: 'warning',
+      okLabel: t('todo.campaignControls.cancel'),
+      cancelLabel: t('todo.campaignControls.keep'),
+    })
+    if (!agreed) return
+    let done: CampaignCancel
+    try {
+      done = await cancelCampaign(projectId, campaign, registry)
+    } catch (error) {
+      pushToast({
+        title: t('todo.campaignControls.cancel'),
+        body: t('todo.campaignControls.cancelFailed', { message: String(error) }),
+      })
+      return
+    }
+    const { tabs, jobs, live } = done
+    // A refused write says why in its own toast; the summary then counts no task.
+    const tasks = (await edits.release(path, id, live)) ?? 0
+    pushToast({
+      title: t('todo.campaignControls.cancelledTitle', { id }),
+      body:
+        live.length > 0
+          ? t('todo.campaignControls.cancelledPartly', { tabs, jobs, tasks, ids: live.join(', ') })
+          : t('todo.campaignControls.cancelled', { tabs, jobs, tasks }),
+    })
+  }
+  const disabled = edits.busy || busy
+
+  return (
+    <div
+      role="group"
+      aria-label={t('todo.campaignControls.title')}
+      className={`${styles.list} ${styles.campaignControls}`}
+    >
+      <SectionToggle
+        name={t('todo.campaignControls.title')}
+        count={null}
+        open={open}
+        onToggle={() => setOpen((current) => !current)}
+        variant="sub"
+      />
+      {open ? (
+        <div className={styles.controlRow}>
+          {running ? (
+            <>
+              <button
+                type="button"
+                className={styles.controlButton}
+                data-tone="pause"
+                onClick={once(() => pauseCampaign(projectId, id))}
+                disabled={disabled}
+              >
+                <Pause size={11} aria-hidden />
+                {t('todo.campaignControls.pause')}
+              </button>
+              <button
+                type="button"
+                className={styles.controlButton}
+                data-tone="cancel"
+                onClick={once(cancel)}
+                disabled={disabled}
+              >
+                <Square size={11} aria-hidden />
+                {t('todo.campaignControls.cancel')}
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                className={styles.controlButton}
+                onClick={once(resume)}
+                disabled={disabled || !task}
+                aria-describedby={task ? undefined : hint}
+              >
+                <Play size={11} aria-hidden />
+                {t('todo.campaignControls.continue')}
+              </button>
+              {task ? null : (
+                <span id={hint} className={campaignStyles.meta}>
+                  {t('todo.campaignControls.nothingReady')}
+                </span>
+              )}
+            </>
+          )}
+        </div>
+      ) : null}
+    </div>
   )
 }
 

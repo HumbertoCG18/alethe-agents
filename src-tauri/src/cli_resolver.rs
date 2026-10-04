@@ -581,39 +581,11 @@ fn scrub_editor_environment(builder: &mut CommandBuilder) {
 /// `npm run app` typed in a Claude Code terminal); inherited, it turns every Claude Code in a pane
 /// into that session's child: no transcript, no auto memory, its messaging socket.
 fn scrub_claude_session_environment(builder: &mut CommandBuilder) {
-    for key in inherited_claude_session_vars(|key| builder.get_env(key).is_some()) {
+    for key in crate::orchestrator_core::inherited_claude_session_vars(|key| {
+        builder.get_env(key).is_some()
+    }) {
         builder.env_remove(key);
     }
-}
-
-/// The same for a process Alethe starts directly (orchestration workers), which inherits Alethe's
-/// own environment.
-pub(crate) fn scrub_claude_session_command(command: &mut std::process::Command) {
-    for key in inherited_claude_session_vars(|key| env::var_os(key).is_some()) {
-        command.env_remove(key);
-    }
-}
-
-/// The variables of an outer Claude Code session, given what the environment holds.
-fn inherited_claude_session_vars(holds: impl Fn(&str) -> bool) -> Vec<&'static str> {
-    // Set by Claude Code for its children only; nobody sets them for a fresh terminal.
-    let inherited_session = holds("CLAUDECODE") || holds("CLAUDE_CODE_SESSION_ID");
-    let mut keys = vec![
-        "CLAUDECODE",
-        "CLAUDECODE_PARENT_PID",
-        "CLAUDE_CODE_ENTRYPOINT",
-        "CLAUDE_CODE_CHILD_SESSION",
-        "CLAUDE_CODE_SESSION_ID",
-        "CLAUDE_CODE_SESSION_ATTENDED",
-        "CLAUDE_CODE_MESSAGING_SOCKET",
-        "CLAUDE_CODE_MESSAGING_TOKEN",
-        "CLAUDE_PID",
-    ];
-    // A user may set this one on purpose; the outer session also sets it for its children.
-    if inherited_session {
-        keys.push("CLAUDE_CODE_DISABLE_AUTO_MEMORY");
-    }
-    keys
 }
 
 pub fn rebuilt_path() -> String {
@@ -1246,7 +1218,7 @@ mod tests {
         std::env::set_var("CLAUDE_CODE_SESSION_ID", "outer");
         let builder = command_builder_for_terminal(Some("claude"), None, &[]);
         let mut worker = std::process::Command::new("claude");
-        scrub_claude_session_command(&mut worker);
+        crate::orchestrator_core::scrub_claude_session_command(&mut worker);
         std::env::remove_var("CLAUDE_CODE_CHILD_SESSION");
         std::env::remove_var("CLAUDE_CODE_SESSION_ID");
 

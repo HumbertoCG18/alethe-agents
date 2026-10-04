@@ -192,6 +192,12 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ### Changed
 
+- **Continue in the terminal** on a task waiting on you (a night entry or a Gate 2 row) whose
+  campaign has no tab opens Claude Code there right away, as a planner with its Orchestration
+  board, instead of switching the menu to a choice of agents. A campaign with a tab still continues
+  in it.
+- Quitting Alethe with agents running no longer always waits about four seconds for their
+  terminals: each process of a terminal is ended directly instead of through one `taskkill` each.
 - The Campaigns map in the Todo tab groups campaigns into **Active** (a tab open for it, or a live
   orchestration worker on one of its tasks), **Open** and **Finished**, collapsed by default. A
   campaign moves to Finished as soon as its last task is done, the selected one included. Active
@@ -234,6 +240,11 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ### Fixed
 
+- **Open orchestration** on a Claude terminal no longer fails silently when the restart
+  confirmation cannot open: a toast says so, and nothing is changed.
+- A quit that stalls no longer leaves Alethe hung: it closes by itself 10 seconds after you quit.
+  Each quit step is written to `app-events.log`, and `resource.log` and `app-events.log` stop
+  growing past 2 MB (the previous part is kept as `.1`).
 - Checking a campaign task in the Todo tab, or concluding it from Pending, keeps what its `resultado`
   already said (a measurement, say) after the day it was checked, instead of replacing it; a
   "waiting for the Gate 2" note it answers is dropped, and undo puts the original back.

@@ -83,6 +83,21 @@ describe('startOrchestrationOn', () => {
     expect(store().preferences.enabledFeatures.orchestrator).toBe(false)
   })
 
+  it('changes nothing when the restart could not be asked, and lets a later click ask again', async () => {
+    const target = claudeTerminal(false)
+    const restart = restartWithTools(target.ptyId)
+    confirmRestart.mockRejectedValueOnce(
+      new Error('Command plugin:dialog|message not allowed by ACL'),
+    )
+
+    expect(await startOrchestrationOn({ ...target, confirmRestart, restart })).toBe('unconfirmed')
+
+    expect(restart).not.toHaveBeenCalled()
+    expect(boards(target.projectId, target.terminalId)).toHaveLength(0)
+    expect(store().preferences.enabledFeatures.orchestrator).toBe(false)
+    expect(await startOrchestrationOn({ ...target, confirmRestart, restart })).toBe('ready')
+  })
+
   it('adds no board when the restart fails', async () => {
     const target = claudeTerminal(false)
     const restart = vi.fn(async () => false)

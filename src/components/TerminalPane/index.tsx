@@ -233,10 +233,14 @@ export const TerminalPane = memo(function TerminalPane({
           }),
         restart: onRestart,
       })
-      if (outcome === 'failed') {
+      if (outcome === 'failed' || outcome === 'unconfirmed') {
         pushToast({
           title: t('ui.terminal.orchestrationStartFailed'),
-          body: t('ui.terminal.orchestrationStartFailedBody'),
+          body: t(
+            outcome === 'failed'
+              ? 'ui.terminal.orchestrationStartFailedBody'
+              : 'ui.terminal.orchestrationRestartUnasked',
+          ),
         })
       }
     } finally {

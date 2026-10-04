@@ -13,17 +13,10 @@ import {
   listDirectory,
   openInFileExplorer,
 } from '../../lib/tauri'
-import { AGENT_TYPE_LABELS } from '../../lib/types'
 import { useProjectsStore } from '../../stores/projectsStore'
 import { useUiStore } from '../../stores/uiStore'
 import styles from './CampaignsSection.module.css'
-import {
-  AGENTS,
-  type CampaignEdits,
-  continueCampaign,
-  openCampaign,
-  type Registry,
-} from './campaignView'
+import { type CampaignEdits, continueCampaign, openCampaign, type Registry } from './campaignView'
 import { useMenuFocus } from './menuFocus'
 
 /**
@@ -100,10 +93,10 @@ export type TaskActions = ReturnType<typeof useTaskActions>
 
 /**
  * The actions of a task waiting on you, opened from its row: Conclude (Gate 2) through `conclude`,
- * Open evidence when `evidence` looks like a path, Continue in the terminal, and Back to the queue when
- * `requeue`. The row renders a button with `toggle` and the `menu`, and handles `onKeyDown`;
- * without a `campaign` there is no menu. Once an action took the row away, the focus goes to
- * `fallback()`.
+ * Open evidence when `evidence` looks like a path, Continue in the terminal (the campaign's tab, else
+ * a new Claude Code tab with its board), and Back to the queue when `requeue`. The row renders a
+ * button with `toggle` and the `menu`, and handles `onKeyDown`; without a `campaign` there is no
+ * menu. Once an action took the row away, the focus goes to `fallback()`.
  */
 export function useTaskActions({
   taskId,
@@ -126,13 +119,9 @@ export function useTaskActions({
   fallback?: () => HTMLElement | null | undefined
 }) {
   const t = useT()
-  const [menu, setMenu] = useState<'actions' | 'agents' | null>(null)
+  const [menu, setMenu] = useState(false)
   const { projectId } = registry
-  const { trigger, refocus, onKeyDown, choose } = useMenuFocus(
-    menu !== null,
-    () => setMenu(null),
-    fallback,
-  )
+  const { trigger, onKeyDown, choose } = useMenuFocus(menu, () => setMenu(false), fallback)
   const item = (key: string, label: string, onClick: () => void, disabled = false) => (
     <button
       key={key}
@@ -150,8 +139,8 @@ export function useTaskActions({
     onKeyDown,
     toggle: {
       ref: trigger,
-      onClick: () => setMenu((current) => (current ? null : 'actions')),
-      'aria-expanded': menu !== null,
+      onClick: () => setMenu((current) => !current),
+      'aria-expanded': menu,
       'aria-haspopup': 'menu' as const,
     },
     menu:
@@ -161,38 +150,33 @@ export function useTaskActions({
           role="menu"
           aria-label={t('todo.night.actions', { id: taskId })}
         >
-          {menu === 'agents'
-            ? AGENTS.map((agent) =>
-                item(
-                  agent,
-                  AGENT_TYPE_LABELS[agent],
-                  choose(() => openCampaign(projectId, campaign, agent, registry)),
-                ),
+          {conclude
+            ? item('conclude', t('todo.night.conclude'), choose(conclude), edits.busy)
+            : null}
+          {evidence && evidenceIsPath(evidence)
+            ? item(
+                'evidence',
+                t('todo.night.openEvidenceItem'),
+                choose(() => openEvidence(registry, taskId, evidence, t)),
               )
-            : [
-                conclude
-                  ? item('conclude', t('todo.night.conclude'), choose(conclude), edits.busy)
-                  : null,
-                evidence && evidenceIsPath(evidence)
-                  ? item(
-                      'evidence',
-                      t('todo.night.openEvidenceItem'),
-                      choose(() => openEvidence(registry, taskId, evidence, t)),
-                    )
-                  : null,
-                item('continue', t('todo.night.continue'), () => {
-                  setMenu(continueCampaign(projectId, campaign) ? null : 'agents')
-                  refocus()
-                }),
-                requeue
-                  ? item(
-                      'requeue',
-                      t('todo.night.requeue'),
-                      choose(() => edits.requeue(taskId)),
-                      edits.busy,
-                    )
-                  : null,
-              ]}
+            : null}
+          {item(
+            'continue',
+            t('todo.night.continue'),
+            choose(
+              () =>
+                continueCampaign(projectId, campaign) ||
+                openCampaign(projectId, campaign, 'claude', registry),
+            ),
+          )}
+          {requeue
+            ? item(
+                'requeue',
+                t('todo.night.requeue'),
+                choose(() => edits.requeue(taskId)),
+                edits.busy,
+              )
+            : null}
         </div>
       ) : null,
   }

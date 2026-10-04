@@ -6,10 +6,11 @@ import type { Terminal } from './types'
 const TOOLS_TIMEOUT_MS = 20_000
 
 /**
- * `ready`: the terminal has its board. `declined`: the user kept it as it was. `failed`: Claude did
- * not come back with the orchestrator tools. `busy`: a start is already underway for it.
+ * `ready`: the terminal has its board. `declined`: the user kept it as it was. `unconfirmed`: the
+ * restart could not be asked, so nothing changed. `failed`: Claude did not come back with the
+ * orchestrator tools. `busy`: a start is already underway for it.
  */
-export type OrchestrationStart = 'ready' | 'declined' | 'failed' | 'busy'
+export type OrchestrationStart = 'ready' | 'declined' | 'unconfirmed' | 'failed' | 'busy'
 
 /** Terminals with a start already underway, so a second click cannot restart them twice. */
 const starting = new Set<string>()
@@ -49,7 +50,11 @@ export async function startOrchestrationOn({
   starting.add(terminalId)
   try {
     const needsRestart = !hasOrchestratorTools(ptyId)
-    if (needsRestart && !(await confirmRestart())) return 'declined'
+    if (needsRestart) {
+      const agreed = await confirmRestart().catch(() => null)
+      if (agreed === null) return 'unconfirmed'
+      if (!agreed) return 'declined'
+    }
 
     // Same as starting a planner from the new-terminal dialog. Only after the user agreed to go
     // ahead.

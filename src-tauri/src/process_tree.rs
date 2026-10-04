@@ -225,7 +225,7 @@ pub fn sweep_orphans_from_previous_session() -> usize {
             all.reverse();
             all.push(root.pid);
             for pid in all {
-                kill_pid(pid);
+                let _ = kill_pid(pid);
             }
             killed_roots += 1;
         }
@@ -267,6 +267,7 @@ pub fn get_pty_tree(pty_id: &str) -> Option<PtyTreeInfo> {
     })
 }
 
+#[cfg(not(windows))]
 fn run_with_timeout(mut command: std::process::Command, timeout: Duration) {
     let Ok(mut child) = command.spawn() else {
         return;
@@ -287,28 +288,47 @@ fn run_with_timeout(mut command: std::process::Command, timeout: Duration) {
     }
 }
 
-/// Mata um PID (Windows via taskkill /F, Unix via SIGKILL). Descarta
-
-fn kill_pid(pid: u32) {
-    #[cfg(windows)]
-    {
-        let mut command = std::process::Command::new("taskkill");
-        command.args(["/F", "/PID", &pid.to_string()]);
-        command.stdout(std::process::Stdio::null());
-        command.stderr(std::process::Stdio::null());
-        crate::git_control::hide_console(&mut command);
-        run_with_timeout(command, Duration::from_secs(3));
-    }
-    #[cfg(not(windows))]
-    {
-        let mut command = std::process::Command::new("kill");
-        command.args(["-9", &pid.to_string()]);
-        command.stdout(std::process::Stdio::null());
-        command.stderr(std::process::Stdio::null());
-        run_with_timeout(command, Duration::from_secs(3));
+/// Asks for one PID to end: TerminateProcess on Windows, which is what `taskkill /F` calls, without
+/// spawning taskkill (~0.35 s per PID). It returns before the process is gone. A PID already gone
+/// is not an error; one that cannot be opened or terminated is, as `<pid>: <what> error <code>`.
+#[cfg(windows)]
+fn kill_pid(pid: u32) -> Result<(), String> {
+    use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, ERROR_INVALID_PARAMETER};
+    use windows_sys::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
+    unsafe {
+        let handle = OpenProcess(PROCESS_TERMINATE, 0, pid);
+        if handle.is_null() {
+            let code = GetLastError();
+            return if code == ERROR_INVALID_PARAMETER {
+                Ok(())
+            } else {
+                Err(format!("{pid}: open error {code}"))
+            };
+        }
+        let ended = TerminateProcess(handle, 1) != 0;
+        let code = GetLastError();
+        let _ = CloseHandle(handle);
+        if ended {
+            Ok(())
+        } else {
+            Err(format!("{pid}: terminate error {code}"))
+        }
     }
 }
 
+/// SIGKILL through `kill -9`, whose outcome is not checked.
+#[cfg(not(windows))]
+fn kill_pid(pid: u32) -> Result<(), String> {
+    let mut command = std::process::Command::new("kill");
+    command.args(["-9", &pid.to_string()]);
+    command.stdout(std::process::Stdio::null());
+    command.stderr(std::process::Stdio::null());
+    run_with_timeout(command, Duration::from_secs(3));
+    Ok(())
+}
+
+/// Asks for the PTY's root and every descendant to end, deepest first, and returns their PIDs; an
+/// error names the ones that could not be asked (at most five).
 pub fn kill_pty_tree(pty_id: &str) -> Result<Vec<u32>, String> {
     let root_pid = {
         let guard = roots().lock().map_err(|_| "PTY roots lock poisoned")?;
@@ -322,15 +342,21 @@ pub fn kill_pty_tree(pty_id: &str) -> Result<Vec<u32>, String> {
     all.reverse();
     all.push(root);
 
-    for &pid in &all {
-        kill_pid(pid);
-    }
+    let failures: Vec<String> = all.iter().filter_map(|&pid| kill_pid(pid).err()).collect();
 
     if let Ok(mut guard) = roots().lock() {
         guard.remove(pty_id);
     }
 
-    Ok(all)
+    if failures.is_empty() {
+        return Ok(all);
+    }
+    Err(format!(
+        "{} of {} processes not ended: {}",
+        failures.len(),
+        all.len(),
+        failures[..failures.len().min(5)].join(", ")
+    ))
 }
 
 #[tauri::command]
@@ -350,6 +376,37 @@ pub async fn kill_pty_tree_cmd(pty_id: String) -> Result<Vec<u32>, String> {
 #[cfg(test)]
 mod tests {
     use super::is_roots_registry_name;
+
+    /// Shutdown waits 4 s for every terminal tree to die, and a Claude tree holds ~17 processes.
+    /// Spawning `taskkill` per PID cost ~0.35 s each (6.3 s for 17, measured), so that wait always
+    /// ran out; a kill has to end the process without starting another one.
+    #[cfg(windows)]
+    #[test]
+    fn kill_pid_ends_a_process_without_waiting_on_another_one() {
+        use std::time::{Duration, Instant};
+        let mut child = std::process::Command::new("ping")
+            .args(["-n", "60", "127.0.0.1"])
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let started = Instant::now();
+        assert_eq!(super::kill_pid(child.id()), Ok(()));
+        let elapsed = started.elapsed();
+        assert!(!child.wait().unwrap().success());
+        assert!(
+            elapsed < Duration::from_millis(150),
+            "killing one PID took {elapsed:?}"
+        );
+    }
+
+    /// A process that cannot be ended is reported, not dropped: the shutdown log names it.
+    #[cfg(windows)]
+    #[test]
+    fn kill_pid_reports_a_process_it_could_not_end() {
+        // PID 4 is the kernel's System process: no user process may terminate it.
+        let error = super::kill_pid(4).unwrap_err();
+        assert!(error.starts_with("4:"), "{error}");
+    }
 
     #[test]
     fn discovers_legacy_and_per_instance_root_registries_only() {

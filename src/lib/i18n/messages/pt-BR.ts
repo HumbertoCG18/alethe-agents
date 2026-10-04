@@ -2436,6 +2436,8 @@ export const ptBR: Record<MessageKey, string> = {
   'ui.terminal.orchestrationStartFailed': 'Não foi possível iniciar a orquestração',
   'ui.terminal.orchestrationStartFailedBody':
     'O Claude não voltou com as ferramentas do orquestrador.',
+  'ui.terminal.orchestrationRestartUnasked':
+    'O Claude precisa reiniciar para a orquestração, e a confirmação não pôde abrir. Nada foi alterado.',
   'ui.terminal.openOrchestration': 'Abrir orquestração',
   'ui.terminal.orchestrationRestartTitle': 'Reiniciar o Claude para a orquestração?',
   'ui.terminal.orchestrationRestartBody':

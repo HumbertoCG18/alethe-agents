@@ -28,6 +28,16 @@
       "origem": "TODO-08",
       "detalhe": "03/10: 'takes a line the agent wrote while the stop was being recorded' e 'after a restart, records the task...' falharam numa rodada de vitest completo e passaram isolados e na rodada seguinte (906/906).",
       "estado": "novo"
+    },
+    {
+      "id": "ACH-0004",
+      "data": "2026-10-04",
+      "tipo": "bug",
+      "titulo": "Terminais herdam variáveis de sessão do Claude Code quando o Alethe é aberto por um",
+      "origem": "",
+      "detalhe": "04/10: Alethe Dev aberto por Start-Process de dentro do Claude Code herdou CLAUDECODE, CLAUDE_CODE_CHILD_SESSION, CLAUDE_CODE_MESSAGING_* etc.; o Claude nas abas virou sessão filha (sem transcript, sem auto memory, status bar padrão). Proposta: spawn_pty remove as variáveis de sessão do Claude Code do ambiente herdado. Vale também para npm run app aberto num terminal do Claude.",
+      "estado": "virou-tarefa",
+      "destino": "UI-03"
     }
   ]
 }

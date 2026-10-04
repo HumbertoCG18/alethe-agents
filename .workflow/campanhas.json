@@ -357,6 +357,17 @@
           "origem": "USER",
           "evidencia": "Gate 2 do usuário em 04/10; PR #56 (96b5f4f)",
           "resultado": "links de caminho abrem nas quatro ações"
+        },
+        {
+          "id": "UI-03",
+          "titulo": "Terminais herdam variáveis de sessão do Claude Code quando o Alethe é aberto por um",
+          "nivel": "T1",
+          "estado": "em execução",
+          "depende_de": [],
+          "origem": "CODE",
+          "achado": "ACH-0004",
+          "evidencia": "PR #58 integrado na dev; revisão Codex (1 MAJOR, 1 MINOR corrigidos); cargo test 418",
+          "resultado": "aguarda o Gate 2 do usuário"
         }
       ]
     }

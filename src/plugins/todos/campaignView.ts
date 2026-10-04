@@ -633,8 +633,8 @@ export function useCampaignEdits(view: CampaignView) {
       else if (path !== undefined) await restore(path, task.id)
     },
 
-    /** The user's Gate 2 on a task the night left waiting: done with `evidence`, with an undo. */
-    conclude: (taskId: string, evidence: string) => check(taskId, evidence),
+    /** The user's Gate 2 on a task waiting for it: done, with `evidence` when given, and an undo. */
+    conclude: (taskId: string, evidence?: string) => check(taskId, evidence),
 
     /** Puts a task back as ready, for the next night to retry it; only its state changes. */
     requeue: async (taskId: string) => {

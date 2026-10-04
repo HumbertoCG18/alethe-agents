@@ -70,6 +70,7 @@ vi.mock('../../lib/tauri', async (importOriginal) => ({
     if (entries.length === 0) throw new Error('directory not found')
     return entries
   }),
+  openInFileExplorer: vi.fn(async () => {}),
   orchestratorJobs: vi.fn(async () => ({ jobs: orchestrator.jobs })),
   listenOrchestratorJobs: vi.fn(async (handler: (snapshot: { jobs: unknown[] }) => void) => {
     orchestrator.emit = handler
@@ -87,6 +88,7 @@ import {
   campaignRegistryWrite,
   findRelativePath,
   listDirectory,
+  openInFileExplorer,
   readTextFile,
   unwatchFile,
   watchFile,
@@ -1000,13 +1002,11 @@ describe('Night card', () => {
     ])
     expect(screen.getByText('OITO-07 resumo')).toBeInTheDocument()
     expect(screen.queryByText('MOTOR-05')).toBeNull()
-    // A commit is plain text; a path opens through the file pane.
+    // A commit is plain text; a path opens as the menu's Open evidence does, Markdown in the viewer.
     expect(screen.getByText('a1b2c3d').tagName).toBe('SPAN')
     fireEvent.click(screen.getByRole('button', { name: 'docs/motor.md' }))
     await waitFor(() =>
-      expect(useProjectsStore.getState().projects[0].terminals.at(-1)).toMatchObject({
-        filePath: 'C:\\repo-feature\\docs\\motor.md',
-      }),
+      expect(useUiStore.getState().linkViewerUrl).toBe('C:\\repo-feature\\docs\\motor.md'),
     )
     expect(findRelativePath).toHaveBeenCalledWith('C:\\repo', 'docs/motor.md')
   })
@@ -1051,7 +1051,22 @@ describe('Night card', () => {
     expect(unwatched).toEqual(expect.arrayContaining([NIGHTS, newest, older, next]))
   })
 
-  it('links evidence only when it resolves inside one of the checkouts', async () => {
+  /** Clicks each evidence link: none may reach the disk, and each says it was not found. */
+  async function refused(evidences: string[]) {
+    const panes = useProjectsStore.getState().projects[0].terminals.length
+    for (const text of evidences) {
+      fireEvent.click(screen.getByRole('button', { name: text }))
+      await waitFor(() => expect(lastToast()?.body, text).toBe(`Evidence not found: ${text}`))
+    }
+    expect(findRelativePath).not.toHaveBeenCalled()
+    expect(vi.mocked(listDirectory).mock.calls.every(([path]) => path === NIGHTS)).toBe(true)
+    expect(openInFileExplorer).not.toHaveBeenCalled()
+    expect(useUiStore.getState().linkViewerUrl).toBeNull()
+    expect(useProjectsStore.getState().projects[0].terminals).toHaveLength(panes)
+  }
+
+  it('opens evidence only inside the checkouts, never asking the disk about another path', async () => {
+    useUiStore.setState({ linkViewerUrl: null })
     fs.files.set(REGISTRY, JSON.stringify(exemplo))
     fs.files.set(
       `${NIGHTS}\\2026-10-03.json`,
@@ -1068,21 +1083,116 @@ describe('Night card', () => {
     render(<TodoSidebar />)
     fireEvent.click(await screen.findByRole('button', { name: /^Night of 10\/03/ }))
 
+    // Anything that looks like a path is a link; one outside the checkouts opens nothing.
     expect(await screen.findByRole('button', { name: 'docs/ok.md' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'C:\\repo-feature\\docs\\abs.md' })).toBeTruthy()
-    for (const text of [
-      '../outside/private.md',
-      'C:\\secret\\notes.md',
-      '\\\\server\\share\\notes.md',
-    ]) {
-      expect(screen.getByText(text).tagName, text).toBe('SPAN')
-    }
+    await refused(['../outside/private.md', 'C:\\secret\\notes.md', '\\\\server\\share\\notes.md'])
 
-    // Not found anywhere, a path in the repository still opens, relative to the main checkout.
+    // Not found anywhere, a path in the repository opens nothing broken either.
+    const panes = useProjectsStore.getState().projects[0].terminals.length
     fireEvent.click(screen.getByRole('button', { name: 'docs/ok.md' }))
-    expect(useProjectsStore.getState().projects[0].terminals.at(-1)).toMatchObject({
-      filePath: 'C:\\repo\\docs\\ok.md',
-    })
+    await waitFor(() => expect(lastToast()?.body).toBe('Evidence not found: docs/ok.md'))
+    expect(findRelativePath).toHaveBeenCalledWith('C:\\repo', 'docs/ok.md')
+    expect(useProjectsStore.getState().projects[0].terminals).toHaveLength(panes)
+  })
+
+  it('refuses a rooted path without a drive, which Windows would resolve on the current drive', async () => {
+    useUiStore.setState({ linkViewerUrl: null })
+    fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    fs.files.set(
+      `${NIGHTS}\\2026-10-03.json`,
+      diary('2026-10-03', [
+        entry('MOTOR-01', 'ok', '\\Windows\\win.ini'),
+        entry('MOTOR-02', 'ok', '/etc/passwd'),
+        entry('MOTOR-03', 'ok', 'C:Windows\\win.ini'),
+      ]),
+    )
+    fs.handoff = 'C:\\Windows\\win.ini'
+    render(<TodoSidebar />)
+    fireEvent.click(await screen.findByRole('button', { name: /^Night of 10\/03/ }))
+    await screen.findByRole('button', { name: '\\Windows\\win.ini' })
+    await refused(['\\Windows\\win.ini', '/etc/passwd', 'C:Windows\\win.ini'])
+  })
+
+  it('looks evidence up when clicked: one removed since the card showed it opens nothing', async () => {
+    useUiStore.setState({ linkViewerUrl: null })
+    fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    fs.files.set(
+      `${NIGHTS}\\2026-10-03.json`,
+      diary('2026-10-03', [entry('MOTOR-01', 'ok', 'src/gone.ts')]),
+    )
+    fs.found.set('src/gone.ts', 'C:\\repo\\src\\gone.ts')
+    render(<TodoSidebar />)
+    fireEvent.click(await screen.findByRole('button', { name: /^Night of 10\/03/ }))
+    const link = await screen.findByRole('button', { name: 'src/gone.ts' })
+    await act(async () => {})
+    await act(async () => {})
+
+    fs.found.delete('src/gone.ts')
+    const panes = useProjectsStore.getState().projects[0].terminals.length
+    fireEvent.click(link)
+    await waitFor(() => expect(lastToast()?.body).toBe('Evidence not found: src/gone.ts'))
+    expect(useProjectsStore.getState().projects[0].terminals).toHaveLength(panes)
+  })
+
+  it('opens a folder through its report, else in the file explorer, and names evidence found nowhere', async () => {
+    useUiStore.setState({ toasts: [], notifications: [], linkViewerUrl: null })
+    fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    // Each folder and its files; the report is the first of relatorio.md, README.md and
+    // handoff.md, else its only Markdown file.
+    const folders: Record<string, string[]> = {
+      'docs/r/01-calibracao': ['notas.md', 'handoff.md', 'README.md', 'relatorio.md'],
+      'docs/r/02': ['handoff.md', 'readme.md'],
+      'docs/r/03': ['notas.md', 'handoff.md'],
+      'docs/r/04': ['dados.csv', 'resumo.md'],
+      'docs/r/05': ['a.md', 'b.md'],
+      'docs/r/06': ['dados.csv'],
+    }
+    for (const [folder, names] of Object.entries(folders)) {
+      const path = `C:\\repo\\${folder.replace(/\//g, '\\')}`
+      fs.found.set(folder, path)
+      for (const name of names) fs.files.set(`${path}\\${name}`, '')
+    }
+    // The real case: the project moved the night's reports to docs/reports/Feitos since.
+    const moved = 'docs/reports/2026-10-03-piloto-noite/01-calibracao'
+    fs.files.set(
+      `${NIGHTS}\\2026-10-03.json`,
+      diary('2026-10-03', [
+        entry('OITO-07', 'aguarda-voce', moved),
+        ...Object.keys(folders).map((folder, index) => entry(`MOTOR-0${index + 1}`, 'ok', folder)),
+      ]),
+    )
+    render(<TodoSidebar />)
+    const viewer = () => useUiStore.getState().linkViewerUrl
+    const link = async (evidence: string) =>
+      fireEvent.click(await screen.findByRole('button', { name: evidence }))
+    const panes = () => useProjectsStore.getState().projects[0].terminals.length
+    const before = panes()
+
+    // From the menu: a path found nowhere names itself in a toast, and no pane opens.
+    fireEvent.click(await screen.findByRole('button', { name: /^OITO-07 / }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Open evidence' }))
+    await waitFor(() => expect(lastToast()?.body).toBe(`Evidence not found: ${moved}`))
+
+    // From the entry's link: a folder opens its report in the viewer.
+    await link('docs/r/01-calibracao')
+    await waitFor(() => expect(viewer()).toBe('C:\\repo\\docs\\r\\01-calibracao\\relatorio.md'))
+    await link('docs/r/02')
+    await waitFor(() => expect(viewer()).toBe('C:\\repo\\docs\\r\\02\\readme.md'))
+    await link('docs/r/03')
+    await waitFor(() => expect(viewer()).toBe('C:\\repo\\docs\\r\\03\\handoff.md'))
+    await link('docs/r/04')
+    await waitFor(() => expect(viewer()).toBe('C:\\repo\\docs\\r\\04\\resumo.md'))
+    // Without one report, the folder itself opens in the file explorer.
+    await link('docs/r/05')
+    await waitFor(() => expect(openInFileExplorer).toHaveBeenCalledWith('C:\\repo\\docs\\r\\05'))
+    await link('docs/r/06')
+    await waitFor(() =>
+      expect(openInFileExplorer).toHaveBeenLastCalledWith('C:\\repo\\docs\\r\\06'),
+    )
+    expect(openInFileExplorer).toHaveBeenCalledTimes(2)
+    expect(viewer()).toBe('C:\\repo\\docs\\r\\04\\resumo.md')
+    expect(panes()).toBe(before)
   })
 
   describe('an entry waiting on you', () => {
@@ -1268,11 +1378,15 @@ describe('Night card', () => {
 
       // Markdown opens in the viewer, any other file in a pane, as from a terminal link.
       await choose('OITO-07', 'Open evidence')
-      expect(useUiStore.getState().linkViewerUrl).toBe('C:\\repo-feature\\docs\\oito.md')
+      await waitFor(() =>
+        expect(useUiStore.getState().linkViewerUrl).toBe('C:\\repo-feature\\docs\\oito.md'),
+      )
       await choose('PARADA-01', 'Open evidence')
-      expect(useProjectsStore.getState().projects[0].terminals.at(-1)).toMatchObject({
-        filePath: 'C:\\repo\\src\\parada.ts',
-      })
+      await waitFor(() =>
+        expect(useProjectsStore.getState().projects[0].terminals.at(-1)).toMatchObject({
+          filePath: 'C:\\repo\\src\\parada.ts',
+        }),
+      )
       // A commit is not a path: nothing to open.
       fireEvent.click(actions('NOTURNA-02')!)
       expect(screen.queryByRole('menuitem', { name: 'Open evidence' })).toBeNull()
@@ -1541,6 +1655,236 @@ describe('Todo sections', () => {
     fireEvent.click(pending()!)
     expect(gate2()).toBeNull()
     expect(header(/^Night of/)).toBeNull()
+  })
+
+  it('opens evidence from the checkout its campaign has at the click, not the one it had', async () => {
+    const data = JSON.parse(withResults({ 'OITO-07': GATE_2 })) as typeof exemplo
+    Object.assign(data.campanhas[1].tarefas[6], { evidencia: 'docs/report.md' })
+    fs.files.set(REGISTRY, JSON.stringify(data))
+    // In the feature worktree the lookup hangs until released.
+    let release: (path: string) => void = () => {}
+    const lookup = vi.mocked(findRelativePath)
+    const usual = lookup.getMockImplementation()!
+    lookup.mockImplementation((cwd, path) =>
+      cwd === 'C:\\repo-feature'
+        ? new Promise((resolve) => (release = resolve))
+        : Promise.resolve(`${cwd}\\${path.replace(/\//g, '\\')}`),
+    )
+    useUiStore.setState({ linkViewerUrl: null })
+    try {
+      render(<TodoSidebar />)
+      await waitFor(() => expect(gate2Rows()).toEqual(['OITO-07']))
+      await act(async () => {})
+
+      // The campaign moves to its feature worktree.
+      await editRegistry((edited) => {
+        Object.assign(edited.campanhas[1], { worktrees: ['repo-feature'] })
+      })
+      fireEvent.click(within(gate2()!).getByRole('button', { name: /^OITO-07 / }))
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Open evidence' }))
+      await act(async () => {})
+      expect(useUiStore.getState().linkViewerUrl).toBeNull()
+      await act(async () => release('C:\\repo-feature\\docs\\report.md'))
+      await waitFor(() =>
+        expect(useUiStore.getState().linkViewerUrl).toBe('C:\\repo-feature\\docs\\report.md'),
+      )
+      expect(lookup).toHaveBeenLastCalledWith('C:\\repo-feature', 'docs/report.md')
+    } finally {
+      lookup.mockImplementation(usual)
+    }
+  })
+
+  it('opens the actions of a task waiting for your Gate 2 from its row, as a night entry does', async () => {
+    const data = JSON.parse(
+      withResults({ 'OITO-07': GATE_2, 'NOTURNA-01': GATE_2, 'PARADA-01': GATE_2 }),
+    ) as typeof exemplo
+    Object.assign(data.campanhas[1].tarefas[6], { evidencia: 'docs/oito.md' })
+    fs.files.set(REGISTRY, JSON.stringify(data))
+    fs.found.set('docs/oito.md', 'C:\\repo\\docs\\oito.md')
+    const tagged = openTerminal('C:\\repo', 'claude', 'PARADA')
+    useUiStore.setState({ linkViewerUrl: null })
+    render(<TodoSidebar />)
+    await waitFor(() => expect(gate2Rows()).toEqual(['OITO-07', 'NOTURNA-01', 'PARADA-01']))
+    const trigger = (id: string) =>
+      within(gate2()!).getByRole('button', { name: new RegExp(`^${id} `) })
+    const items = () =>
+      within(screen.getByRole('menu'))
+        .getAllByRole('menuitem')
+        .map((item) => item.textContent)
+
+    // Conclude, its evidence and Continue; Back to the queue only for a night task.
+    fireEvent.click(trigger('OITO-07'))
+    expect(screen.getByRole('menu', { name: 'Actions for OITO-07' })).toBeInTheDocument()
+    expect(items()).toEqual(['Conclude (Gate 2)', 'Open evidence', 'Continue in the terminal'])
+    const open = screen.getByRole('menuitem', { name: 'Open evidence' })
+    open.focus()
+    fireEvent.keyDown(open, { key: 'Escape' })
+    expect(screen.queryByRole('menu')).toBeNull()
+    expect(trigger('OITO-07')).toHaveFocus()
+
+    fireEvent.click(trigger('OITO-07'))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Open evidence' }))
+    expect(trigger('OITO-07')).toHaveFocus()
+    await waitFor(() => expect(useUiStore.getState().linkViewerUrl).toBe('C:\\repo\\docs\\oito.md'))
+
+    // No evidence, no Open evidence; Continue goes to the campaign's tab.
+    fireEvent.click(trigger('PARADA-01'))
+    expect(items()).toEqual(['Conclude (Gate 2)', 'Continue in the terminal'])
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Continue in the terminal' }))
+    expect(useUiStore.getState().activeTerminal?.terminalId).toBe(tagged.id)
+
+    // A night task goes back to the queue and leaves the group; the focus goes to its header.
+    fireEvent.click(trigger('NOTURNA-01'))
+    expect(items()).toEqual(['Conclude (Gate 2)', 'Continue in the terminal', 'Back to the queue'])
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Back to the queue' }))
+    await waitFor(() => expect(task('NOTURNA-01')?.estado).toBe('pronta'))
+    await waitFor(() => expect(gate2Rows()).toEqual(['OITO-07', 'PARADA-01']))
+    await waitFor(() =>
+      expect(
+        within(gate2()!).getByRole('button', { name: /^Waiting for your Gate 2/ }),
+      ).toHaveFocus(),
+    )
+
+    // Conclude records the task's own evidence, with an undo; the box still checks as before.
+    fireEvent.click(trigger('OITO-07'))
+    const conclude = screen.getByRole('menuitem', { name: 'Conclude (Gate 2)' })
+    await waitFor(() => expect(conclude).toBeEnabled())
+    fireEvent.click(conclude)
+    await waitFor(() =>
+      expect(task('OITO-07')).toMatchObject({
+        estado: 'concluída',
+        resultado: 'marcada no Alethe',
+        evidencia: 'docs/oito.md',
+      }),
+    )
+    await waitFor(() => expect(lastToast()?.body).toBe('OITO-07 marked done.'))
+    await waitFor(() => expect(gate2Rows()).toEqual(['PARADA-01']))
+    const box = within(gate2()!).getByRole('button', { name: 'Mark complete' })
+    await waitFor(() => expect(box).toBeEnabled())
+    fireEvent.click(box)
+    await waitFor(() => expect(task('PARADA-01')?.estado).toBe('concluída'))
+  })
+
+  describe('order', () => {
+    /** The sections in the order shown, by the ids their headers carry. */
+    const order = () =>
+      [...document.querySelectorAll('[data-section]')].map((item) =>
+        item.getAttribute('data-section'),
+      )
+    const DEFAULT = ['pending', 'list', 'campaigns', 'findings', 'night']
+
+    afterEach(() => act(() => useUiStore.getState().closeModal()))
+
+    /** Every section on screen: Pending, Active, Campaigns, Findings and a decided night. */
+    async function renderAll(shown = DEFAULT) {
+      fs.files.set(REGISTRY, withResults({ 'OITO-07': GATE_2 }))
+      fs.files.set(
+        FINDINGS,
+        JSON.stringify({
+          achados: [
+            { id: 'A-1', data: '2026-10-03', tipo: 'bug', titulo: 'T', origem: '', estado: 'novo' },
+          ],
+        }),
+      )
+      night(['OITO-03', 'ok'])
+      const view = render(
+        <>
+          <TodoSidebar />
+          <TodoSettingsModal />
+        </>,
+      )
+      await screen.findByRole('button', { name: /^Night of 10\/03/ })
+      await screen.findByRole('button', { name: /^Findings/ })
+      await waitFor(() => expect(order()).toEqual(shown))
+      return view
+    }
+
+    it('moves a section with Alt+Arrow keys on its header, keeps it per project, and the settings reset it', async () => {
+      const { unmount } = await renderAll()
+      const toggle = pending()!
+      toggle.focus()
+
+      fireEvent.keyDown(toggle, { key: 'ArrowDown', altKey: true })
+      expect(order()).toEqual(['list', 'pending', 'campaigns', 'findings', 'night'])
+      await waitFor(() => expect(pending()).toHaveFocus())
+      expect(pending()).toHaveAttribute('aria-expanded', 'true')
+      fireEvent.keyDown(header(/^Findings/)!, { key: 'ArrowUp', altKey: true })
+      expect(order()).toEqual(['list', 'pending', 'findings', 'campaigns', 'night'])
+      // The first goes no higher, and an arrow without Alt moves nothing.
+      fireEvent.keyDown(header(/^Active · OITO/)!, { key: 'ArrowUp', altKey: true })
+      fireEvent.keyDown(header(/^Night of/)!, { key: 'ArrowDown', altKey: true })
+      fireEvent.keyDown(pending()!, { key: 'ArrowDown' })
+      expect(order()).toEqual(['list', 'pending', 'findings', 'campaigns', 'night'])
+      expect(useTodosStore.getState().sectionOrder).toEqual({
+        [projectId()]: ['list', 'pending', 'findings', 'campaigns', 'night'],
+      })
+      // A click on a header still opens and closes it.
+      fireEvent.click(pending()!)
+      expect(pending()).toHaveAttribute('aria-expanded', 'false')
+
+      // Kept across a remount.
+      unmount()
+      await renderAll(['list', 'pending', 'findings', 'campaigns', 'night'])
+
+      // The settings put the default order back.
+      act(() => useUiStore.getState().openModal_(TODO_SETTINGS_MODAL_ID))
+      const reset = await screen.findByRole('button', { name: 'Reset section order' })
+      fireEvent.click(reset)
+      await waitFor(() => expect(order()).toEqual(DEFAULT))
+      expect(useTodosStore.getState().sectionOrder).toEqual({})
+      expect(reset).toBeDisabled()
+    })
+
+    it('moves a section dragged by its header, while a click still opens and closes it', async () => {
+      await renderAll()
+      // jsdom has no layout: sections sit 100 px apart in the order shown, each 90 px tall under a
+      // 26 px header.
+      const rects = vi
+        .spyOn(Element.prototype, 'getBoundingClientRect')
+        .mockImplementation(function (this: Element) {
+          const headers = [...document.querySelectorAll('[data-section]')]
+          const header = this.matches('[data-section]')
+            ? this
+            : this.querySelector('[data-section]')
+          const index = header ? headers.indexOf(header) : -1
+          if (index < 0) return DOMRect.fromRect({ x: 0, y: 0, width: 0, height: 0 })
+          const height = header === this ? 26 : 90
+          return DOMRect.fromRect({ x: 0, y: index * 100, width: 240, height })
+        })
+      // Nor pointer events: a mouse event with a pointer's primary flag stands in.
+      class FakePointerEvent extends MouseEvent {
+        isPrimary = true
+        pointerId = 1
+      }
+      const view = document.defaultView as unknown as Record<string, unknown>
+      const native = view.PointerEvent
+      view.PointerEvent = FakePointerEvent
+      try {
+        // A press that moves less than the activation distance is a click.
+        const findings = header(/^Findings/)!
+        fireEvent.pointerDown(findings, { button: 0, clientX: 20, clientY: 313 })
+        fireEvent.pointerMove(document, { clientX: 22, clientY: 316 })
+        fireEvent.pointerUp(document, { clientX: 22, clientY: 316 })
+        fireEvent.click(findings)
+        expect(findings).toHaveAttribute('aria-expanded', 'true')
+        expect(order()).toEqual(DEFAULT)
+
+        // Findings, the fourth, goes up to the second place.
+        fireEvent.pointerDown(findings, { button: 0, clientX: 20, clientY: 313 })
+        fireEvent.pointerMove(document, { clientX: 20, clientY: 300 })
+        fireEvent.pointerMove(document, { clientX: 20, clientY: 113 })
+        fireEvent.pointerUp(document, { clientX: 20, clientY: 113 })
+        // The click that ends a drag does not toggle the section.
+        fireEvent.click(findings)
+        expect(order()).toEqual(['pending', 'findings', 'list', 'campaigns', 'night'])
+        expect(findings).toHaveAttribute('aria-expanded', 'true')
+      } finally {
+        view.PointerEvent = native
+        rects.mockRestore()
+        // The sensor swallows clicks for 50 ms after a drag; the next test's must go through.
+        await act(() => new Promise((resolve) => setTimeout(resolve, 60)))
+      }
+    })
   })
 
   it('shows the active campaign under its own header, with its tabs, add field and rows', async () => {

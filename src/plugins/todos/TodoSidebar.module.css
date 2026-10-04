@@ -409,6 +409,48 @@
   margin-top: 16px;
 }
 
+/*
+ * A movable top-level section's slot (SortableSections): spaced as sections are, and empty while
+ * its section shows nothing.
+ */
+.sortable:empty {
+  display: none;
+}
+
+.sortable:not(:empty) ~ .sortable:not(:empty) {
+  margin-top: 16px;
+}
+
+/* Where a dragged section lands, as the project sidebar marks a drop. */
+.sortable[data-drop] {
+  position: relative;
+}
+
+.sortable[data-drop]::before {
+  content: '';
+  position: absolute;
+  z-index: 2;
+  left: 5px;
+  right: 5px;
+  height: 2px;
+  border-radius: 999px;
+  background: var(--accent);
+  pointer-events: none;
+}
+
+.sortable[data-drop='before']::before {
+  top: -9px;
+}
+
+.sortable[data-drop='after']::before {
+  bottom: -9px;
+}
+
+/* The dragged section's header follows the pointer; the rest of it stays, faded. */
+.sortable[data-dragging] > * > :not([data-section]) {
+  opacity: 0.4;
+}
+
 .section {
   animation: todoSectionIn 300ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
@@ -545,6 +587,38 @@
   background: var(--panel-hover);
 }
 
+/* A movable section's header is its drag handle: the grip shows it on hover, as on a todo row. */
+.sectionGrip {
+  width: 14px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 14px;
+  color: var(--fg-faint);
+  opacity: 0;
+  cursor: grab;
+  transition: opacity 140ms ease;
+}
+
+.sectionHeader:hover .sectionGrip,
+.sectionHeader:focus-within .sectionGrip {
+  opacity: 1;
+}
+
+.sectionHeader[data-dragging] {
+  position: relative;
+  z-index: 3;
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-md);
+  cursor: grabbing;
+}
+
+.sectionHeader[data-dragging] .sectionGrip {
+  opacity: 1;
+  color: var(--accent);
+}
+
 .list {
   display: flex;
   flex-direction: column;
@@ -645,6 +719,11 @@
   font-size: 12px;
   line-height: 1.35;
   text-align: left;
+}
+
+/* A task waiting for your Gate 2: its id and title open its actions. */
+button.todoTitle {
+  cursor: pointer;
 }
 
 .titleButton {

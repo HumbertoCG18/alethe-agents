@@ -1,6 +1,7 @@
 import { Bot, GitBranch, GitMerge, Palette } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 
+import { askConfirm } from '../../lib/dialog'
 import { useT } from '../../lib/i18n'
 import {
   detectProjectStack,
@@ -162,7 +163,7 @@ export function EditProjectModal() {
   const handleRemoveWorktree = async (agentId: string) => {
     const repoPath = project.terminals[0]?.cwd
     if (!repoPath) return
-    if (confirm(`Tem certeza que deseja excluir o ambiente do agente "${agentId}"?`)) {
+    if (await askConfirm(t('multiAgent.removeAgentEnvConfirm', { agentId }))) {
       try {
         await worktreeRemove(repoPath, agentId, true)
         void loadWorktrees(repoPath)

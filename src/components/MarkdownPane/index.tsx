@@ -16,6 +16,7 @@ import {
 import { memo, useCallback, useEffect, useRef, useState } from 'react'
 
 import { pathSegments } from '../../lib/paths'
+import { askConfirm } from '../../lib/dialog'
 import { useT } from '../../lib/i18n'
 import {
   listenFileChanged,
@@ -155,8 +156,8 @@ export const MarkdownPane = memo(function MarkdownPane({
     paneRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' })
   }, [focusReq, terminal.id])
 
-  const onDelete = () => {
-    if (window.confirm(t('ui.markdown.confirmClose', { name: terminal.name }))) {
+  const onDelete = async () => {
+    if (await askConfirm(t('ui.markdown.confirmClose', { name: terminal.name }))) {
       deleteTerminal(projectId, terminal.id)
       if (isFocusMode) setFocusedTerminal(null)
     }

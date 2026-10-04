@@ -15,7 +15,12 @@ function errorDetails(error: unknown): { message: string; stack: string | null }
   return { message: String(error), stack: null }
 }
 
-function reportCloseFailure(stage: CloseFailureStage, error: unknown): void {
+// A failed quit, or a confirmation dialog that could not open, leaves the app open: say so.
+function reportCloseFailure(
+  stage: CloseFailureStage,
+  error: unknown,
+  toast = stage === 'quit' || stage === 'confirm',
+): void {
   const details = errorDetails(error)
   void recordFrontendError(
     `App close failed during ${stage}: ${details.message}`,
@@ -23,7 +28,7 @@ function reportCloseFailure(stage: CloseFailureStage, error: unknown): void {
     'app-close',
   )
 
-  if (stage !== 'quit') return
+  if (!toast) return
   const locale = getLocale()
   useUiStore.getState().pushToast({
     title: translate(locale, 'appClose.failedTitle'),
@@ -42,7 +47,6 @@ const closeCoordinator = createCloseCoordinator({
       cancelLabel: translate(locale, 'appClose.cancel'),
     })
   },
-  confirmFallback: () => window.confirm(translate(getLocale(), 'appClose.message')),
   beforeClose: flushProjectsState,
   destroyWindow: () => appWindow.destroy(),
   quitApp: () => quitApp(),
@@ -64,7 +68,7 @@ export function useCloseConfirmation(): void {
         if (cancelled) stopListening()
         else unlisten = stopListening
       })
-      .catch((error) => reportCloseFailure('confirm', error))
+      .catch((error) => reportCloseFailure('confirm', error, false))
 
     return () => {
       cancelled = true

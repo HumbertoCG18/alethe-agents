@@ -17,6 +17,7 @@ import { useMemo, useState, type ReactNode } from 'react'
 
 import { relaunchAgentPty } from '../../lib/agentRelaunch'
 import { graphifyRepoOf } from '../../lib/claudeMcpConfigs'
+import { askConfirm } from '../../lib/dialog'
 import { useT } from '../../lib/i18n'
 import type { SubTab, Terminal } from '../../lib/types'
 import { getPtyCwd, openInBrowser, openInFileExplorer, openInVscode } from '../../lib/tauri'
@@ -145,9 +146,9 @@ function InspectorBody({ projectId, terminal }: { projectId: string; terminal: T
     if (isFocusMode) setFocusedTerminal(null)
   }
 
-  const onDeletePane = () => {
+  const onDeletePane = async () => {
     const key = isWebPane ? 'webPane.confirmClose' : 'ui.markdown.confirmClose'
-    if (!window.confirm(t(key, { name: terminal.name }))) return
+    if (!(await askConfirm(t(key, { name: terminal.name })))) return
     deleteTerminal(projectId, terminal.id)
     if (isFocusMode) setFocusedTerminal(null)
   }

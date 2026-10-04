@@ -6,7 +6,6 @@ export type CloseFailureStage = 'confirm' | 'persist' | 'destroy' | 'quit'
 
 type CloseCoordinatorDependencies = {
   confirmNative: () => Promise<boolean>
-  confirmFallback: () => boolean
   beforeClose?: () => Promise<void>
   destroyWindow: () => Promise<void>
   quitApp: () => Promise<void>
@@ -47,8 +46,10 @@ export function createCloseCoordinator(deps: CloseCoordinatorDependencies): {
     try {
       confirmed = await deps.confirmNative()
     } catch (error) {
+      // No browser fallback: tauri-plugin-dialog replaces window.confirm with an async function
+      // whose Promise is always truthy. A dialog that cannot ask keeps the app open.
       deps.onFailure?.('confirm', error)
-      confirmed = deps.confirmFallback()
+      confirmed = false
     } finally {
       confirming = false
     }
@@ -62,7 +63,8 @@ export function createCloseCoordinator(deps: CloseCoordinatorDependencies): {
       deps.onFailure?.('persist', error)
     }
 
-    // ("cannot move state from Destroyed") no meio do teardown, abortando o
+    // Quit before destroying the window: destroying it first fails ("cannot move state from
+    // Destroyed") in the middle of the teardown, aborting it.
 
     try {
       await quitWithTimeout()

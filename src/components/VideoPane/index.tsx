@@ -2,6 +2,7 @@ import { FolderOpen, GripVertical, Maximize2, Minimize2, Trash2 } from 'lucide-r
 import { memo, useRef } from 'react'
 import { useDraggable, useDroppable } from '@dnd-kit/core'
 
+import { askConfirm } from '../../lib/dialog'
 import { useT } from '../../lib/i18n'
 import { openInFileExplorer } from '../../lib/tauri'
 import { pathSegments } from '../../lib/paths'
@@ -40,8 +41,8 @@ export const VideoPane = memo(function VideoPane({
     draggable.setNodeRef(node)
     droppable.setNodeRef(node)
   }
-  const onDelete = () => {
-    if (window.confirm(t('ui.markdown.confirmClose', { name: terminal.name }))) {
+  const onDelete = async () => {
+    if (await askConfirm(t('ui.markdown.confirmClose', { name: terminal.name }))) {
       deleteTerminal(projectId, terminal.id)
       if (isFocusMode) setFocusedTerminal(null)
     }

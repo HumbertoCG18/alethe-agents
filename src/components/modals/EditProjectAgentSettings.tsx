@@ -2,6 +2,7 @@ import { AlertTriangle, CircleCheck, GitBranch } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
 import { useGsdSyncFeatureEnabled } from '../../hooks/useGsdSyncSessions'
+import { askConfirm } from '../../lib/dialog'
 import { readableError } from '../../lib/errors'
 import { useT } from '../../lib/i18n'
 import { discoverProviderModels, gitInit, gitStatus } from '../../lib/tauri'
@@ -106,7 +107,7 @@ export function EditProjectAgentSettings({
 
   const handleInitGit = async () => {
     if (!cwd || gitInitBusy) return
-    if (!confirm(t('git.initOffer.confirm'))) return
+    if (!(await askConfirm(t('git.initOffer.confirm')))) return
     setGitInitBusy(true)
     try {
       await gitInit(cwd)
@@ -304,9 +305,9 @@ export function EditProjectAgentSettings({
           type="button"
           className={controls.btn}
           disabled={migratingWorktrees}
-          onClick={() => {
+          onClick={async () => {
             if (migratingWorktrees) return
-            if (!confirm(t('multiAgent.migrateExistingConfirm'))) return
+            if (!(await askConfirm(t('multiAgent.migrateExistingConfirm')))) return
             setMigratingWorktrees(true)
             void migrateProjectTerminalsToWorktrees(projectId, gsdWatcherEnabled).finally(() =>
               setMigratingWorktrees(false),

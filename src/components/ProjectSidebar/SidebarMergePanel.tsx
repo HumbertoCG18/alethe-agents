@@ -3,6 +3,7 @@ import type React from 'react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { useGsdSyncSessionsWatcher } from '../../hooks/useGsdSyncSessions'
+import { askConfirm } from '../../lib/dialog'
 import { type MessageKey, useT } from '../../lib/i18n'
 import {
   detectProjectStack,
@@ -502,7 +503,7 @@ export function SidebarMergePanel() {
     if (!proj) return
     const repo = getProjectRepoRoot(proj)
     if (!repo) return
-    if (!confirm(t('merge.rejectConfirm', { branch: item.branchName }))) return
+    if (!(await askConfirm(t('merge.rejectConfirm', { branch: item.branchName })))) return
     // Same here: only closes the detail popup after the native confirm passes.
     setCenterModalOpen(false)
 
@@ -707,7 +708,8 @@ export function SidebarMergePanel() {
     const repo = proj ? getProjectRepoRoot(proj) : ''
     if (!repo) return
 
-    if (!confirm(t('merge.prMergeConfirm', { number: pr.number, title: pr.title }))) return
+    if (!(await askConfirm(t('merge.prMergeConfirm', { number: pr.number, title: pr.title }))))
+      return
 
     try {
       const latestOpenPrs = await githubPrFind(repo, pr.headBranch)

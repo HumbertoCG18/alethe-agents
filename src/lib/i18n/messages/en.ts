@@ -2722,6 +2722,7 @@ export const en = {
   'multiAgent.cleanOrphans': 'Clean up orphaned worktrees ({count})',
   'multiAgent.cleaningOrphans': 'Cleaning up…',
   'multiAgent.orphanCleanupTitle': 'Orphaned worktree cleanup',
+  'multiAgent.removeAgentEnvConfirm': 'Delete the environment of agent "{agentId}"?',
   'multiAgent.orphanCleanupSummary':
     '{cleaned} fully cleaned, {partial} partially cleaned, {waiting} awaiting manual unlock, {failed} failed.',
   'multiAgent.orphanAdminLocked':

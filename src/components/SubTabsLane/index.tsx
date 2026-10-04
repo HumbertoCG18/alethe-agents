@@ -1,6 +1,7 @@
 import { Plus, X } from 'lucide-react'
 import type { ReactNode } from 'react'
 
+import { askConfirm } from '../../lib/dialog'
 import { useT } from '../../lib/i18n'
 import { useProjectsStore } from '../../stores/projectsStore'
 import type { SubTab } from '../../lib/types'
@@ -54,10 +55,12 @@ export function SubTabsLane({
               <button
                 type="button"
                 className={styles.close}
-                onClick={(e) => {
+                onClick={async (e) => {
                   e.stopPropagation()
                   if (
-                    window.confirm(t('ui.subtabs.confirmCloseTab', { name: tab.name || tab.type }))
+                    await askConfirm(
+                      t('ui.subtabs.confirmCloseTab', { name: tab.name || tab.type }),
+                    )
                   )
                     onClose(tab.id)
                 }}

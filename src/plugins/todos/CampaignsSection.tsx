@@ -1,5 +1,5 @@
 import { Play } from 'lucide-react'
-import { Fragment, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 
 import {
   type Campaign,
@@ -17,6 +17,8 @@ import { useProjectsStore } from '../../stores/projectsStore'
 import { useTerminalsStore } from '../../stores/terminalsStore'
 import styles from './CampaignsSection.module.css'
 import {
+  AGENTS,
+  type CampaignAgent,
   type CampaignLive,
   campaignLiveStatus,
   type CampaignView,
@@ -26,11 +28,9 @@ import {
   TASK_LANES,
   workersLabel,
 } from './campaignView'
+import { useMenuFocus } from './menuFocus'
 import { SectionToggle } from './SectionToggle'
 import sidebarStyles from './TodoSidebar.module.css'
-
-const AGENTS = ['claude', 'codex'] as const
-type CampaignAgent = (typeof AGENTS)[number]
 
 const WINDOW_KEYS: Record<CampaignWindow, MessageKey> = {
   assistida: 'todo.campaigns.windowAssisted',
@@ -153,7 +153,7 @@ export function CampaignsSection({
           : null
       }
       onSelect={() => onSelect(campaign.id)}
-      onOpen={(agent) => void openCampaign(projectId, campaign, agent, registry)}
+      onOpen={(agent) => openCampaign(projectId, campaign, agent, registry)}
       onContinue={() => continueCampaign(projectId, campaign)}
     />
   )
@@ -178,25 +178,31 @@ export function CampaignsSection({
           </ul>
         </div>
       ) : (
-        <div className={sidebarStyles.list}>
+        <div className={styles.groups}>
           {GROUPS.map((group) => {
             const members = campaigns.filter((campaign) => groupOf(campaign) === group)
             if (members.length === 0) return null
             const open = !closed.has(group)
             return (
-              <Fragment key={group}>
+              <div
+                key={group}
+                role="group"
+                aria-label={t(GROUP_KEYS[group])}
+                className={`${sidebarStyles.list} ${styles.group}`}
+              >
                 <SectionToggle
                   name={t(GROUP_KEYS[group])}
                   count={members.length}
                   open={open}
                   onToggle={() => toggleGroup(group)}
+                  variant="sub"
                 />
                 {open
                   ? members.map((campaign) =>
                       row(campaign, group === 'active' ? live.get(campaign.id) : undefined),
                     )
                   : null}
-              </Fragment>
+              </div>
             )
           })}
         </div>
@@ -223,7 +229,7 @@ function CampaignRow({
   /** Its live workers, as "2 running · 1 queued"; null when none or not the active campaign. */
   workers: string | null
   onSelect: () => void
-  onOpen: (agent: CampaignAgent) => void
+  onOpen: (agent: CampaignAgent) => unknown
   /** Focuses the campaign's open tab; false when it has none. */
   onContinue: () => boolean
 }) {
@@ -231,6 +237,7 @@ function CampaignRow({
   const locale = useProjectsStore((state) => state.preferences.language)
   const [expanded, setExpanded] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
+  const { trigger, onKeyDown, choose } = useMenuFocus(menuOpen, () => setMenuOpen(false))
   const activity = campaignActivity(campaign, checkouts)
   const worktree = activity.worktree
     ? `${activity.worktree}${activity.extra > 0 ? ` (+${activity.extra})` : ''}`
@@ -251,6 +258,7 @@ function CampaignRow({
       data-status={live}
       data-active={active ? 'true' : undefined}
       aria-current={active ? 'true' : undefined}
+      onKeyDown={onKeyDown}
     >
       <span className={styles.dot} aria-hidden />
       <button
@@ -278,6 +286,7 @@ function CampaignRow({
       </button>
       {/* The active row continues where its tab is, and offers the agents only when none is open. */}
       <button
+        ref={trigger}
         type="button"
         className={styles.openButton}
         onClick={() => {
@@ -300,10 +309,7 @@ function CampaignRow({
               type="button"
               role="menuitem"
               className={styles.menuItem}
-              onClick={() => {
-                setMenuOpen(false)
-                onOpen(agent)
-              }}
+              onClick={choose(() => onOpen(agent))}
             >
               {AGENT_TYPE_LABELS[agent]}
             </button>

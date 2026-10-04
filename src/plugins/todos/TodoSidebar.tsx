@@ -648,7 +648,7 @@ export function TodoSidebar() {
 
       <div className={styles.content}>
         <NightStatus projectId={view.projectId} />
-        <NightCard registry={view.registry} />
+        <NightCard registry={view.registry} edits={edits} />
         <FindingsCard registry={view.registry} />
         {filter !== 'completed' ? <GsdSyncSection /> : null}
         {campaign ? (

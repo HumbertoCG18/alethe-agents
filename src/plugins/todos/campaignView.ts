@@ -55,6 +55,10 @@ export const STATE_KEYS: Record<TaskState, MessageKey> = {
   concluída: 'todo.campaigns.stateDone',
 }
 
+/** The agents a campaign opens in. */
+export const AGENTS = ['claude', 'codex'] as const
+export type CampaignAgent = (typeof AGENTS)[number]
+
 export const TASK_LANES: Record<TaskState, string> = {
   proposta: 'idle',
   pronta: 'queued',
@@ -215,28 +219,39 @@ export function useCampaignView(): CampaignView {
 
 /**
  * Makes the first open terminal tab that `matches` the active one, looking in the focused
- * terminal first; returns its terminal id, or null when none matches.
+ * terminal first, then in enabled ones; returns its terminal id, or null when none matches. A
+ * disabled terminal is enabled again: its tab still counts the campaign as Active.
  */
 function activateTab(projectId: string, matches: (tab: SubTab) => boolean): string | null {
   const store = useProjectsStore.getState()
   const focused = useUiStore.getState().activeTerminal?.terminalId
   const terminals = [...(store.projects.find((item) => item.id === projectId)?.terminals ?? [])]
-  terminals.sort((a, b) => Number(b.id === focused) - Number(a.id === focused))
+  terminals.sort(
+    (a, b) =>
+      Number(b.id === focused) - Number(a.id === focused) ||
+      Number(Boolean(a.disabled)) - Number(Boolean(b.disabled)),
+  )
   for (const terminal of terminals) {
-    if ((terminal.kind ?? 'terminal') !== 'terminal' || terminal.disabled) continue
+    if ((terminal.kind ?? 'terminal') !== 'terminal') continue
     const tab = terminal.tabs.find(matches)
     if (!tab) continue
+    if (terminal.disabled) store.setTerminalDisabled(projectId, terminal.id, false)
     store.setActiveTab(projectId, terminal.id, tab.id)
     return terminal.id
   }
   return null
 }
 
-function focusTerminal(projectId: string, terminalId: string) {
+/**
+ * Focuses the terminal, opening its grid when it is not shown. `show`, for the user's own click,
+ * also leaves Home for the workspace; the night scheduler never moves the user's view.
+ */
+function focusTerminal(projectId: string, terminalId: string, show: boolean) {
   useProjectsStore.getState().focusWorkspaceTerminal(projectId, terminalId)
   const ui = useUiStore.getState()
   ui.setActiveTerminal(projectId, terminalId)
   ui.requestPaneFocus(terminalId)
+  if (show) ui.setActiveView('workspace')
 }
 
 /**
@@ -249,7 +264,7 @@ function focusTerminal(projectId: string, terminalId: string) {
 export async function openCampaign(
   projectId: string,
   campaign: Campaign,
-  agent: 'claude' | 'codex',
+  agent: CampaignAgent,
   registry: Registry,
   nightTask?: CampaignTask,
 ): Promise<string | null> {
@@ -292,14 +307,14 @@ export async function openCampaign(
         .id
     }
   }
-  focusTerminal(projectId, terminalId)
+  focusTerminal(projectId, terminalId, !nightTask)
   return terminalId
 }
 
 /** Focuses a tab opened for `campaign`, by the same rule as Open; false when there is none. */
 export function continueCampaign(projectId: string, campaign: Campaign): boolean {
   const terminalId = activateTab(projectId, (tab) => tab.campaignId === campaign.id)
-  if (terminalId) focusTerminal(projectId, terminalId)
+  if (terminalId) focusTerminal(projectId, terminalId, true)
   return terminalId !== null
 }
 
@@ -388,7 +403,9 @@ const DONE: TaskState = 'concluída'
 /** The `resultado` of a task checked in the list: the user is its Gate 2. */
 const CHECKED_RESULT = 'marcada no Alethe'
 
-type Previous = { state: TaskState; result: string | null }
+type Previous = { state: TaskState; result: string | null; evidence: string | null }
+/** A check made here: the task as it was, and the evidence the check wrote, if any. */
+type Check = { previous: Previous; evidence?: string }
 /** The registry an edit starts from: where it is, and its text as read. */
 type Base = Pick<Registry, 'path' | 'text'>
 
@@ -406,7 +423,7 @@ export function useCampaignEdits(view: CampaignView) {
   latest.current = view
   const busy = useRef(false)
   // State before each check made here, by registry path and task id: what undo puts back.
-  const undo = useRef(new Map<string, Previous>())
+  const undo = useRef(new Map<string, Check>())
   const [, rerender] = useReducer((count: number) => count + 1, 0)
 
   const notify = (body: string, actions?: { label: string; run: () => void }[]) =>
@@ -439,8 +456,21 @@ export function useCampaignEdits(view: CampaignView) {
   }
 
   /** Changes a task's state in `base`; returns the state it had, or null when nothing was written. */
-  const setState = async (base: Base, taskId: string, state: TaskState, result: string | null) => {
-    const edit = setCampaignTaskState(base.text, taskId, state, result, isoDay(new Date()))
+  const setState = async (
+    base: Base,
+    taskId: string,
+    state: TaskState,
+    result: string | null | undefined,
+    evidence?: string | null,
+  ) => {
+    const edit = setCampaignTaskState(
+      base.text,
+      taskId,
+      state,
+      result,
+      isoDay(new Date()),
+      evidence,
+    )
     if (!edit.ok) {
       // A task that vanished means the registry changed under the list.
       notify(
@@ -455,10 +485,15 @@ export function useCampaignEdits(view: CampaignView) {
   // may show another project by the time the write ends or the undo runs.
   const entry = (path: string, taskId: string) => `${path}\n${taskId}`
 
-  /** Puts back the state a task of `path` had before it was checked here, while it is still done. */
+  /**
+   * Puts back the state a task of `path` had before it was checked here, while it is still done.
+   * `resultado` and `evidencia` go back only while they hold what the check wrote: one written
+   * since (an agent's evidence, say) stays.
+   */
   const restore = async (path: string, taskId: string) => {
-    const previous = undo.current.get(entry(path, taskId))
-    if (!previous) return
+    const made = undo.current.get(entry(path, taskId))
+    if (!made) return
+    const { previous } = made
     const shown = latest.current.registry
     const text = shown?.path === path ? shown.text : await readTextFile(path).catch(() => null)
     const parsed = text === null ? null : parseCampaigns(text)
@@ -469,12 +504,34 @@ export function useCampaignEdits(view: CampaignView) {
       parsed &&
       text !== null &&
       task?.state === DONE &&
-      !(await setState({ path, text }, taskId, previous.state, previous.result))
+      !(await setState(
+        { path, text },
+        taskId,
+        previous.state,
+        task.result === CHECKED_RESULT ? previous.result : undefined,
+        made.evidence !== undefined && task.evidence === made.evidence
+          ? previous.evidence
+          : undefined,
+      ))
     ) {
       return
     }
     undo.current.delete(entry(path, taskId))
     rerender()
+  }
+
+  /** Checks a task done for the user, with `evidence` when given, and offers an undo. */
+  const check = async (taskId: string, evidence?: string) => {
+    const registry = latest.current.registry
+    if (!registry) return
+    const { path } = registry
+    const previous = await setState(registry, taskId, DONE, CHECKED_RESULT, evidence)
+    if (!previous) return
+    undo.current.set(entry(path, taskId), { previous, evidence })
+    rerender()
+    notify(t('todo.campaignWrite.done', { id: taskId }), [
+      { label: t('todo.campaignWrite.undo'), run: () => void restore(path, taskId) },
+    ])
   }
 
   return {
@@ -500,20 +557,20 @@ export function useCampaignEdits(view: CampaignView) {
 
     /** Checks an open task done, with an undo; on a task checked here, undoes the check. */
     toggle: async (task: CampaignTask) => {
+      const path = latest.current.registry?.path
+      if (task.state !== DONE) await check(task.id)
+      else if (path !== undefined) await restore(path, task.id)
+    },
+
+    /** The user's Gate 2 on a task the night left waiting: done with `evidence`, with an undo. */
+    conclude: (taskId: string, evidence: string) => check(taskId, evidence),
+
+    /** Puts a task back as ready, for the next night to retry it; only its state changes. */
+    requeue: async (taskId: string) => {
       const registry = latest.current.registry
-      if (!registry) return
-      const { path } = registry
-      if (task.state === DONE) {
-        await restore(path, task.id)
-        return
+      if (registry && (await setState(registry, taskId, 'pronta', undefined))) {
+        notify(t('todo.campaignWrite.requeued', { id: taskId }))
       }
-      const previous = await setState(registry, task.id, DONE, CHECKED_RESULT)
-      if (!previous) return
-      undo.current.set(entry(path, task.id), previous)
-      rerender()
-      notify(t('todo.campaignWrite.done', { id: task.id }), [
-        { label: t('todo.campaignWrite.undo'), run: () => void restore(path, task.id) },
-      ])
     },
   }
 }

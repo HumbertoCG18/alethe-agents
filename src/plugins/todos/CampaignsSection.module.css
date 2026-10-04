@@ -2,6 +2,20 @@
  * Campaign rows are siblings of the orchestration rail rows (OrchestratorPane .railRow, .dot and
  * its lanes) and of the Todo rows: same dot, type scale, hover and selected treatment.
  */
+
+/*
+ * Active, Open and Finished nest under the Campaigns header as projects nest under a group in the
+ * project sidebar (NormalProjectSidebar .groupBody): indented along a faint guide line.
+ */
+.groups {
+  margin-left: 3px;
+  padding-left: 7px;
+  box-shadow: inset 1px 0 0 color-mix(in srgb, var(--border) 55%, transparent);
+}
+
+.group + .group {
+  margin-top: 6px;
+}
 .campaign {
   display: grid;
   grid-template-columns: 9px minmax(0, 1fr) auto;
@@ -54,9 +68,13 @@
   background: var(--status-stopped);
 }
 
-/* A campaign with a tab or worker live shows its live state, in the terminal status colours. */
+/*
+ * A campaign with a tab or worker live shows its live state, in the terminal status colours; a
+ * running one blinks once every 1.5 s, like a router LED.
+ */
 .campaign[data-status='working'] .dot {
   background: var(--status-working);
+  animation: led-blink 1.5s steps(1) infinite;
 }
 
 .campaign[data-status='stopped'] .dot {
@@ -71,6 +89,13 @@
 
   55% {
     box-shadow: 0 0 0 3px var(--status-waiting-soft);
+  }
+}
+
+/* Off for the last 15% of each cycle: a short blink, not a fade. */
+@keyframes led-blink {
+  85% {
+    opacity: 0.25;
   }
 }
 
@@ -159,6 +184,7 @@
 .menu {
   grid-column: 2 / -1;
   display: flex;
+  flex-wrap: wrap;
   gap: 4px;
   margin: 2px 0;
 }
@@ -296,6 +322,28 @@
   background: var(--status-stopped);
 }
 
+/* An entry waiting on you: its id and summary open its actions. */
+.nightToggle {
+  grid-column: span 2;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.nightToggle:hover .taskTitle,
+.nightToggle[aria-expanded='true'] .taskTitle {
+  color: var(--fg);
+}
+
+.menuItem:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .nightEntry[data-lane='running'] .dot {
   background: var(--status-working);
 }
@@ -365,6 +413,10 @@ button.evidence:hover {
   .campaign[data-lane='blocked'] .dot {
     animation: none;
     box-shadow: 0 0 0 2px var(--status-waiting-soft);
+  }
+
+  .campaign[data-status='working'] .dot {
+    animation: none;
   }
 }
 

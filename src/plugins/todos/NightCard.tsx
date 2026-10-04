@@ -1,11 +1,15 @@
-import { useEffect, useState } from 'react'
+import { type RefObject, useEffect, useRef, useState } from 'react'
 
+import { isMarkdownFilePath } from '../../components/XTermView/terminalLinks'
 import {
+  type Campaign,
+  campaignCwd,
   evidenceIsPath,
   inCheckouts,
   NIGHT_RESULTS,
   type NightDiary,
   nightDiaryFiles,
+  type NightEntry,
   type NightResult,
   parseNightDiary,
   workflowPath,
@@ -19,10 +23,18 @@ import {
   listenFileChanged,
   readTextFile,
 } from '../../lib/tauri'
+import { AGENT_TYPE_LABELS } from '../../lib/types'
 import { useProjectsStore } from '../../stores/projectsStore'
 import { useUiStore } from '../../stores/uiStore'
 import styles from './CampaignsSection.module.css'
-import type { Registry } from './campaignView'
+import {
+  AGENTS,
+  type CampaignEdits,
+  continueCampaign,
+  openCampaign,
+  type Registry,
+} from './campaignView'
+import { useMenuFocus } from './menuFocus'
 import { SectionToggle } from './SectionToggle'
 import { useTodosStore } from './store'
 import sidebarStyles from './TodoSidebar.module.css'
@@ -103,22 +115,23 @@ function useNightDiary(main: string | null): NightDiary | null {
 }
 
 /**
- * The file evidence names: as given when absolute, else where find_relative_path finds it, else
- * relative to the main checkout (a missing file still opens, so its pane says so). The diary is
- * written by agents, so a path outside the repository's checkouts is never a link.
+ * The file evidence names: as given when absolute, else where find_relative_path finds it from
+ * `base` (the task's campaign checkout, else the main one) or in another worktree, else relative to
+ * `base` (a missing file still opens, so its pane says so). The diary is written by agents, so a
+ * path outside the repository's checkouts is never a link.
  */
 async function evidenceTarget(
-  main: string,
+  base: string,
   evidence: string,
   checkouts: GitCheckouts,
 ): Promise<string | null> {
   if (!evidenceIsPath(evidence)) return null
   const absolute = /^(?:[A-Za-z]:[\\/]|\\\\|\/)/.test(evidence)
-  const separator = main.includes('\\') ? '\\' : '/'
+  const separator = base.includes('\\') ? '\\' : '/'
   const target = absolute
     ? evidence
-    : ((await findRelativePath(main, evidence).catch(() => null)) ??
-      `${main.replace(/[\\/]+$/, '')}${separator}${evidence.replace(/[\\/]/g, separator)}`)
+    : ((await findRelativePath(base, evidence).catch(() => null)) ??
+      `${base.replace(/[\\/]+$/, '')}${separator}${evidence.replace(/[\\/]/g, separator)}`)
   return inCheckouts(target, checkouts) ? target : null
 }
 
@@ -128,6 +141,15 @@ function openFile(projectId: string, filePath: string) {
   store.openPane(projectId, pane.id)
   useUiStore.getState().requestPaneFocus(pane.id)
 }
+
+/** As the terminal's link menu opens a file: Markdown in the viewer, anything else in a pane. */
+function openEvidence(projectId: string, filePath: string) {
+  if (isMarkdownFilePath(filePath)) useUiStore.getState().openLinkViewer(filePath)
+  else openFile(projectId, filePath)
+}
+
+const taskCampaign = (campaigns: readonly Campaign[], taskId: string) =>
+  campaigns.find((campaign) => campaign.tasks.some((task) => task.id === taskId))
 
 const STOP_KEYS: Record<StopReason, MessageKey> = {
   window: 'todo.nightMode.stopWindow',
@@ -180,39 +202,45 @@ export function NightStatus({ projectId }: { projectId: string | null }) {
   ) : null
 }
 
-/** What the night agent did, from its latest diary; read-only, hidden when there is none. */
-export function NightCard({ registry }: { registry: Registry | null }) {
+/**
+ * What the night agent did, from its latest diary, hidden when there is none. An entry waiting on
+ * the user opens its actions; only the user's choice there changes the registry.
+ */
+export function NightCard({
+  registry,
+  edits,
+}: {
+  registry: Registry | null
+  edits: CampaignEdits
+}) {
   const t = useT()
   const locale = useProjectsStore((state) => state.preferences.language)
   const main = registry?.main ?? null
   const checkouts = registry?.checkouts ?? null
+  const campaigns = registry?.campaigns ?? null
   const diary = useNightDiary(main)
   const [open, setOpen] = useState(false)
-  const [links, setLinks] = useState<{ diary: NightDiary; targets: Map<string, string> } | null>(
-    null,
-  )
+  const toggle = useRef<HTMLButtonElement>(null)
+  const [links, setLinks] = useState<{ diary: NightDiary; targets: (string | null)[] } | null>(null)
 
   useEffect(() => {
-    if (!diary || !main || !checkouts) return
+    if (!diary || !main || !checkouts || !campaigns) return
     let cancelled = false
     void Promise.all(
-      diary.entries.map(async ({ evidence }) => {
-        const target = await evidenceTarget(main, evidence, checkouts)
-        return [evidence, target] as const
+      diary.entries.map(({ task, evidence }) => {
+        const campaign = taskCampaign(campaigns, task)
+        const base = (campaign && campaignCwd(campaign, checkouts)) ?? main
+        return evidenceTarget(base, evidence, checkouts)
       }),
-    ).then((pairs) => {
-      if (cancelled) return
-      const targets = new Map<string, string>()
-      for (const [evidence, target] of pairs) if (target) targets.set(evidence, target)
-      setLinks({ diary, targets })
+    ).then((targets) => {
+      if (!cancelled) setLinks({ diary, targets })
     })
     return () => {
       cancelled = true
     }
-  }, [diary, main, checkouts])
+  }, [diary, main, checkouts, campaigns])
 
   if (!diary || !registry) return null
-  const { projectId } = registry
   const targets = links?.diary === diary ? links.targets : null
 
   const [year, month, day] = diary.date.split('-').map(Number)
@@ -228,6 +256,7 @@ export function NightCard({ registry }: { registry: Registry | null }) {
         count={diary.entries.length}
         open={open}
         onToggle={() => setOpen((current) => !current)}
+        toggleRef={toggle}
         extra={
           <span className={styles.meta}>
             {NIGHT_RESULTS.map((result) => {
@@ -240,33 +269,147 @@ export function NightCard({ registry }: { registry: Registry | null }) {
       {open ? (
         <ul className={styles.tasks}>
           {diary.entries.map((entry, index) => (
-            <li
+            <NightEntryRow
               key={`${entry.task}-${index}`}
-              className={styles.nightEntry}
-              data-lane={RESULT_LANES[entry.result]}
-              title={[entry.time, t(RESULT_KEYS[entry.result])].filter(Boolean).join(' · ')}
-            >
-              <span className={styles.dot} role="img" aria-label={t(RESULT_KEYS[entry.result])} />
-              <span className={styles.id}>{entry.task}</span>
-              <span className={styles.taskTitle}>{entry.summary}</span>
-              {targets?.has(entry.evidence) ? (
-                <button
-                  type="button"
-                  className={styles.evidence}
-                  title={t('todo.night.openEvidence', { path: entry.evidence })}
-                  onClick={() => openFile(projectId, targets.get(entry.evidence)!)}
-                >
-                  {entry.evidence}
-                </button>
-              ) : entry.evidence ? (
-                <span className={styles.evidence} title={entry.evidence}>
-                  {entry.evidence}
-                </span>
-              ) : null}
-            </li>
+              entry={entry}
+              target={targets?.[index] ?? null}
+              registry={registry}
+              edits={edits}
+              cardToggle={toggle}
+            />
           ))}
         </ul>
       ) : null}
     </section>
+  )
+}
+
+function NightEntryRow({
+  entry,
+  target,
+  registry,
+  edits,
+  cardToggle,
+}: {
+  entry: NightEntry
+  /** The file its evidence names, when it names one inside the checkouts. */
+  target: string | null
+  registry: Registry
+  edits: CampaignEdits
+  /** The card's toggle, where the focus goes when an action took this entry's actions away. */
+  cardToggle: RefObject<HTMLButtonElement>
+}) {
+  const t = useT()
+  const [menu, setMenu] = useState<'actions' | 'agents' | null>(null)
+  const { projectId } = registry
+  // An entry waiting on the user has actions while the registry has its task.
+  const campaign =
+    entry.result === 'aguarda-voce' ? taskCampaign(registry.campaigns, entry.task) : undefined
+  const state = campaign?.tasks.find((task) => task.id === entry.task)?.state
+  const undecided = state !== undefined && state !== 'concluída'
+  const { trigger, refocus, onKeyDown, choose } = useMenuFocus(
+    menu !== null,
+    () => setMenu(null),
+    () => cardToggle.current,
+  )
+  const item = (key: string, label: string, onClick: () => void, disabled = false) => (
+    <button
+      key={key}
+      type="button"
+      role="menuitem"
+      className={styles.menuItem}
+      onClick={onClick}
+      disabled={disabled}
+    >
+      {label}
+    </button>
+  )
+
+  return (
+    <li
+      className={styles.nightEntry}
+      data-lane={RESULT_LANES[entry.result]}
+      title={[entry.time, t(RESULT_KEYS[entry.result])].filter(Boolean).join(' · ')}
+      onKeyDown={onKeyDown}
+    >
+      <span className={styles.dot} role="img" aria-label={t(RESULT_KEYS[entry.result])} />
+      {campaign ? (
+        <button
+          ref={trigger}
+          type="button"
+          className={styles.nightToggle}
+          onClick={() => setMenu((current) => (current ? null : 'actions'))}
+          aria-expanded={menu !== null}
+          aria-haspopup="menu"
+        >
+          <span className={styles.id}>{entry.task}</span>{' '}
+          <span className={styles.taskTitle}>{entry.summary}</span>
+        </button>
+      ) : (
+        <>
+          <span className={styles.id}>{entry.task}</span>
+          <span className={styles.taskTitle}>{entry.summary}</span>
+        </>
+      )}
+      {target ? (
+        <button
+          type="button"
+          className={styles.evidence}
+          title={t('todo.night.openEvidence', { path: entry.evidence })}
+          onClick={() => openFile(projectId, target)}
+        >
+          {entry.evidence}
+        </button>
+      ) : entry.evidence ? (
+        <span className={styles.evidence} title={entry.evidence}>
+          {entry.evidence}
+        </span>
+      ) : null}
+      {campaign && menu ? (
+        <div
+          className={styles.menu}
+          role="menu"
+          aria-label={t('todo.night.actions', { id: entry.task })}
+        >
+          {menu === 'agents'
+            ? AGENTS.map((agent) =>
+                item(
+                  agent,
+                  AGENT_TYPE_LABELS[agent],
+                  choose(() => openCampaign(projectId, campaign, agent, registry)),
+                ),
+              )
+            : [
+                undecided
+                  ? item(
+                      'conclude',
+                      t('todo.night.conclude'),
+                      choose(() => edits.conclude(entry.task, entry.evidence || entry.summary)),
+                      edits.busy,
+                    )
+                  : null,
+                target
+                  ? item(
+                      'evidence',
+                      t('todo.night.openEvidenceItem'),
+                      choose(() => openEvidence(projectId, target)),
+                    )
+                  : null,
+                item('continue', t('todo.night.continue'), () => {
+                  setMenu(continueCampaign(projectId, campaign) ? null : 'agents')
+                  refocus()
+                }),
+                undecided && state !== 'pronta'
+                  ? item(
+                      'requeue',
+                      t('todo.night.requeue'),
+                      choose(() => edits.requeue(entry.task)),
+                      edits.busy,
+                    )
+                  : null,
+              ]}
+        </div>
+      ) : null}
+    </li>
   )
 }

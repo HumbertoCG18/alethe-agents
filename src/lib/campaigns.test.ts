@@ -476,6 +476,42 @@ describe('setCampaignTaskState', () => {
     expect(done).toMatchObject({ ok: true, previous: { state: 'pronta', result: 'antes' } })
   })
 
+  it('sets the evidence too, restores it, and leaves alone what it is not given', () => {
+    const registry = structuredClone(exemplo)
+    Object.assign(registry.campanhas[1].tarefas[2], { resultado: 'antes', evidencia: 'velha' })
+    const done = setCampaignTaskState(
+      JSON.stringify(registry),
+      'OITO-03',
+      'concluída',
+      'x',
+      today,
+      'docs/e.md',
+    )
+    expect(done).toMatchObject({
+      ok: true,
+      previous: { state: 'pronta', result: 'antes', evidence: 'velha' },
+    })
+    if (!done.ok) return
+    expect(written(done.content, 'OITO').campaign.tarefas[2]).toMatchObject({
+      estado: 'concluída',
+      resultado: 'x',
+      evidencia: 'docs/e.md',
+    })
+
+    // `campanhas.py estado ID pronta`: only the state changes.
+    const queued = setCampaignTaskState(done.content, 'OITO-03', 'pronta', undefined, today)
+    expect(queued.ok && written(queued.content, 'OITO').campaign.tarefas[2]).toEqual({
+      ...oito().tarefas[2],
+      resultado: 'x',
+      evidencia: 'docs/e.md',
+    })
+
+    const undone = setCampaignTaskState(done.content, 'OITO-03', 'pronta', null, today, null)
+    expect(undone.ok && written(undone.content, 'OITO').campaign.tarefas[2]).toEqual(
+      oito().tarefas[2],
+    )
+  })
+
   it('refuses a task the registry does not have', () => {
     expect(
       setCampaignTaskState(JSON.stringify(exemplo), 'GONE-01', 'concluída', null, today),

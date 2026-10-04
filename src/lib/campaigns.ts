@@ -35,6 +35,9 @@ export type CampaignTask = {
   dependsOn: string[]
   /** Unmet prerequisites: the campaign's `depende_de`, then the task's own. */
   unmet: string[]
+  /** `resultado` and `evidencia`, null when absent. */
+  result: string | null
+  evidence: string | null
 }
 
 export type CampaignSituation = {
@@ -85,6 +88,7 @@ const isState = (value: unknown): value is TaskState => TASK_STATES.includes(val
 const isWindow = (value: unknown): value is CampaignWindow =>
   CAMPAIGN_WINDOWS.includes(value as CampaignWindow)
 const text = (value: unknown): string => (typeof value === 'string' ? value : '')
+const optionalText = (value: unknown): string | null => (typeof value === 'string' ? value : null)
 const shown = (value: unknown): string => JSON.stringify(value) ?? 'null'
 
 /** A list of ids; absent means empty, anything else that is not all strings is malformed. */
@@ -157,6 +161,8 @@ export function parseCampaigns(source: string): CampaignRegistry | null {
         window: own ?? window,
         dependsOn: taskDeps,
         unmet: [],
+        result: optionalText(task.resultado),
+        evidence: optionalText(task.evidencia),
       })
     })
     if (!isWindow(window)) return
@@ -328,19 +334,31 @@ export function addCampaignTask(
 }
 
 export type TaskStateResult =
-  | { ok: true; content: string; previous: { state: TaskState; result: string | null } }
+  | {
+      ok: true
+      content: string
+      previous: { state: TaskState; result: string | null; evidence: string | null }
+    }
   | { ok: false; error: 'missing' | 'invalid' }
 
+/** Sets a task field; null removes it and undefined leaves it as it is. */
+function setField(task: Raw, key: string, value: string | null | undefined) {
+  if (value === null) delete task[key]
+  else if (value !== undefined) task[key] = value
+}
+
 /**
- * `campanhas.py estado`: sets the task's state and `resultado` (removed when null) and dates its
- * campaign `today`. `previous` restores the task as it was.
+ * `campanhas.py estado`: sets the task's state, `resultado` and `evidencia` (each removed when
+ * null, left as it is when undefined) and dates its campaign `today`. `previous` restores the task
+ * as it was.
  */
 export function setCampaignTaskState(
   source: string,
   taskId: string,
   state: TaskState,
-  result: string | null,
+  result: string | null | undefined,
   today: string,
+  evidence?: string | null,
 ): TaskStateResult {
   const data = JSON.parse(source) as RawRegistry
   for (const campaign of data.campanhas) {
@@ -348,11 +366,12 @@ export function setCampaignTaskState(
     if (!task) continue
     const previous = {
       state: task.estado as TaskState,
-      result: typeof task.resultado === 'string' ? task.resultado : null,
+      result: optionalText(task.resultado),
+      evidence: optionalText(task.evidencia),
     }
     task.estado = state
-    if (result === null) delete task.resultado
-    else task.resultado = result
+    setField(task, 'resultado', result)
+    setField(task, 'evidencia', evidence)
     campaign.atualizado_em = today
     return edited(data, { previous })
   }

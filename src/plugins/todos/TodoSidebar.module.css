@@ -491,6 +491,39 @@
   background: var(--border);
 }
 
+/* A group nested in a section, lighter and smaller, like a group tag in the project sidebar. */
+.sectionHeader[data-variant='sub'],
+.sectionHeader[data-variant='sub'] .sectionToggle {
+  height: 22px;
+}
+
+.sectionHeader[data-variant='sub'] .sectionToggle {
+  gap: 6px;
+}
+
+.sectionHeader[data-variant='sub'] .sectionName {
+  color: var(--fg-faint);
+  font-size: 10px;
+  font-weight: 400;
+  letter-spacing: 0.04em;
+}
+
+.sectionHeader[data-variant='sub'] .sectionToggle:hover .sectionName {
+  color: var(--fg-muted);
+}
+
+.sectionHeader[data-variant='sub'] .sectionCount {
+  min-width: 0;
+  height: auto;
+  padding: 0;
+  background: transparent;
+  color: var(--fg-faint);
+}
+
+.sectionHeader[data-variant='sub'] .sectionRule {
+  background: color-mix(in srgb, var(--border) 55%, transparent);
+}
+
 .sectionAdd {
   width: 22px;
   height: 22px;

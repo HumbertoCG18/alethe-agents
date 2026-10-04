@@ -174,6 +174,12 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
   panel now list each model-scoped weekly limit, such as Fable, below the Opus row, and the
   orchestrator counts them when it checks Claude's remaining quota
   ([#208](https://github.com/Kc1t/alethe-agents/issues/208)).
+- **Act on night tasks waiting on you.** In the Night card, an entry waiting on you opens a menu:
+  **Conclude (Gate 2)** marks the task done with the night's evidence (or its summary when it has
+  none), with an undo; **Open evidence** opens a Markdown file in the viewer and any other file in a
+  pane, looked up in the campaign's checkout first; **Continue in the terminal** goes to the
+  campaign's tab, or offers the agents when it has none; **Back to the queue** makes the task ready
+  again for the next night. Nothing in the registry changes until you choose.
 
 ### Changed
 
@@ -202,12 +208,22 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
   last update moved to the expanded view.
 - The Todo List tab now names your own list "My todos", and its settings say the storage folder
   is only for your personal todos; campaigns come from the project's `.workflow/campanhas.json`.
+- In the Campaigns map, Active, Open and Finished sit indented under Campaigns, with a smaller,
+  lighter header, and each holds its own rows.
+- A running campaign's dot in the Active group blinks once every 1.5 s, like a router LED; stopped
+  campaigns do not blink, and nothing blinks when the system asks for reduced motion.
 
 ### Fixed
 
+- **Continue** on an Active campaign whose tab sits in a disabled terminal enables that terminal
+  again and focuses the tab, instead of offering to open a new agent. Continue and Open also switch
+  from Home to the workspace.
 - A Claude Code started in a terminal no longer runs as a child of the Claude Code session that
   opened Alethe (an agent relaunching it, or `npm run app` typed in a Claude Code terminal): it keeps
   its transcript, auto memory and status bar.
+- Terminals and orchestration workers keep their colours when Alethe was started from a Claude Code
+  session: the `NO_COLOR` that session sets for its children is dropped with it. A `NO_COLOR` you
+  set yourself is kept.
 - A campaign whose terminal was closed mid-task no longer keeps a green dot in the Campaigns map.
 - A file path in a terminal opens again when an agent printed it from another worktree of the
   project, or when Claude Code wrapped it onto the next line: the menu no longer says the path does

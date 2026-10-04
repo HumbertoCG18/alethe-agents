@@ -3317,9 +3317,10 @@ pub(crate) fn inherited_claude_session_vars(holds: impl Fn(&str) -> bool) -> Vec
         "CLAUDE_CODE_MESSAGING_TOKEN",
         "CLAUDE_PID",
     ];
-    // A user may set this one on purpose; the outer session also sets it for its children.
+    // A user may set these on purpose; the outer session also sets them for its children, and
+    // an inherited NO_COLOR strips the colour from every terminal.
     if inherited_session {
-        keys.push("CLAUDE_CODE_DISABLE_AUTO_MEMORY");
+        keys.extend(["CLAUDE_CODE_DISABLE_AUTO_MEMORY", "NO_COLOR"]);
     }
     keys
 }

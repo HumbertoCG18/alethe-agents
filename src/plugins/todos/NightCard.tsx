@@ -8,21 +8,12 @@ import {
   inCheckouts,
   NIGHT_RESULTS,
   type NightDiary,
-  nightDiaryFiles,
   type NightEntry,
   type NightResult,
-  parseNightDiary,
-  workflowPath,
 } from '../../lib/campaigns'
 import { intlLocale, type MessageKey, useT } from '../../lib/i18n'
 import { nightDate, type StopReason } from '../../lib/nightScheduler'
-import {
-  findRelativePath,
-  type GitCheckouts,
-  listDirectory,
-  listenFileChanged,
-  readTextFile,
-} from '../../lib/tauri'
+import { findRelativePath, type GitCheckouts } from '../../lib/tauri'
 import { AGENT_TYPE_LABELS } from '../../lib/types'
 import { useProjectsStore } from '../../stores/projectsStore'
 import { useUiStore } from '../../stores/uiStore'
@@ -31,6 +22,7 @@ import {
   AGENTS,
   type CampaignEdits,
   continueCampaign,
+  nightUndecided,
   openCampaign,
   type Registry,
 } from './campaignView'
@@ -38,7 +30,6 @@ import { useMenuFocus } from './menuFocus'
 import { SectionToggle } from './SectionToggle'
 import { useTodosStore } from './store'
 import sidebarStyles from './TodoSidebar.module.css'
-import { createWatchSet } from './watchSet'
 
 const COUNT_KEYS: Record<NightResult, MessageKey> = {
   ok: 'todo.night.countOk',
@@ -60,58 +51,6 @@ const RESULT_LANES: Record<NightResult, string> = {
   'aguarda-voce': 'queued',
   falhou: 'failed',
   parou: 'interrupted',
-}
-
-/**
- * The latest readable diary in `<main>/.workflow/local/noites`. Once the folder exists it is
- * watched (watch_file on a folder reports the files written in it), and so is every diary in it,
- * so an edit that fixes a malformed newest one is seen. Coming back to the window re-reads it too,
- * for the folder's creation.
- */
-function useNightDiary(main: string | null): NightDiary | null {
-  const [state, setState] = useState<{ main: string; diary: NightDiary } | null>(null)
-
-  useEffect(() => {
-    if (!main) return
-    const folder = workflowPath(main, 'local', 'noites')
-    let cancelled = false
-    let latest = 0
-    const watches = createWatchSet()
-    const reload = async () => {
-      const request = ++latest
-      const stale = () => cancelled || request !== latest
-      const files = await listDirectory(folder).then(nightDiaryFiles, () => null)
-      if (stale()) return
-      if (files) for (const path of [folder, ...files]) watches.watch(path)
-      for (const path of files ?? []) {
-        const text = await readTextFile(path).catch(() => null)
-        if (stale()) return
-        const diary = text === null ? null : parseNightDiary(text)
-        if (!diary) continue
-        setState({ main, diary })
-        return
-      }
-      setState(null)
-    }
-    void reload()
-    const unlisten = listenFileChanged((path) => {
-      if (watches.has(path)) void reload()
-    })
-    const retry = () => {
-      if (document.visibilityState !== 'hidden') void reload()
-    }
-    window.addEventListener('focus', retry)
-    document.addEventListener('visibilitychange', retry)
-    return () => {
-      cancelled = true
-      window.removeEventListener('focus', retry)
-      document.removeEventListener('visibilitychange', retry)
-      watches.clear()
-      void unlisten.then((stop) => stop()).catch(() => {})
-    }
-  }, [main])
-
-  return state && state.main === main ? state.diary : null
 }
 
 /**
@@ -203,28 +142,35 @@ export function NightStatus({ projectId }: { projectId: string | null }) {
 }
 
 /**
- * What the night agent did, from its latest diary, hidden when there is none. An entry waiting on
- * the user opens its actions; only the user's choice there changes the registry.
+ * What the night agent did, from its latest diary. An entry waiting on the user opens its actions;
+ * only the user's choice there changes the registry. `nested`: an open sub-group of Pending.
  */
 export function NightCard({
   registry,
+  diary,
   edits,
+  nested = false,
+  toggleRef,
+  focusAway,
 }: {
-  registry: Registry | null
+  registry: Registry
+  diary: NightDiary
   edits: CampaignEdits
+  nested?: boolean
+  /** Its header, for whoever has to focus the card once it moved. */
+  toggleRef?: RefObject<HTMLButtonElement>
+  /** Where the focus goes when an action moved the card away from under its entry. */
+  focusAway?: () => HTMLElement | null
 }) {
   const t = useT()
   const locale = useProjectsStore((state) => state.preferences.language)
-  const main = registry?.main ?? null
-  const checkouts = registry?.checkouts ?? null
-  const campaigns = registry?.campaigns ?? null
-  const diary = useNightDiary(main)
-  const [open, setOpen] = useState(false)
-  const toggle = useRef<HTMLButtonElement>(null)
+  const { main, checkouts, campaigns } = registry
+  const [open, setOpen] = useState(nested)
+  const own = useRef<HTMLButtonElement>(null)
+  const toggle = toggleRef ?? own
   const [links, setLinks] = useState<{ diary: NightDiary; targets: (string | null)[] } | null>(null)
 
   useEffect(() => {
-    if (!diary || !main || !checkouts || !campaigns) return
     let cancelled = false
     void Promise.all(
       diary.entries.map(({ task, evidence }) => {
@@ -240,7 +186,6 @@ export function NightCard({
     }
   }, [diary, main, checkouts, campaigns])
 
-  if (!diary || !registry) return null
   const targets = links?.diary === diary ? links.targets : null
 
   const [year, month, day] = diary.date.split('-').map(Number)
@@ -248,19 +193,31 @@ export function NightCard({
     day: '2-digit',
     month: '2-digit',
   }).format(new Date(year, month - 1, day))
+  const name = t('todo.night.title', { date })
+  const Box = nested ? 'div' : 'section'
 
   return (
-    <section className={`${sidebarStyles.section} ${styles.card}`}>
+    <Box
+      className={`${nested ? styles.group : sidebarStyles.section} ${styles.card}`}
+      role={nested ? 'group' : undefined}
+      aria-label={nested ? name : undefined}
+    >
       <SectionToggle
-        name={t('todo.night.title', { date })}
+        name={name}
         count={diary.entries.length}
         open={open}
         onToggle={() => setOpen((current) => !current)}
         toggleRef={toggle}
+        variant={nested ? 'sub' : undefined}
         extra={
           <span className={styles.meta}>
             {NIGHT_RESULTS.map((result) => {
-              const count = diary.entries.filter((entry) => entry.result === result).length
+              // Waiting on you counts only the entries still undecided, as Pending does.
+              const count = diary.entries.filter((entry) =>
+                result === 'aguarda-voce'
+                  ? nightUndecided(entry, campaigns)
+                  : entry.result === result,
+              ).length
               return count > 0 ? <span key={result}>{t(COUNT_KEYS[result], { count })}</span> : null
             })}
           </span>
@@ -276,11 +233,12 @@ export function NightCard({
               registry={registry}
               edits={edits}
               cardToggle={toggle}
+              focusAway={focusAway}
             />
           ))}
         </ul>
       ) : null}
-    </section>
+    </Box>
   )
 }
 
@@ -290,14 +248,19 @@ function NightEntryRow({
   registry,
   edits,
   cardToggle,
+  focusAway,
 }: {
   entry: NightEntry
   /** The file its evidence names, when it names one inside the checkouts. */
   target: string | null
   registry: Registry
   edits: CampaignEdits
-  /** The card's toggle, where the focus goes when an action took this entry's actions away. */
+  /**
+   * The card's toggle, where the focus goes when an action took this entry's actions away; once
+   * the action took the card away too, `focusAway()`.
+   */
   cardToggle: RefObject<HTMLButtonElement>
+  focusAway?: () => HTMLElement | null
 }) {
   const t = useT()
   const [menu, setMenu] = useState<'actions' | 'agents' | null>(null)
@@ -310,7 +273,7 @@ function NightEntryRow({
   const { trigger, refocus, onKeyDown, choose } = useMenuFocus(
     menu !== null,
     () => setMenu(null),
-    () => cardToggle.current,
+    () => cardToggle.current ?? focusAway?.(),
   )
   const item = (key: string, label: string, onClick: () => void, disabled = false) => (
     <button

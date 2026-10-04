@@ -212,6 +212,16 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
   lighter header, and each holds its own rows.
 - A running campaign's dot in the Active group blinks once every 1.5 s, like a router LED; stopped
   campaigns do not blink, and nothing blinks when the system asks for reduced motion.
+- **The Todo tab puts what waits on you first.** With a campaign registry, a **Pending** section
+  opens the tab: the latest night's card, open, while some of its entries still wait on you (not
+  yet concluded or put back in the queue), and **Waiting for your Gate 2**, the open tasks of any
+  campaign whose result says they wait for your Gate 2, each with its id, title, campaign and a box
+  that marks it done, with an undo. Once you decide the night's last waiting entry, its card moves
+  after the map. The active campaign's tabs, add field and tasks follow under their own
+  **Active · id** header, then the Campaigns map, whose groups are now **In progress** (a task done
+  or in progress, or a tab or worker live for it), **Not started** and **Finished**; a live
+  campaign shows Running or Stopped, and blinks, in any group. Findings, and a night with nothing
+  left waiting on you, come after the map.
 
 ### Fixed
 

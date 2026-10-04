@@ -15,6 +15,7 @@ import {
   campaignCwd,
   campaignTaskView,
   campaignWorkers,
+  checkedResult,
   evidenceIsPath,
   isoDay,
   liveTaskWorkers,
@@ -839,5 +840,30 @@ describe('untrusted findings and diary input', () => {
     const small = JSON.stringify({ achados: [entry] })
     expect(parseFindings(small)).toHaveLength(1)
     expect(parseFindings(small.replace('"T"', `"${'x'.repeat(1_000_001)}"`))).toEqual([])
+  })
+})
+
+describe('checkedResult', () => {
+  it('says when the task was checked here and keeps what it already said', () => {
+    expect(checkedResult(null, '2026-10-04')).toBe('marcada no Alethe em 2026-10-04')
+    expect(checkedResult('', '2026-10-04')).toBe('marcada no Alethe em 2026-10-04')
+    expect(checkedResult('medido: 350/350 = 87', '2026-10-04')).toBe(
+      'marcada no Alethe em 2026-10-04; medido: 350/350 = 87',
+    )
+  })
+
+  it('drops a "waiting for the Gate 2" note that the check answers', () => {
+    expect(
+      checkedResult(
+        'aguarda o Gate 2 do usuário: integração A+P1 verificada (350/350 = 87)',
+        '2026-10-04',
+      ),
+    ).toBe('marcada no Alethe em 2026-10-04; integração A+P1 verificada (350/350 = 87)')
+    expect(checkedResult('aguarda o Gate 2 do usuário', '2026-10-04')).toBe(
+      'marcada no Alethe em 2026-10-04',
+    )
+    expect(checkedResult('aguarda o Gate 2 do usuário (PR #61)', '2026-10-04')).toBe(
+      'marcada no Alethe em 2026-10-04; (PR #61)',
+    )
   })
 })

@@ -234,6 +234,9 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ### Fixed
 
+- Checking a campaign task in the Todo tab, or concluding it from Pending, keeps what its `resultado`
+  already said (a measurement, say) after the day it was checked, instead of replacing it; a
+  "waiting for the Gate 2" note it answers is dropped, and undo puts the original back.
 - **Open evidence** on a night entry whose evidence is a folder opens its report (`relatorio.md`,
   `README.md` or `handoff.md`, else its only Markdown file) in the viewer, or the folder in the
   file explorer, instead of a pane that cannot read it. Evidence found nowhere, such as a report

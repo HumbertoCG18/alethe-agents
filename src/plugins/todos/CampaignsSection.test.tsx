@@ -5,7 +5,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import exemplo from '../../lib/__fixtures__/campanhas.exemplo.json'
-import { parseCampaigns } from '../../lib/campaigns'
+import { isoDay, parseCampaigns } from '../../lib/campaigns'
 import { EMPTY_PROJECTS_FILE, type SubTab } from '../../lib/types'
 import { useProjectsStore } from '../../stores/projectsStore'
 import { useTerminalsStore } from '../../stores/terminalsStore'
@@ -733,7 +733,7 @@ describe('Todo list source', () => {
     await waitFor(() =>
       expect(task('OITO-03')).toMatchObject({
         estado: 'concluída',
-        resultado: 'marcada no Alethe',
+        resultado: `marcada no Alethe em ${isoDay(new Date())}`,
       }),
     )
     await waitFor(() => expect(lastToast()?.body).toBe('OITO-03 marked done.'))
@@ -1640,7 +1640,7 @@ describe('Todo sections', () => {
     await waitFor(() =>
       expect(task('OITO-07')).toMatchObject({
         estado: 'concluída',
-        resultado: 'marcada no Alethe',
+        resultado: `marcada no Alethe em ${isoDay(new Date())}`,
       }),
     )
     await waitFor(() => expect(lastToast()?.body).toBe('OITO-07 marked done.'))
@@ -1651,6 +1651,23 @@ describe('Todo sections', () => {
       expect(task('OITO-07')).toEqual({ ...original('OITO-07'), resultado: GATE_2 }),
     )
     await waitFor(() => expect(gate2Rows()).toEqual(['OITO-07', 'PARADA-01']))
+
+    // What the task already said stays, without the waiting note the check answers; undo puts it back.
+    const other = box.querySelector('[data-task="PARADA-01"]') as HTMLElement
+    fireEvent.click(within(other).getByRole('button', { name: 'Mark complete' }))
+    await waitFor(() =>
+      expect(task('PARADA-01')).toMatchObject({
+        estado: 'concluída',
+        resultado: `marcada no Alethe em ${isoDay(new Date())}; (PR #61)`,
+      }),
+    )
+    await act(async () => lastToast()?.actions?.[0].run())
+    await waitFor(() =>
+      expect(task('PARADA-01')).toEqual({
+        ...original('PARADA-01'),
+        resultado: `${GATE_2} (PR #61)`,
+      }),
+    )
 
     fireEvent.click(pending()!)
     expect(gate2()).toBeNull()
@@ -1753,7 +1770,7 @@ describe('Todo sections', () => {
     await waitFor(() =>
       expect(task('OITO-07')).toMatchObject({
         estado: 'concluída',
-        resultado: 'marcada no Alethe',
+        resultado: `marcada no Alethe em ${isoDay(new Date())}`,
         evidencia: 'docs/oito.md',
       }),
     )

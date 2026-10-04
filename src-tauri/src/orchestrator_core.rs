@@ -1316,7 +1316,7 @@ impl Core {
             .cloned()
             .ok_or_else(|| "codex is not installed".to_string())?;
         let mut command = Command::new(&launcher.program);
-        crate::cli_resolver::scrub_claude_session_command(&mut command);
+        scrub_claude_session_command(&mut command);
         command
             .args(&launcher.args)
             .stdin(Stdio::piped())
@@ -1456,7 +1456,7 @@ impl Core {
 
         let mut command = Command::new(&launcher.program);
         // An Alethe started from a Claude Code session must not hand that session to its workers.
-        crate::cli_resolver::scrub_claude_session_command(&mut command);
+        scrub_claude_session_command(&mut command);
         command
             .args(&launcher.args)
             .current_dir(PathBuf::from(&cwd))
@@ -3291,6 +3291,37 @@ pub fn handle_mcp_body(core: &Core, body: &str, planner: Option<&str>) -> Option
     };
 
     Some(response.to_string())
+}
+
+/// Drops the Claude Code session Alethe may have been started from, for a process it starts
+/// directly (orchestration workers). Here because this file is also built into the MCP binary;
+/// terminals use the same list through `cli_resolver`.
+pub(crate) fn scrub_claude_session_command(command: &mut std::process::Command) {
+    for key in inherited_claude_session_vars(|key| std::env::var_os(key).is_some()) {
+        command.env_remove(key);
+    }
+}
+
+/// The variables of an outer Claude Code session, given what the environment holds.
+pub(crate) fn inherited_claude_session_vars(holds: impl Fn(&str) -> bool) -> Vec<&'static str> {
+    // Set by Claude Code for its children only; nobody sets them for a fresh terminal.
+    let inherited_session = holds("CLAUDECODE") || holds("CLAUDE_CODE_SESSION_ID");
+    let mut keys = vec![
+        "CLAUDECODE",
+        "CLAUDECODE_PARENT_PID",
+        "CLAUDE_CODE_ENTRYPOINT",
+        "CLAUDE_CODE_CHILD_SESSION",
+        "CLAUDE_CODE_SESSION_ID",
+        "CLAUDE_CODE_SESSION_ATTENDED",
+        "CLAUDE_CODE_MESSAGING_SOCKET",
+        "CLAUDE_CODE_MESSAGING_TOKEN",
+        "CLAUDE_PID",
+    ];
+    // A user may set this one on purpose; the outer session also sets it for its children.
+    if inherited_session {
+        keys.push("CLAUDE_CODE_DISABLE_AUTO_MEMORY");
+    }
+    keys
 }
 
 #[cfg(test)]

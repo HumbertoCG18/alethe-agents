@@ -10,6 +10,24 @@
       "detalhe": "relato do usuário em 03/10 após instalar o build 02:45; provável espera da gravação com trava antes de atualizar a tela",
       "estado": "virou-tarefa",
       "destino": "TODO-07"
+    },
+    {
+      "id": "ACH-0002",
+      "data": "2026-10-03",
+      "tipo": "bug",
+      "titulo": "Colagem longa no terminal chega cortada e com trechos duplicados",
+      "origem": "",
+      "detalhe": "03/10 05h: prompt de ~4 KB colado numa aba Claude do GPT Tutor chegou com o bloco Contexto duplicado e 7 cortes; a versão de ~3 KB chegou inteira. Suspeita: entrada grande dividida em pedaços no PTY/ConPTY; não investigado.",
+      "estado": "novo"
+    },
+    {
+      "id": "ACH-0003",
+      "data": "2026-10-03",
+      "tipo": "divida",
+      "titulo": "Dois testes do nightRunner estouram 5 s só com a suíte inteira",
+      "origem": "TODO-08",
+      "detalhe": "03/10: 'takes a line the agent wrote while the stop was being recorded' e 'after a restart, records the task...' falharam numa rodada de vitest completo e passaram isolados e na rodada seguinte (906/906).",
+      "estado": "novo"
     }
   ]
 }

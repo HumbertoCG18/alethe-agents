@@ -80,6 +80,56 @@
           "achado": "ACH-0001",
           "evidencia": "PR #51 integrado na dev (de75064); testes novos vermelho→verde; vitest 905, cargo campaign_registry 15",
           "resultado": "aguarda o Gate 2 do usuário (build novo para sentir no app)"
+        },
+        {
+          "id": "TODO-08",
+          "titulo": "Campanhas concluídas numa seção própria, recolhida",
+          "nivel": "T1",
+          "estado": "em execução",
+          "depende_de": [],
+          "origem": "USER",
+          "evidencia": "PR #55 integrado na dev (4eb961c); revisão Codex sem achados; vitest 914",
+          "resultado": "aguarda o Gate 2 do usuário"
+        },
+        {
+          "id": "TODO-09",
+          "titulo": "Campanhas em seções Ativas, Abertas e Concluídas, com indicador vivo",
+          "nivel": "T2",
+          "estado": "em execução",
+          "depende_de": [],
+          "origem": "USER",
+          "evidencia": "PR #55 integrado na dev (4eb961c); revisão Codex sem achados; vitest 914",
+          "resultado": "aguarda o Gate 2 do usuário"
+        },
+        {
+          "id": "TODO-10",
+          "titulo": "Abrir campanha pelo Todo com agente e Orquestração agrupados",
+          "nivel": "T2",
+          "estado": "em execução",
+          "depende_de": [],
+          "origem": "USER",
+          "evidencia": "PR #55 integrado na dev (4eb961c); revisão Codex sem achados; vitest 914",
+          "resultado": "aguarda o Gate 2 do usuário"
+        },
+        {
+          "id": "TODO-11",
+          "titulo": "Achados e Noite no mesmo estilo de seção da Todo List",
+          "nivel": "T1",
+          "estado": "em execução",
+          "depende_de": [],
+          "origem": "USER",
+          "evidencia": "PR #55 integrado na dev (4eb961c); revisão Codex sem achados; vitest 914",
+          "resultado": "aguarda o Gate 2 do usuário"
+        },
+        {
+          "id": "TODO-12",
+          "titulo": "Ponto da aba do planejador na Orquestração com o status vivo",
+          "nivel": "T1",
+          "estado": "em execução",
+          "depende_de": [],
+          "origem": "USER",
+          "evidencia": "PR #55 integrado na dev (4eb961c); revisão Codex sem achados; vitest 914",
+          "resultado": "aguarda o Gate 2 do usuário"
         }
       ]
     },
@@ -288,7 +338,7 @@
       "janela": "assistida",
       "depende_de": [],
       "worktrees": [],
-      "atualizado_em": "2026-10-02",
+      "atualizado_em": "2026-10-03",
       "tarefas": [
         {
           "id": "UI-01",
@@ -297,6 +347,16 @@
           "estado": "proposta",
           "depende_de": [],
           "origem": "USER"
+        },
+        {
+          "id": "UI-02",
+          "titulo": "Links de caminho cortados pela quebra de linha da TUI no menu do terminal",
+          "nivel": "T2",
+          "estado": "em execução",
+          "depende_de": [],
+          "origem": "USER",
+          "evidencia": "PR #56 integrado na dev; 3 revisões Codex, achados MAJOR corrigidos com teste; vitest 930",
+          "resultado": "aguarda o Gate 2 do usuário"
         }
       ]
     }

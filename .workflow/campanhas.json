@@ -230,6 +230,16 @@
           "origem": "USER",
           "evidencia": "PR #69 integrado na dev; revisão Codex com achados corrigidos; testes verdes",
           "resultado": "aguarda o Gate 2 do usuário"
+        },
+        {
+          "id": "TODO-23",
+          "titulo": "Controle da campanha ativa: Continuar, Pausar e Cancelar",
+          "nivel": "T2",
+          "estado": "em execução",
+          "depende_de": [],
+          "origem": "USER",
+          "evidencia": "PR #72 integrado na dev; 2 revisões Codex (5+3 MAJOR corrigidos); vitest 997",
+          "resultado": "aguarda o Gate 2 do usuário"
         }
       ]
     },

@@ -170,6 +170,16 @@
           "origem": "USER",
           "evidencia": "PR #61 integrado na dev; revisão Codex (1 MAJOR, 2 MINOR corrigidos); vitest 941",
           "resultado": "aguarda o Gate 2 do usuário"
+        },
+        {
+          "id": "TODO-17",
+          "titulo": "Aba Todo em seções Pendentes, Ativa e Campanhas (Em andamento, Não iniciadas, Concluídas)",
+          "nivel": "T2",
+          "estado": "em execução",
+          "depende_de": [],
+          "origem": "USER",
+          "evidencia": "PR #63 integrado na dev (2918b46); revisão Codex (2 MINOR, 1 corrigido); vitest 945",
+          "resultado": "aguarda o Gate 2 do usuário"
         }
       ]
     },

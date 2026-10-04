@@ -282,6 +282,19 @@ export function isoDay(date: Date): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
 }
 
+/** How the lab's hooks and CLI start the `resultado` of a task left for the user's Gate 2. */
+const WAITING_FOR_GATE_2 = /^aguarda o Gate 2 do usuário\s*[:;,.-]?\s*/i
+
+/**
+ * The `resultado` a check in Alethe writes (the user is the Gate 2): the day it was checked, then
+ * what the task already said, without a "waiting for the Gate 2" note the check answers.
+ */
+export function checkedResult(previous: string | null, day: string): string {
+  const rest = (previous ?? '').replace(WAITING_FOR_GATE_2, '').trim()
+  const head = `marcada no Alethe em ${day}`
+  return rest ? `${head}; ${rest}` : head
+}
+
 type RawRegistry = { campanhas: Array<Raw & { id: string; tarefas: Raw[] }> }
 
 /** The edited registry as campanhas.py writes it, or `invalid` when it would not validate. */

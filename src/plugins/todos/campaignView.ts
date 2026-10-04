@@ -13,6 +13,7 @@ import {
   type CampaignTab,
   type CampaignTask,
   campaignWorkers,
+  checkedResult,
   isoDay,
   liveTaskWorkers,
   type NightDiary,
@@ -471,12 +472,10 @@ export function workersLabel(t: TFunction, workers: TaskWorkers | undefined): st
 }
 
 const DONE: TaskState = 'concluída'
-/** The `resultado` of a task checked in the list: the user is its Gate 2. */
-const CHECKED_RESULT = 'marcada no Alethe'
 
 type Previous = { state: TaskState; result: string | null; evidence: string | null }
-/** A check made here: the task as it was, and the evidence the check wrote, if any. */
-type Check = { previous: Previous; evidence?: string }
+/** A check made here: the task as it was, and the result and evidence (if any) the check wrote. */
+type Check = { previous: Previous; result: string; evidence?: string }
 /** The registry an edit starts from: where it is, and its text as read. */
 type Base = Pick<Registry, 'path' | 'text'>
 
@@ -579,7 +578,7 @@ export function useCampaignEdits(view: CampaignView) {
         { path, text },
         taskId,
         previous.state,
-        task.result === CHECKED_RESULT ? previous.result : undefined,
+        task.result === made.result ? previous.result : undefined,
         made.evidence !== undefined && task.evidence === made.evidence
           ? previous.evidence
           : undefined,
@@ -596,9 +595,13 @@ export function useCampaignEdits(view: CampaignView) {
     const registry = latest.current.registry
     if (!registry) return
     const { path } = registry
-    const previous = await setState(registry, taskId, DONE, CHECKED_RESULT, evidence)
+    const task = registry.campaigns
+      .flatMap((campaign) => campaign.tasks)
+      .find((item) => item.id === taskId)
+    const result = checkedResult(task?.result ?? null, isoDay(new Date()))
+    const previous = await setState(registry, taskId, DONE, result, evidence)
     if (!previous) return
-    undo.current.set(entry(path, taskId), { previous, evidence })
+    undo.current.set(entry(path, taskId), { previous, result, evidence })
     rerender()
     notify(t('todo.campaignWrite.done', { id: taskId }), [
       { label: t('todo.campaignWrite.undo'), run: () => void restore(path, taskId) },

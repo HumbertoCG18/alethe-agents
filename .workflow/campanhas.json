@@ -210,6 +210,16 @@
           "origem": "USER",
           "evidencia": "PR #65 integrado na dev; revisão Codex (2 MAJOR, 1 MINOR corrigidos); vitest 954",
           "resultado": "aguarda o Gate 2 do usuário"
+        },
+        {
+          "id": "TODO-21",
+          "titulo": "Concluir preserva o resultado anterior em vez de substituí-lo",
+          "nivel": "T1",
+          "estado": "em execução",
+          "depende_de": [],
+          "origem": "USER",
+          "evidencia": "PR #66 integrado na dev; revisão Codex sem achados; vitest 956",
+          "resultado": "aguarda o Gate 2 do usuário"
         }
       ]
     },

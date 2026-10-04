@@ -5,6 +5,7 @@ import { DEFAULT_NIGHT_SETTINGS, type NightSettings } from '../../lib/nightSched
 import type { PluginStorage } from '../../lib/plugins'
 import { EMPTY_PROJECTS_FILE } from '../../lib/types'
 import { useProjectsStore } from '../../stores/projectsStore'
+import { useUiStore } from '../../stores/uiStore'
 
 const fs = vi.hoisted(() => ({
   files: new Map<string, string>(),
@@ -159,6 +160,7 @@ beforeEach(() => {
   fs.usageFails = false
   resetTodosStoreForTests()
   useProjectsStore.setState({ ...structuredClone(EMPTY_PROJECTS_FILE), hydrated: true })
+  useUiStore.setState({ activeView: 'workspace' })
 })
 
 afterEach(() => {
@@ -196,6 +198,15 @@ describe('night runner', () => {
     })
     expect(nightOf(projectId)?.attempted).toEqual(['N-01'])
     expect(watchFile).toHaveBeenCalledWith(diaryOf(REPO))
+  })
+
+  it('opens the night tab without leaving the view the user is on', async () => {
+    addProject('App', REPO)
+    writeRegistry(REPO, ['N-01'])
+    useUiStore.getState().setActiveView('home')
+    await start()
+    expect(agents()).toHaveLength(1)
+    expect(useUiStore.getState().activeView).toBe('home')
   })
 
   it('runs nothing with Modo noite off, outside the window, or without a free night task', async () => {

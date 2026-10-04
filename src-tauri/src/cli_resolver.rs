@@ -1192,13 +1192,15 @@ mod tests {
             builder.env(key, "1");
         }
         builder.env("CLAUDE_CODE_DISABLE_AUTO_MEMORY", "1");
+        builder.env("NO_COLOR", "1");
         builder.env("CLAUDE_CODE_MAX_OUTPUT_TOKENS", "64000");
         scrub_claude_session_environment(&mut builder);
         for key in session {
             assert!(builder.get_env(key).is_none(), "{key} was inherited");
         }
-        // Set by the outer session for its children, so it goes with it; other settings stay.
+        // Set by the outer session for its children, so they go with it; other settings stay.
         assert!(builder.get_env("CLAUDE_CODE_DISABLE_AUTO_MEMORY").is_none());
+        assert!(builder.get_env("NO_COLOR").is_none());
         assert!(builder.get_env("CLAUDE_CODE_MAX_OUTPUT_TOKENS").is_some());
 
         // Without an outer session, a user's own setting is kept.
@@ -1207,8 +1209,10 @@ mod tests {
         builder.env_remove("CLAUDE_CODE_SESSION_ID");
         builder.env_remove("CLAUDE_CODE_CHILD_SESSION");
         builder.env("CLAUDE_CODE_DISABLE_AUTO_MEMORY", "1");
+        builder.env("NO_COLOR", "1");
         scrub_claude_session_environment(&mut builder);
         assert!(builder.get_env("CLAUDE_CODE_DISABLE_AUTO_MEMORY").is_some());
+        assert!(builder.get_env("NO_COLOR").is_some());
     }
 
     #[test]
@@ -1233,6 +1237,7 @@ mod tests {
             "CLAUDE_CODE_CHILD_SESSION",
             "CLAUDE_CODE_SESSION_ID",
             "CLAUDE_CODE_DISABLE_AUTO_MEMORY",
+            "NO_COLOR",
         ] {
             assert!(
                 removed.iter().any(|name| name.eq_ignore_ascii_case(key)),

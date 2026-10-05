@@ -300,6 +300,17 @@
           ],
           "origem": "USER",
           "resultado": "aguarda o Gate 2 do usuário; PR #80 mergeado (ab9f839)"
+        },
+        {
+          "id": "TODO-30",
+          "titulo": "Active campaign: controls by open tab, task result as step, leaner subsection; Night progress and dots",
+          "nivel": "T2",
+          "estado": "em execução",
+          "depende_de": [
+            "TODO-29"
+          ],
+          "origem": "USER",
+          "resultado": "aguarda o Gate 2 do usuário; PR #82 mergeado (a52ec24)"
         }
       ]
     },

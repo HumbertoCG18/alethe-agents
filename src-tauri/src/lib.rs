@@ -68,6 +68,7 @@ mod resource_manager;
 mod resources;
 mod router9;
 mod scheduler;
+mod session_reader;
 mod session_watcher;
 mod skills;
 mod speech;
@@ -243,6 +244,9 @@ pub fn run() {
 
             // reporta working/idle real de volta pro Alethe (ver opencode_bridge.rs).
             opencode_bridge::ensure_installed();
+            app.manage(session_reader::SessionReaders::for_app(
+                app.handle().clone(),
+            ));
             session_watcher::start_watcher(app.handle().clone());
 
             // Multi-Agent & Telemetry Event Loops
@@ -436,15 +440,15 @@ pub fn run() {
             spotify::spotify_get_current,
             claude_sessions::snapshot_claude_sessions,
             claude_sessions::list_claude_sessions,
-            claude_sessions::get_claude_session_title,
             claude_sessions::get_claude_activity,
             claude_sessions::get_multi_agent_activity,
             codex_sessions::snapshot_codex_sessions,
-            codex_sessions::get_codex_session_title,
             handoff::prepare_agent_handoff,
             handoff::materialize_agent_handoff,
             handoff::complete_agent_handoff,
-            handoff::session_transcript_tail,
+            session_reader::session_subscribe,
+            session_reader::session_unsubscribe,
+            session_reader::session_read,
             antigravity_sessions::snapshot_antigravity_sessions,
             cursor_sessions::create_cursor_chat,
             claude_usage::get_claude_usage,

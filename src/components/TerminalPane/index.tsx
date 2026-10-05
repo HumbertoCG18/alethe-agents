@@ -33,8 +33,6 @@ import {
 } from '../../lib/sessionResume'
 import {
   completeAgentHandoff,
-  getClaudeSessionTitle,
-  getCodexSessionTitle,
   getPtyCwd,
   openInVscode,
   snapshotCodexSessions,
@@ -48,6 +46,7 @@ import {
 } from '../../lib/types'
 import { useCampaignStepTitle } from '../../stores/campaignStepsStore'
 import { useProjectsStore } from '../../stores/projectsStore'
+import { useSessionTitle } from '../../stores/sessionStore'
 import { useTerminalsStore } from '../../stores/terminalsStore'
 import { useUiStore } from '../../stores/uiStore'
 import { GhosttySurface } from '../GhosttySurface'
@@ -353,38 +352,14 @@ export const TerminalPane = memo(function TerminalPane({
   const cwd = activeTab?.cwd?.trim() || terminal.cwd?.trim() || ''
 
   const sessionTitleAgentType =
-    activeTab?.type === 'claude' || activeTab?.type === 'codex' ? activeTab.type : null
+    activeTab?.type === 'claude' ? 'claude' : activeTab?.type === 'codex' ? 'codex' : null
   const sessionTitleId = sessionTitleAgentType ? activeTab?.sessionId : undefined
 
-  const [sessionTitle, setSessionTitle] = useState<string | null>(null)
-  useEffect(() => {
-    setSessionTitle(null)
-    if (!sessionTitleAgentType || !sessionTitleId) return
-    if (sessionTitleAgentType === 'claude' && !cwd) return
-    const agentType = sessionTitleAgentType
-    const sessionId = sessionTitleId
-    let cancelled = false
-    const fetchTitle = () => {
-      const request =
-        agentType === 'claude'
-          ? getClaudeSessionTitle(cwd, sessionId)
-          : getCodexSessionTitle(sessionId)
-      request
-        .then((title) => {
-          if (cancelled || !title) return
-          setSessionTitle(title)
-          // Promise callbacks run after the interval below is assigned.
-          window.clearInterval(intervalId)
-        })
-        .catch(() => {})
-    }
-    fetchTitle()
-    const intervalId = window.setInterval(fetchTitle, 6000)
-    return () => {
-      cancelled = true
-      window.clearInterval(intervalId)
-    }
-  }, [sessionTitleAgentType, sessionTitleId, cwd])
+  const sessionTitle = useSessionTitle(
+    sessionTitleAgentType && sessionTitleId && cwd
+      ? { provider: sessionTitleAgentType, cwd, sessionId: sessionTitleId }
+      : null,
+  )
 
   const hasCustomTabName = Boolean(activeTab && activeTab.name !== activeTab.type)
   const steps = useCampaignStepTitle(projectId, activeTab?.campaignId)

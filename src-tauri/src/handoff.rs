@@ -14,14 +14,14 @@ const MAX_SOURCE_LINE_BYTES: usize = 2 * 1024 * 1024;
 const DRAFT_CHAR_LIMIT: usize = 48_000;
 const MATERIALIZED_BYTE_LIMIT: usize = 64 * 1024;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Provider {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum Provider {
     Claude,
     Codex,
 }
 
 impl Provider {
-    fn parse(value: &str) -> Result<Self, String> {
+    pub(crate) fn parse(value: &str) -> Result<Self, String> {
         match value.trim().to_ascii_lowercase().as_str() {
             "claude" => Ok(Self::Claude),
             "codex" => Ok(Self::Codex),
@@ -29,7 +29,7 @@ impl Provider {
         }
     }
 
-    fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::Claude => "claude",
             Self::Codex => "codex",
@@ -39,17 +39,12 @@ impl Provider {
 
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct HandoffEvent {
-    role: &'static str,
-    text: String,
+    pub role: &'static str,
+    pub text: String,
     #[serde(rename = "questionSetId", skip_serializing_if = "Option::is_none")]
-    question_set_id: Option<String>,
+    pub question_set_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    questions: Option<Vec<RemoteQuestion>>,
-}
-
-pub(crate) struct ActiveRemoteQuestions {
-    pub id: String,
-    pub questions: Vec<RemoteQuestion>,
+    pub questions: Option<Vec<RemoteQuestion>>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -66,15 +61,6 @@ pub(crate) struct RemoteQuestion {
 pub(crate) struct RemoteQuestionOption {
     pub label: String,
     pub description: String,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct TranscriptSnapshot {
-    pub session_id: Option<String>,
-    pub revision: u64,
-    pub unchanged: bool,
-    pub messages: Vec<HandoffEvent>,
 }
 
 #[derive(Serialize)]
@@ -100,15 +86,20 @@ pub struct HandoffArtifact {
     context_path: String,
 }
 
-fn read_capped_line(reader: &mut impl BufRead, buf: &mut Vec<u8>) -> std::io::Result<bool> {
+/// Reads one line into `buf`, keeping at most `MAX_SOURCE_LINE_BYTES` of it. Returns the bytes
+/// consumed (0 at EOF) and whether a newline ended the line, so a line still being written can be
+/// told apart from a complete one.
+pub(crate) fn read_capped_line(
+    reader: &mut impl BufRead,
+    buf: &mut Vec<u8>,
+) -> std::io::Result<(usize, bool)> {
     buf.clear();
-    let mut consumed_any = false;
+    let mut consumed = 0;
     loop {
         let available = reader.fill_buf()?;
         if available.is_empty() {
-            return Ok(consumed_any);
+            return Ok((consumed, false));
         }
-        consumed_any = true;
         let newline = available.iter().position(|byte| *byte == b'\n');
         let chunk_len = newline.unwrap_or(available.len());
         if buf.len() < MAX_SOURCE_LINE_BYTES {
@@ -118,11 +109,12 @@ fn read_capped_line(reader: &mut impl BufRead, buf: &mut Vec<u8>) -> std::io::Re
         match newline {
             Some(index) => {
                 reader.consume(index + 1);
-                return Ok(true);
+                return Ok((consumed + index + 1, true));
             }
             None => {
                 let len = available.len();
                 reader.consume(len);
+                consumed += len;
             }
         }
     }
@@ -239,140 +231,68 @@ fn question_text(questions: &[RemoteQuestion]) -> String {
         .join("\n")
 }
 
-fn claude_events(path: &Path) -> Result<Vec<HandoffEvent>, String> {
+/// The events one transcript record holds, as the handoff capsule and the session reader read them.
+pub(crate) fn line_events(provider: Provider, value: &Value, events: &mut Vec<HandoffEvent>) {
+    match provider {
+        Provider::Claude => claude_line_events(value, events),
+        Provider::Codex => codex_line_events(value, events),
+    }
+}
+
+/// Every event of a transcript, read whole: the capsule needs its first user request too.
+fn transcript_events(provider: Provider, path: &Path) -> Result<Vec<HandoffEvent>, String> {
     let file = fs::File::open(path).map_err(|error| error.to_string())?;
     let mut reader = BufReader::with_capacity(64 * 1024, file);
     let mut buf = Vec::with_capacity(8 * 1024);
     let mut events = Vec::new();
-    while read_capped_line(&mut reader, &mut buf).map_err(|error| error.to_string())? {
-        let Ok(line) = std::str::from_utf8(&buf) else {
-            continue;
-        };
-        let Ok(value) = serde_json::from_str::<Value>(line) else {
-            continue;
-        };
-        if value.get("isSidechain").and_then(Value::as_bool) == Some(true) {
-            continue;
-        }
-        let kind = value.get("type").and_then(Value::as_str).unwrap_or("");
-        if kind != "user" && kind != "assistant" {
-            continue;
-        }
-        let content = value
-            .get("message")
-            .and_then(|message| message.get("content"))
-            .unwrap_or(&Value::Null);
-        let text = content_text(content);
-        if !text.trim().is_empty() {
-            events.push(HandoffEvent {
-                role: if kind == "user" { "user" } else { "assistant" },
-                text: clipped(&text, if kind == "user" { 8_000 } else { 5_000 }),
-                question_set_id: None,
-                questions: None,
-            });
-        }
-        let Value::Array(blocks) = content else {
-            continue;
-        };
-        for block in blocks {
-            match block.get("type").and_then(Value::as_str).unwrap_or("") {
-                "tool_use" => {
-                    let name = block.get("name").and_then(Value::as_str).unwrap_or("tool");
-                    let input = block.get("input").cloned().unwrap_or(Value::Null);
-                    let questions = remote_questions(name, &input);
-                    let question_set_id = questions.as_ref().map(|_| {
-                        clipped(
-                            block
-                                .get("id")
-                                .and_then(Value::as_str)
-                                .unwrap_or("claude-question"),
-                            160,
-                        )
-                    });
-                    events.push(HandoffEvent {
-                        role: if questions.is_some() {
-                            "question"
-                        } else {
-                            "tool"
-                        },
-                        text: questions
-                            .as_deref()
-                            .map(question_text)
-                            .unwrap_or_else(|| clipped(&format!("{name}: {input}"), 1_200)),
-                        question_set_id,
-                        questions,
-                    });
-                }
-                "tool_result" => {
-                    let output = block.get("content").map(content_text).unwrap_or_default();
-                    if !output.trim().is_empty() {
-                        events.push(HandoffEvent {
-                            role: "tool-result",
-                            text: clipped(&output, 800),
-                            question_set_id: None,
-                            questions: None,
-                        });
-                    }
-                }
-                _ => {}
-            }
+    while read_capped_line(&mut reader, &mut buf)
+        .map_err(|error| error.to_string())?
+        .0
+        > 0
+    {
+        if let Ok(value) = serde_json::from_slice::<Value>(&buf) {
+            line_events(provider, &value, &mut events);
         }
     }
     Ok(events)
 }
 
-fn codex_events(path: &Path) -> Result<Vec<HandoffEvent>, String> {
-    let file = fs::File::open(path).map_err(|error| error.to_string())?;
-    let mut reader = BufReader::with_capacity(64 * 1024, file);
-    let mut buf = Vec::with_capacity(8 * 1024);
-    let mut events = Vec::new();
-    while read_capped_line(&mut reader, &mut buf).map_err(|error| error.to_string())? {
-        let Ok(line) = std::str::from_utf8(&buf) else {
-            continue;
-        };
-        let Ok(value) = serde_json::from_str::<Value>(line) else {
-            continue;
-        };
-        if value.get("type").and_then(Value::as_str) != Some("response_item") {
-            continue;
-        }
-        let Some(payload) = value.get("payload") else {
-            continue;
-        };
-        match payload.get("type").and_then(Value::as_str).unwrap_or("") {
-            "message" => {
-                let role = payload.get("role").and_then(Value::as_str).unwrap_or("");
-                if role != "user" && role != "assistant" {
-                    continue;
-                }
-                let text = payload.get("content").map(content_text).unwrap_or_default();
-                if !text.trim().is_empty() {
-                    events.push(HandoffEvent {
-                        role: if role == "user" { "user" } else { "assistant" },
-                        text: clipped(&text, if role == "user" { 8_000 } else { 5_000 }),
-                        question_set_id: None,
-                        questions: None,
-                    });
-                }
-            }
-            "custom_tool_call" | "function_call" => {
-                let name = payload
-                    .get("name")
-                    .and_then(Value::as_str)
-                    .unwrap_or("tool");
-                let input = payload
-                    .get("input")
-                    .or_else(|| payload.get("arguments"))
-                    .cloned()
-                    .unwrap_or(Value::Null);
+fn claude_line_events(value: &Value, events: &mut Vec<HandoffEvent>) {
+    if value.get("isSidechain").and_then(Value::as_bool) == Some(true) {
+        return;
+    }
+    let kind = value.get("type").and_then(Value::as_str).unwrap_or("");
+    if kind != "user" && kind != "assistant" {
+        return;
+    }
+    let content = value
+        .get("message")
+        .and_then(|message| message.get("content"))
+        .unwrap_or(&Value::Null);
+    let text = content_text(content);
+    if !text.trim().is_empty() {
+        events.push(HandoffEvent {
+            role: if kind == "user" { "user" } else { "assistant" },
+            text: clipped(&text, if kind == "user" { 8_000 } else { 5_000 }),
+            question_set_id: None,
+            questions: None,
+        });
+    }
+    let Value::Array(blocks) = content else {
+        return;
+    };
+    for block in blocks {
+        match block.get("type").and_then(Value::as_str).unwrap_or("") {
+            "tool_use" => {
+                let name = block.get("name").and_then(Value::as_str).unwrap_or("tool");
+                let input = block.get("input").cloned().unwrap_or(Value::Null);
                 let questions = remote_questions(name, &input);
                 let question_set_id = questions.as_ref().map(|_| {
                     clipped(
-                        payload
-                            .get("call_id")
-                            .or_else(|| payload.get("id"))
+                        block
+                            .get("id")
                             .and_then(Value::as_str)
-                            .unwrap_or("codex-question"),
+                            .unwrap_or("claude-question"),
                         160,
                     )
                 });
@@ -390,8 +310,8 @@ fn codex_events(path: &Path) -> Result<Vec<HandoffEvent>, String> {
                     questions,
                 });
             }
-            "custom_tool_call_output" | "function_call_output" => {
-                let output = payload.get("output").map(content_text).unwrap_or_default();
+            "tool_result" => {
+                let output = block.get("content").map(content_text).unwrap_or_default();
                 if !output.trim().is_empty() {
                     events.push(HandoffEvent {
                         role: "tool-result",
@@ -404,7 +324,79 @@ fn codex_events(path: &Path) -> Result<Vec<HandoffEvent>, String> {
             _ => {}
         }
     }
-    Ok(events)
+}
+
+fn codex_line_events(value: &Value, events: &mut Vec<HandoffEvent>) {
+    if value.get("type").and_then(Value::as_str) != Some("response_item") {
+        return;
+    }
+    let Some(payload) = value.get("payload") else {
+        return;
+    };
+    match payload.get("type").and_then(Value::as_str).unwrap_or("") {
+        "message" => {
+            let role = payload.get("role").and_then(Value::as_str).unwrap_or("");
+            if role != "user" && role != "assistant" {
+                return;
+            }
+            let text = payload.get("content").map(content_text).unwrap_or_default();
+            if !text.trim().is_empty() {
+                events.push(HandoffEvent {
+                    role: if role == "user" { "user" } else { "assistant" },
+                    text: clipped(&text, if role == "user" { 8_000 } else { 5_000 }),
+                    question_set_id: None,
+                    questions: None,
+                });
+            }
+        }
+        "custom_tool_call" | "function_call" => {
+            let name = payload
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("tool");
+            let input = payload
+                .get("input")
+                .or_else(|| payload.get("arguments"))
+                .cloned()
+                .unwrap_or(Value::Null);
+            let questions = remote_questions(name, &input);
+            let question_set_id = questions.as_ref().map(|_| {
+                clipped(
+                    payload
+                        .get("call_id")
+                        .or_else(|| payload.get("id"))
+                        .and_then(Value::as_str)
+                        .unwrap_or("codex-question"),
+                    160,
+                )
+            });
+            events.push(HandoffEvent {
+                role: if questions.is_some() {
+                    "question"
+                } else {
+                    "tool"
+                },
+                text: questions
+                    .as_deref()
+                    .map(question_text)
+                    .unwrap_or_else(|| clipped(&format!("{name}: {input}"), 1_200)),
+                question_set_id,
+                questions,
+            });
+        }
+        "custom_tool_call_output" | "function_call_output" => {
+            let output = payload.get("output").map(content_text).unwrap_or_default();
+            if !output.trim().is_empty() {
+                events.push(HandoffEvent {
+                    role: "tool-result",
+                    text: clipped(&output, 800),
+                    question_set_id: None,
+                    questions: None,
+                });
+            }
+        }
+        _ => {}
+    }
 }
 
 fn codex_session_meta(path: &Path) -> Option<(String, String)> {
@@ -420,7 +412,7 @@ fn codex_session_meta(path: &Path) -> Option<(String, String)> {
     ))
 }
 
-fn resolve_source_file(
+pub(crate) fn resolve_source_file(
     provider: Provider,
     cwd: &str,
     requested_id: Option<&str>,
@@ -490,109 +482,6 @@ fn resolve_source_file(
         .next()
         .map(|(id, path, _)| (id, path, true))
         .ok_or_else(|| "no session found for this provider and working directory".to_string())
-}
-
-/// The remote chat view reads the same transcripts the handoff capsule does.
-/// `since` carries the last revision the caller saw, so an unchanged file skips
-/// the parse entirely and the phone can poll cheaply.
-pub(crate) fn transcript_snapshot(
-    provider: &str,
-    cwd: &str,
-    session_id: Option<&str>,
-    since: Option<u64>,
-    limit: usize,
-) -> Result<TranscriptSnapshot, String> {
-    let provider = Provider::parse(provider)?;
-    let resolved = resolve_source_file(provider, cwd, session_id)
-        .or_else(|_| resolve_source_file(provider, cwd, None));
-    let Ok((id, path, _)) = resolved else {
-        return Ok(TranscriptSnapshot {
-            session_id: None,
-            revision: 0,
-            unchanged: false,
-            messages: Vec::new(),
-        });
-    };
-    let revision = fs::metadata(&path)
-        .and_then(|metadata| metadata.modified())
-        .ok()
-        .and_then(|modified| modified.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|elapsed| elapsed.as_millis() as u64)
-        .unwrap_or(0);
-    if revision != 0 && since == Some(revision) {
-        return Ok(TranscriptSnapshot {
-            session_id: Some(id),
-            revision,
-            unchanged: true,
-            messages: Vec::new(),
-        });
-    }
-    let mut messages = match provider {
-        Provider::Claude => claude_events(&path)?,
-        Provider::Codex => codex_events(&path)?,
-    };
-    if messages.len() > limit {
-        messages.drain(..messages.len() - limit);
-    }
-    Ok(TranscriptSnapshot {
-        session_id: Some(id),
-        revision,
-        unchanged: false,
-        messages,
-    })
-}
-
-/// The most messages the Todo panel reads from a session's tail: it shows only its last ones.
-const MAX_TAIL_EVENTS: usize = 20;
-
-fn tail_limit(limit: Option<usize>) -> usize {
-    limit.unwrap_or(MAX_TAIL_EVENTS).clamp(1, MAX_TAIL_EVENTS)
-}
-
-/// The tail of a Claude or Codex session for the Todo panel: `transcript_snapshot`, with its
-/// `limit` clamped, read off the main thread.
-#[tauri::command]
-pub async fn session_transcript_tail(
-    provider: String,
-    cwd: String,
-    session_id: Option<String>,
-    since: Option<u64>,
-    limit: Option<usize>,
-) -> Result<TranscriptSnapshot, String> {
-    tokio::task::spawn_blocking(move || {
-        transcript_snapshot(
-            &provider,
-            &cwd,
-            session_id.as_deref(),
-            since,
-            tail_limit(limit),
-        )
-    })
-    .await
-    .map_err(|error| format!("session_transcript_tail task failed: {error}"))?
-}
-
-pub(crate) fn active_remote_questions(
-    provider: &str,
-    cwd: &str,
-    session_id: Option<&str>,
-) -> Result<Option<ActiveRemoteQuestions>, String> {
-    let provider = Provider::parse(provider)?;
-    let (_, path, _) = resolve_source_file(provider, cwd, session_id)
-        .or_else(|_| resolve_source_file(provider, cwd, None))?;
-    let events = match provider {
-        Provider::Claude => claude_events(&path)?,
-        Provider::Codex => codex_events(&path)?,
-    };
-    Ok(events.last().and_then(|event| {
-        event
-            .questions
-            .clone()
-            .map(|questions| ActiveRemoteQuestions {
-                id: event.question_set_id.clone().unwrap_or_default(),
-                questions,
-            })
-    }))
 }
 
 fn run_git(cwd: &str, args: &[&str]) -> Option<String> {
@@ -738,10 +627,7 @@ pub async fn prepare_agent_handoff(
         }
         let (resolved_id, path, used_fallback) =
             resolve_source_file(source, &cwd, source_session_id.as_deref())?;
-        let events = match source {
-            Provider::Claude => claude_events(&path)?,
-            Provider::Codex => codex_events(&path)?,
-        };
+        let events = transcript_events(source, &path)?;
         if !events.iter().any(|event| event.role == "user") {
             return Err("the selected session has no transferable user messages".to_string());
         }
@@ -890,14 +776,6 @@ mod tests {
     }
 
     #[test]
-    fn clamps_the_todo_tail_to_a_few_messages() {
-        assert_eq!(tail_limit(None), MAX_TAIL_EVENTS);
-        assert_eq!(tail_limit(Some(5)), 5);
-        assert_eq!(tail_limit(Some(0)), 1);
-        assert_eq!(tail_limit(Some(10_000)), MAX_TAIL_EVENTS);
-    }
-
-    #[test]
     fn rejects_unsafe_cleanup_ids() {
         assert!(validate_handoff_id("safe_123-id").is_ok());
         assert!(validate_handoff_id("../outside").is_err());
@@ -955,8 +833,9 @@ mod tests {
         )
         .expect("write Claude fixture");
 
-        let codex = codex_events(&codex_path).expect("parse Codex fixture");
-        let claude = claude_events(&claude_path).expect("parse Claude fixture");
+        let codex = transcript_events(Provider::Codex, &codex_path).expect("parse Codex fixture");
+        let claude =
+            transcript_events(Provider::Claude, &claude_path).expect("parse Claude fixture");
         fs::remove_file(codex_path).expect("remove Codex fixture");
         fs::remove_file(claude_path).expect("remove Claude fixture");
 

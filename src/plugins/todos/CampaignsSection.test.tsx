@@ -9,6 +9,7 @@ import { isoDay, parseCampaigns } from '../../lib/campaigns'
 import { EMPTY_PROJECTS_FILE, type SubTab } from '../../lib/types'
 import { useCampaignStepsStore } from '../../stores/campaignStepsStore'
 import { useProjectsStore } from '../../stores/projectsStore'
+import { useSessionStore } from '../../stores/sessionStore'
 import { useTerminalsStore } from '../../stores/terminalsStore'
 import { useUiStore } from '../../stores/uiStore'
 
@@ -23,6 +24,11 @@ const fs = vi.hoisted(() => ({
 }))
 
 /** The orchestrator snapshot the board and the Todo tab receive, and its live event. */
+/** The session store's change event, as the backend sends it. */
+const sessionEvents = vi.hoisted(() => ({
+  emit: (_change: { provider: string; cwd: string; sessionId: string; revision: number }) => {},
+}))
+
 const orchestrator = vi.hoisted(() => ({
   jobs: [] as Array<{ id?: string; task?: string | null; status: string; cwd: string }>,
   emit: null as ((snapshot: { jobs: unknown[] }) => void) | null,
@@ -92,12 +98,19 @@ vi.mock('../../lib/tauri', async (importOriginal) => ({
   }),
   writePty: vi.fn(async () => {}),
   // No session to read unless a test gives one.
-  sessionTranscriptTail: vi.fn(async () => ({
+  sessionRead: vi.fn(async () => ({
     sessionId: null,
     revision: 0,
     unchanged: false,
-    messages: [],
+    events: [],
+    title: null,
   })),
+  sessionSubscribe: vi.fn(async () => {}),
+  sessionUnsubscribe: vi.fn(async () => {}),
+  listenSessionChanged: vi.fn(async (handler: typeof sessionEvents.emit) => {
+    sessionEvents.emit = handler
+    return () => {}
+  }),
   ensureTodoTemplate: vi.fn(async () => {}),
   // The backend finishes a cancelled worker at once: the next snapshot shows it cancelled.
   orchestratorCancel: vi.fn(async (jobId: string) => {
@@ -117,7 +130,8 @@ import {
   orchestratorCancel,
   orchestratorJobs,
   readTextFile,
-  sessionTranscriptTail,
+  sessionRead,
+  sessionSubscribe,
   unwatchFile,
   watchFile,
   worktreeCheckouts,
@@ -3648,7 +3662,7 @@ describe('Todo settings and edits', () => {
 describe('Agent messages', () => {
   const projectId = () => useProjectsStore.getState().projects[0].id
   const active = (id: string) => screen.queryByRole('group', { name: id })
-  const tail = vi.mocked(sessionTranscriptTail)
+  const tail = vi.mocked(sessionRead)
   const setStatus = (status: 'working' | 'waiting' | 'stopped') =>
     act(() => useTerminalsStore.getState().setStatus('pty-OITO', status))
   /** A Claude tab opened for `campaignId`, on `sessionId` when given, its agent waiting. */
@@ -3662,22 +3676,31 @@ describe('Agent messages', () => {
     useTerminalsStore.getState().setStatus(`pty-${campaignId}`, 'waiting')
     return terminal
   }
-  /** A read of session s-1 at `revision`, with these [role, text, asks a question] messages. */
-  const reply = (revision: number, ...messages: Array<[string, string, boolean?]>) => ({
+  /** A read of session s-1 at `revision`, with these [role, text, asks a question] events. */
+  const reply = (revision: number, ...events: Array<[string, string, boolean?]>) => ({
     sessionId: 's-1',
     revision,
     unchanged: false,
-    messages: messages.map(([role, text, asks]) => ({
+    events: events.map(([role, text, asks]) => ({
       role: role as 'user',
       text,
       ...(asks ? { questionSetId: 'q-1', questions: [{ id: 'scope' }] } : {}),
     })),
+    title: null,
+  })
+  const unchanged = (revision: number) => ({
+    sessionId: 's-1',
+    revision,
+    unchanged: true,
+    events: [],
+    title: null,
   })
 
   beforeEach(() => {
     fs.files.set(REGISTRY, JSON.stringify(exemplo))
     useUiStore.setState({ toasts: [], notifications: [] })
     useTerminalsStore.getState().reset()
+    useSessionStore.setState({ sessions: {} })
   })
   afterEach(() => useTerminalsStore.getState().reset())
 
@@ -3704,6 +3727,7 @@ describe('Agent messages', () => {
     await waitFor(() => expect(active('OITO')).not.toBeNull())
     await act(async () => {})
     expect(tail).not.toHaveBeenCalled()
+    expect(sessionSubscribe).not.toHaveBeenCalled()
     expect(within(active('OITO')!).queryByText(/^Agent:/)).toBeNull()
   })
 
@@ -3751,7 +3775,7 @@ describe('Agent messages', () => {
     setStatus('working')
     setStatus('working')
     expect(tail).toHaveBeenCalledTimes(1)
-    tail.mockResolvedValueOnce({ sessionId: 's-1', revision: 5, unchanged: true, messages: [] })
+    tail.mockResolvedValueOnce(unchanged(5))
     setStatus('waiting')
     await waitFor(() => expect(tail).toHaveBeenCalledTimes(2))
     expect(tail).toHaveBeenLastCalledWith({
@@ -3769,7 +3793,7 @@ describe('Agent messages', () => {
 
   it('keeps the newer of two overlapping reads, and reads on from its revision', async () => {
     // The first read is still on its way when the agent stops and a second one starts.
-    let first: (value: Awaited<ReturnType<typeof sessionTranscriptTail>>) => void = () => {}
+    let first: (value: Awaited<ReturnType<typeof sessionRead>>) => void = () => {}
     tail.mockImplementationOnce(() => new Promise((resolve) => (first = resolve)))
     tail.mockResolvedValueOnce(
       reply(
@@ -3794,7 +3818,7 @@ describe('Agent messages', () => {
     )
     expect(screen.getByText('Agent: Feito.')).toBeInTheDocument()
     expect(screen.queryByText('Scope: Which scope?')).toBeNull()
-    tail.mockResolvedValueOnce({ sessionId: 's-1', revision: 9, unchanged: true, messages: [] })
+    tail.mockResolvedValueOnce(unchanged(9))
     setStatus('working')
     setStatus('waiting')
     await waitFor(() => expect(tail).toHaveBeenCalledTimes(3))
@@ -3807,26 +3831,44 @@ describe('Agent messages', () => {
     render(<TodoSidebar />)
     await screen.findByText('Agent: Primeira.')
 
-    // Its pty replaced, the same session reads as unchanged: the line stays.
-    tail.mockResolvedValueOnce({ sessionId: 's-1', revision: 5, unchanged: true, messages: [] })
+    // Its pty replaced, the session is the same one: it is not read again, and the line stays.
     act(() =>
       useProjectsStore
         .getState()
         .setSubTabPtyId(projectId(), first.id, first.tabs[0].id, 'pty-new'),
     )
-    await waitFor(() => expect(tail).toHaveBeenCalledTimes(2))
     await act(async () => {})
+    expect(tail).toHaveBeenCalledTimes(1)
     expect(screen.getByText('Agent: Primeira.')).toBeInTheDocument()
 
-    // Another tab on the same session, focused, shows it too.
-    tail.mockResolvedValueOnce({ sessionId: 's-1', revision: 5, unchanged: true, messages: [] })
+    // Another tab on the same session, focused, shows it too, from the same read.
     const second = openTerminal('C:\\repo', 'claude', 'OITO')
     const store = useProjectsStore.getState()
     store.setSubTabPtyId(projectId(), second.id, second.tabs[0].id, 'pty-second')
     store.setSubTabSessionId(projectId(), second.id, second.tabs[0].id, 's-1')
     focusTerminal(second.id)
-    await waitFor(() => expect(tail).toHaveBeenCalledTimes(3))
     await act(async () => {})
+    expect(tail).toHaveBeenCalledTimes(1)
     expect(screen.getByText('Agent: Primeira.')).toBeInTheDocument()
+  })
+
+  it('follows its session as the transcript changes, while its agent still works', async () => {
+    tail.mockResolvedValueOnce(reply(5, ['assistant', 'Primeira.']))
+    agentTab('OITO', 's-1')
+    setStatus('working')
+    render(<TodoSidebar />)
+    await screen.findByText('Agent: Primeira.')
+
+    tail.mockResolvedValueOnce(reply(8, ['assistant', 'Segunda.']))
+    act(() =>
+      sessionEvents.emit({ provider: 'claude', cwd: 'c:\\repo', sessionId: 's-1', revision: 8 }),
+    )
+    await screen.findByText('Agent: Segunda.')
+    expect(tail).toHaveBeenLastCalledWith({
+      provider: 'claude',
+      cwd: 'C:\\repo',
+      sessionId: 's-1',
+      since: 5,
+    })
   })
 })

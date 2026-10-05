@@ -856,6 +856,68 @@ describe('Todo list source', () => {
     expect(fs.files.get(other)).toBe(JSON.stringify(exemplo))
   })
 
+  it('hides the add field per project, and Ctrl+N still brings it back for one task', async () => {
+    fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    useTodosStore.setState({ activeCampaigns: { [projectId()]: 'OITO' } })
+    render(<TodoSidebar />)
+    const field = () => screen.queryByPlaceholderText('Add a task to OITO…')
+    await waitFor(() => expect(field()).not.toBeNull())
+
+    const hide = screen.getByRole('button', { name: 'Hide the add field' })
+    expect(hide).toHaveAttribute('title', 'Hide the add field')
+    expect(hide.closest('section')).toContainElement(
+      screen.getByRole('button', { name: /^Active · OITO/ }),
+    )
+    fireEvent.click(hide)
+    expect(field()).toBeNull()
+    expect(listed()).toContain('OITO-01')
+    expect(useTodosStore.getState().addFieldHidden).toEqual({ [projectId()]: true })
+
+    // Ctrl+N shows it, focused, for one task; it hides again once the task is added.
+    fireEvent.keyDown(window, { key: 'n', ctrlKey: true })
+    await waitFor(() => expect(field()).toHaveFocus())
+    fireEvent.change(field()!, { target: { value: 'Nova tarefa' } })
+    fireEvent.submit(field()!.closest('form')!)
+    await waitFor(() => expect(listed()).toContain('OITO-09'))
+    expect(field()).toBeNull()
+    // Escape on the empty field hides it again too.
+    fireEvent.keyDown(window, { key: 'n', ctrlKey: true })
+    await waitFor(() => expect(field()).toHaveFocus())
+    fireEvent.keyDown(field()!, { key: 'Escape' })
+    expect(field()).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show the add field' }))
+    expect(field()).not.toBeNull()
+    expect(useTodosStore.getState().addFieldHidden).toEqual({})
+  })
+
+  it('keeps a field shown by Ctrl+N to its project, not to the next one', async () => {
+    const other = `${OTHER_REPO}\\.workflow\\campanhas.json`
+    fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    fs.files.set(other, JSON.stringify(exemplo))
+    const first = projectId()
+    const second = useProjectsStore
+      .getState()
+      .createProject({ name: 'Other', defaultCwd: OTHER_REPO }).id
+    useProjectsStore.setState({ activeProjectId: first })
+    useTodosStore.setState({ addFieldHidden: { [first]: true, [second]: true } })
+    render(<TodoSidebar />)
+    const field = () => screen.queryByPlaceholderText('Add a task to OITO…')
+    await screen.findByRole('button', { name: 'Show the add field' })
+
+    fireEvent.keyDown(window, { key: 'n', ctrlKey: true })
+    await waitFor(() => expect(field()).toHaveFocus())
+    fireEvent.change(field()!, { target: { value: 'rascunho' } })
+
+    act(() => useProjectsStore.setState({ activeProjectId: second }))
+    await screen.findByRole('button', { name: 'Show the add field' })
+    expect(field()).toBeNull()
+
+    // Ctrl+N there shows that project's field.
+    fireEvent.keyDown(window, { key: 'n', ctrlKey: true })
+    await waitFor(() => expect(field()).toHaveFocus())
+  })
+
   it('checks campaign titles in code points, not UTF-16 units', async () => {
     fs.files.set(REGISTRY, JSON.stringify(exemplo))
     render(<TodoSidebar />)
@@ -964,7 +1026,7 @@ describe('Todo list source', () => {
 
 describe('Campaign controls', () => {
   const projectId = () => useProjectsStore.getState().projects[0].id
-  const toggle = () => screen.findByRole('button', { name: 'Campaign' })
+  const toggle = () => screen.findByRole('button', { name: 'Current' })
   const button = (name: string) => screen.queryByRole('button', { name })
   /** Shows OITO in the list, with its Campaign group opened. */
   async function openControls() {
@@ -1075,14 +1137,27 @@ describe('Campaign controls', () => {
     expect(writePty).not.toHaveBeenCalled()
   })
 
-  it('cannot continue a campaign with nothing ready, and says so', async () => {
+  it('with nothing ready, continues from its first open task and tells the agent why it waits', async () => {
     fs.files.set(REGISTRY, JSON.stringify(exemplo))
     // DEPOIS-01 is ready, but its campaign waits for ABERTA.
     useTodosStore.setState({ activeCampaigns: { [projectId()]: 'DEPOIS' } })
     render(<TodoSidebar />)
     fireEvent.click(await toggle())
+    expect(button('Continue campaign')).toBeEnabled()
+    fireEvent.click(button('Continue campaign')!)
+    await waitFor(() => expect(agentTerminals()).toHaveLength(1))
+    expect(agentTerminals()[0].tabs[0].initialInput).toMatch(
+      /^Retome a campanha DEPOIS pela tarefa DEPOIS-01 \(«.*»\), hoje pronta, esperando ABERTA, pelo registro /,
+    )
+  })
+
+  it('cannot continue a finished campaign, and says so', async () => {
+    fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    useTodosStore.setState({ activeCampaigns: { [projectId()]: 'BASE' } })
+    render(<TodoSidebar />)
+    fireEvent.click(await toggle())
     expect(button('Continue campaign')).toBeDisabled()
-    expect(screen.getByText('Nothing ready to resume')).toBeInTheDocument()
+    expect(screen.getByText('Every task is done')).toBeInTheDocument()
   })
 
   it('pauses by sending Esc to each of its working tabs, leaving its workers alone', async () => {

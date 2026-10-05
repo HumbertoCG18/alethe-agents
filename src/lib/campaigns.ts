@@ -732,7 +732,7 @@ export function resumePrompt(
   if (task) {
     const title = task.title ? ` (${quoted(task.title, 140)})` : ''
     return flat(
-      `Retome a campanha ${id} pela tarefa ${idText(task.id)}${title}, ` +
+      `Retome a campanha ${id} pela tarefa ${idText(task.id)}${title}${waitsFor(task)}, ` +
         `pelo registro ${registry}${handoff}.`,
     )
   }
@@ -740,14 +740,31 @@ export function resumePrompt(
   return flat(`Retome a campanha ${id}${title} pelo registro ${registry}${handoff}.`)
 }
 
+/** A task that can be resumed as it is: in progress, or ready with nothing unmet. */
+const resumable = (task: CampaignTask) =>
+  task.state === 'em execução' || (task.state === 'pronta' && task.unmet.length === 0)
+
+/**
+ * Why a task that cannot be resumed as it is waits, for its prompt: its state as the registry
+ * writes it, the prerequisites it waits for (its campaign's included), and its result as data.
+ */
+function waitsFor(task: CampaignTask): string {
+  if (resumable(task)) return ''
+  const unmet = task.unmet.length > 0 ? `, esperando ${task.unmet.map(idText).join(', ')}` : ''
+  const result = task.result ? `: ${quoted(task.result, 200)}` : ''
+  return `, hoje ${task.state}${unmet}${result}`
+}
+
 /**
  * The task a campaign resumes from: its first in progress, else its first ready one with nothing
- * unmet (its campaign's prerequisites included); null when there is none.
+ * unmet (its campaign's prerequisites included), else its first one not done, in registry order;
+ * null when every task is done.
  */
 export function resumeTask(campaign: Campaign): CampaignTask | null {
   return (
     campaign.tasks.find((task) => task.state === 'em execução') ??
-    campaign.tasks.find((task) => task.state === 'pronta' && task.unmet.length === 0) ??
+    campaign.tasks.find(resumable) ??
+    campaign.tasks.find((task) => task.state !== DONE) ??
     null
   )
 }

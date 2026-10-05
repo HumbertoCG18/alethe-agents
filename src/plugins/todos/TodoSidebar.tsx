@@ -1,6 +1,8 @@
 import {
   Check,
   ExternalLink,
+  Eye,
+  EyeOff,
   FolderKanban,
   GripVertical,
   ListTodo,
@@ -211,6 +213,19 @@ export function TodoSidebar() {
     view.projectId ? state.sectionOrder[view.projectId] : undefined,
   )
   const setSectionOrder = useTodosStore((state) => state.setSectionOrder)
+  const addFieldHidden = useTodosStore((state) =>
+    view.projectId ? state.addFieldHidden[view.projectId] === true : false,
+  )
+  const setAddFieldHidden = useTodosStore((state) => state.setAddFieldHidden)
+  // Ctrl+N shows a hidden add field for one task: until it is added, or left empty. It belongs to
+  // the project it was shown in, so switching projects does not carry it over.
+  const [addFieldShownFor, setAddFieldShownFor] = useState<string | null>(null)
+  const addFieldShown = addFieldShownFor !== null && addFieldShownFor === view.projectId
+  // The Ctrl+N listener is installed once: it reads the project through this ref.
+  const projectIdRef = useRef(view.projectId)
+  projectIdRef.current = view.projectId
+  const setAddFieldShown = (shown: boolean) =>
+    setAddFieldShownFor(shown ? (projectIdRef.current ?? null) : null)
   // The source picked in this project (a campaign id, or null for the personal list).
   const [picked, setPicked] = useState<{ projectId: string | null; id: string | null } | null>(null)
   const campaigns = view.registry?.campaigns ?? []
@@ -264,7 +279,8 @@ export function TodoSidebar() {
       if (event.key.toLowerCase() !== 'n') return
       event.preventDefault()
       setComposerExpanded(true)
-      // A campaign's add field sits in its section, which may be collapsed.
+      setAddFieldShownFor(projectIdRef.current ?? null)
+      // A campaign's add field sits in its section, which may be collapsed or hide the field.
       setCollapsedSections((current) => {
         const next = new Set(current)
         return next.delete(CAMPAIGN_SECTION) ? next : current
@@ -280,6 +296,7 @@ export function TodoSidebar() {
       if (!(await edits.add(campaign, title))) return
       setTitle('')
       setComposerExpanded(false)
+      setAddFieldShown(false)
       return
     }
     if (!createTodo(title, parseTags(tagDraft), projectDraft || undefined)) return
@@ -615,7 +632,12 @@ export function TodoSidebar() {
           onFocus={() => setComposerExpanded(true)}
           onChange={(event) => setTitle(event.target.value)}
           onKeyDown={(event) => {
-            if (event.key === 'Escape' && !title.trim()) setComposerExpanded(false)
+            if (event.key !== 'Escape' || title.trim()) return
+            setComposerExpanded(false)
+            setAddFieldShown(false)
+          }}
+          onBlur={() => {
+            if (!title.trim()) setAddFieldShown(false)
           }}
           placeholder={addPlaceholder}
           aria-label={addPlaceholder}
@@ -658,11 +680,24 @@ export function TodoSidebar() {
             count={`${campaign.done}/${campaign.total}${campaign.decomposed ? '' : '+?'}`}
             open={!collapsedSections.has(CAMPAIGN_SECTION)}
             onToggle={() => toggleSection(CAMPAIGN_SECTION)}
-          />
+          >
+            <button
+              type="button"
+              className={styles.sectionAdd}
+              onClick={() => {
+                if (view.projectId) setAddFieldHidden(view.projectId, !addFieldHidden)
+                setAddFieldShown(false)
+              }}
+              title={t(addFieldHidden ? 'todo.addFieldShow' : 'todo.addFieldHide')}
+              aria-label={t(addFieldHidden ? 'todo.addFieldShow' : 'todo.addFieldHide')}
+            >
+              {addFieldHidden ? <Eye size={13} /> : <EyeOff size={13} />}
+            </button>
+          </SectionToggle>
           {collapsedSections.has(CAMPAIGN_SECTION) ? null : (
             <>
               {filters}
-              {composer}
+              {addFieldHidden && !addFieldShown ? null : composer}
               {view.registry ? (
                 <CampaignControls
                   campaign={campaign}
@@ -1054,7 +1089,7 @@ function CampaignControls({
               </button>
               {task ? null : (
                 <span id={hint} className={campaignStyles.meta}>
-                  {t('todo.campaignControls.nothingReady')}
+                  {t('todo.campaignControls.allDone')}
                 </span>
               )}
             </>

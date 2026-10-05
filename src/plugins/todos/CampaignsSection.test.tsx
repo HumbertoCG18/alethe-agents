@@ -91,6 +91,13 @@ vi.mock('../../lib/tauri', async (importOriginal) => ({
     return content
   }),
   writePty: vi.fn(async () => {}),
+  // No session to read unless a test gives one.
+  sessionTranscriptTail: vi.fn(async () => ({
+    sessionId: null,
+    revision: 0,
+    unchanged: false,
+    messages: [],
+  })),
   ensureTodoTemplate: vi.fn(async () => {}),
   // The backend finishes a cancelled worker at once: the next snapshot shows it cancelled.
   orchestratorCancel: vi.fn(async (jobId: string) => {
@@ -110,6 +117,7 @@ import {
   orchestratorCancel,
   orchestratorJobs,
   readTextFile,
+  sessionTranscriptTail,
   unwatchFile,
   watchFile,
   worktreeCheckouts,
@@ -3634,5 +3642,191 @@ describe('Todo settings and edits', () => {
     render(<TodoSidebar />)
     fireEvent.click(screen.getByRole('button', { name: 'Edit task' }))
     expect(screen.getByRole('textbox', { name: 'Edit task' })).toHaveValue('Write the doc')
+  })
+})
+
+describe('Agent messages', () => {
+  const projectId = () => useProjectsStore.getState().projects[0].id
+  const active = (id: string) => screen.queryByRole('group', { name: id })
+  const tail = vi.mocked(sessionTranscriptTail)
+  const setStatus = (status: 'working' | 'waiting' | 'stopped') =>
+    act(() => useTerminalsStore.getState().setStatus('pty-OITO', status))
+  /** A Claude tab opened for `campaignId`, on `sessionId` when given, its agent waiting. */
+  function agentTab(campaignId: string, sessionId?: string) {
+    const terminal = openTerminal('C:\\repo', 'claude', campaignId)
+    const tab = terminal.tabs[0]
+    const store = useProjectsStore.getState()
+    store.setSubTabPtyId(projectId(), terminal.id, tab.id, `pty-${campaignId}`)
+    if (sessionId) store.setSubTabSessionId(projectId(), terminal.id, tab.id, sessionId)
+    useTerminalsStore.getState().registerPty(`pty-${campaignId}`)
+    useTerminalsStore.getState().setStatus(`pty-${campaignId}`, 'waiting')
+    return terminal
+  }
+  /** A read of session s-1 at `revision`, with these [role, text, asks a question] messages. */
+  const reply = (revision: number, ...messages: Array<[string, string, boolean?]>) => ({
+    sessionId: 's-1',
+    revision,
+    unchanged: false,
+    messages: messages.map(([role, text, asks]) => ({
+      role: role as 'user',
+      text,
+      ...(asks ? { questionSetId: 'q-1', questions: [{ id: 'scope' }] } : {}),
+    })),
+  })
+
+  beforeEach(() => {
+    fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    useUiStore.setState({ toasts: [], notifications: [] })
+    useTerminalsStore.getState().reset()
+  })
+  afterEach(() => useTerminalsStore.getState().reset())
+
+  it('shows the last answer of a campaign agent by its controls, in full in its tooltip', async () => {
+    tail.mockResolvedValueOnce(
+      reply(
+        5,
+        ['user', 'Mede a tabela A'],
+        ['assistant', 'Medi a tabela A; falta o Gate 1.'],
+        ['tool', 'Bash: ls'],
+      ),
+    )
+    agentTab('OITO', 's-1')
+    render(<TodoSidebar />)
+    await waitFor(() => expect(active('OITO')).not.toBeNull())
+    const line = await within(active('OITO')!).findByText('Agent: Medi a tabela A; falta o Gate 1.')
+    expect(line).toHaveAttribute('title', 'Medi a tabela A; falta o Gate 1.')
+    expect(tail).toHaveBeenCalledWith({ provider: 'claude', cwd: 'C:\\repo', sessionId: 's-1' })
+  })
+
+  it('reads nothing for a tab without a session, and shows no line', async () => {
+    agentTab('OITO')
+    render(<TodoSidebar />)
+    await waitFor(() => expect(active('OITO')).not.toBeNull())
+    await act(async () => {})
+    expect(tail).not.toHaveBeenCalled()
+    expect(within(active('OITO')!).queryByText(/^Agent:/)).toBeNull()
+  })
+
+  it('lists a question the agent waits on in Pending, until a later message answers it', async () => {
+    tail.mockResolvedValueOnce(
+      reply(5, ['assistant', 'Preciso do escopo.'], ['question', 'Scope: Which scope?', true]),
+    )
+    const terminal = agentTab('OITO', 's-1')
+    render(<TodoSidebar />)
+    const question = await screen.findByText('Scope: Which scope?')
+    expect(question).toHaveAttribute('title', 'Scope: Which scope?')
+    const row = question.closest('li')!
+    expect(within(row).getByText('OITO')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^Pending/ }).closest('section')).toContainElement(
+      row,
+    )
+    // Answering stays in the terminal: the row only goes there.
+    act(() => useUiStore.setState({ activeTerminal: null }))
+    fireEvent.click(within(row).getByRole('button', { name: 'Go to tab' }))
+    expect(useUiStore.getState().activeTerminal?.terminalId).toBe(terminal.id)
+    expect(writePty).not.toHaveBeenCalled()
+
+    // Answered: once its agent has worked and stopped again, the row goes.
+    tail.mockResolvedValueOnce(
+      reply(
+        9,
+        ['question', 'Scope: Which scope?', true],
+        ['user', 'Focused'],
+        ['assistant', 'Feito.'],
+      ),
+    )
+    setStatus('working')
+    setStatus('waiting')
+    await waitFor(() => expect(screen.queryByText('Scope: Which scope?')).toBeNull())
+    expect(screen.queryByRole('button', { name: /^Pending/ })).toBeNull()
+  })
+
+  it('reads again once its agent stops working, passing the revision it last read', async () => {
+    tail.mockResolvedValueOnce(reply(5, ['assistant', 'Primeira.']))
+    agentTab('OITO', 's-1')
+    render(<TodoSidebar />)
+    await screen.findByText('Agent: Primeira.')
+    expect(tail).toHaveBeenCalledTimes(1)
+
+    setStatus('working')
+    setStatus('working')
+    expect(tail).toHaveBeenCalledTimes(1)
+    tail.mockResolvedValueOnce({ sessionId: 's-1', revision: 5, unchanged: true, messages: [] })
+    setStatus('waiting')
+    await waitFor(() => expect(tail).toHaveBeenCalledTimes(2))
+    expect(tail).toHaveBeenLastCalledWith({
+      provider: 'claude',
+      cwd: 'C:\\repo',
+      sessionId: 's-1',
+      since: 5,
+    })
+    // Unchanged, its line stays; waiting to stopped is no new stop.
+    expect(screen.getByText('Agent: Primeira.')).toBeInTheDocument()
+    setStatus('stopped')
+    await act(async () => {})
+    expect(tail).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps the newer of two overlapping reads, and reads on from its revision', async () => {
+    // The first read is still on its way when the agent stops and a second one starts.
+    let first: (value: Awaited<ReturnType<typeof sessionTranscriptTail>>) => void = () => {}
+    tail.mockImplementationOnce(() => new Promise((resolve) => (first = resolve)))
+    tail.mockResolvedValueOnce(
+      reply(
+        9,
+        ['question', 'Scope: Which scope?', true],
+        ['user', 'Focused'],
+        ['assistant', 'Feito.'],
+      ),
+    )
+    agentTab('OITO', 's-1')
+    render(<TodoSidebar />)
+    await waitFor(() => expect(tail).toHaveBeenCalledTimes(1))
+    setStatus('working')
+    setStatus('waiting')
+    await screen.findByText('Agent: Feito.')
+
+    // The older answer lands last: it is dropped, its question with it.
+    await act(async () =>
+      first(
+        reply(5, ['assistant', 'Preciso do escopo.'], ['question', 'Scope: Which scope?', true]),
+      ),
+    )
+    expect(screen.getByText('Agent: Feito.')).toBeInTheDocument()
+    expect(screen.queryByText('Scope: Which scope?')).toBeNull()
+    tail.mockResolvedValueOnce({ sessionId: 's-1', revision: 9, unchanged: true, messages: [] })
+    setStatus('working')
+    setStatus('waiting')
+    await waitFor(() => expect(tail).toHaveBeenCalledTimes(3))
+    expect(tail).toHaveBeenLastCalledWith(expect.objectContaining({ since: 9 }))
+  })
+
+  it('shares what a session said between its tabs, also once a tab gets a new pty', async () => {
+    tail.mockResolvedValueOnce(reply(5, ['assistant', 'Primeira.']))
+    const first = agentTab('OITO', 's-1')
+    render(<TodoSidebar />)
+    await screen.findByText('Agent: Primeira.')
+
+    // Its pty replaced, the same session reads as unchanged: the line stays.
+    tail.mockResolvedValueOnce({ sessionId: 's-1', revision: 5, unchanged: true, messages: [] })
+    act(() =>
+      useProjectsStore
+        .getState()
+        .setSubTabPtyId(projectId(), first.id, first.tabs[0].id, 'pty-new'),
+    )
+    await waitFor(() => expect(tail).toHaveBeenCalledTimes(2))
+    await act(async () => {})
+    expect(screen.getByText('Agent: Primeira.')).toBeInTheDocument()
+
+    // Another tab on the same session, focused, shows it too.
+    tail.mockResolvedValueOnce({ sessionId: 's-1', revision: 5, unchanged: true, messages: [] })
+    const second = openTerminal('C:\\repo', 'claude', 'OITO')
+    const store = useProjectsStore.getState()
+    store.setSubTabPtyId(projectId(), second.id, second.tabs[0].id, 'pty-second')
+    store.setSubTabSessionId(projectId(), second.id, second.tabs[0].id, 's-1')
+    focusTerminal(second.id)
+    await waitFor(() => expect(tail).toHaveBeenCalledTimes(3))
+    await act(async () => {})
+    expect(screen.getByText('Agent: Primeira.')).toBeInTheDocument()
   })
 })

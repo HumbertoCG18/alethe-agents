@@ -2,7 +2,7 @@
  * The campaign registry as the Todo tab uses it: read and watched once, shared by the list and the
  * Campaigns map, and edited from the list through the registry write command.
  */
-import { useEffect, useMemo, useReducer, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 
 import {
   activeCampaign,
@@ -54,6 +54,8 @@ import {
   orchestratorJobs,
   type OrchestratorSnapshot,
   readTextFile,
+  sessionTranscriptTail,
+  type TranscriptMessage,
   unwatchFile,
   watchFile,
   worktreeCheckouts,
@@ -255,29 +257,42 @@ export function useCampaignView(): CampaignView {
   return { projectId, registry, activeId, reload, publish }
 }
 
-/**
- * Makes the first open terminal tab that `matches` the active one, looking in the focused
- * terminal first, then in enabled ones; returns its terminal id, or null when none matches. A
- * disabled terminal is enabled again: its tab still counts the campaign as Active.
- */
-function activateTab(projectId: string, matches: (tab: SubTab) => boolean): string | null {
-  const store = useProjectsStore.getState()
-  const focused = useUiStore.getState().activeTerminal?.terminalId
-  const terminals = [...(store.projects.find((item) => item.id === projectId)?.terminals ?? [])]
-  terminals.sort(
+/** The first open terminal tab that `matches`, in the focused terminal first, then in enabled ones. */
+function findTab(
+  terminals: readonly Terminal[],
+  focused: string | undefined,
+  matches: (tab: SubTab) => boolean,
+): { terminal: Terminal; tab: SubTab } | null {
+  const ordered = [...terminals].sort(
     (a, b) =>
       Number(b.id === focused) - Number(a.id === focused) ||
       Number(Boolean(a.disabled)) - Number(Boolean(b.disabled)),
   )
-  for (const terminal of terminals) {
+  for (const terminal of ordered) {
     if ((terminal.kind ?? 'terminal') !== 'terminal') continue
     const tab = terminal.tabs.find(matches)
-    if (!tab) continue
-    if (terminal.disabled) store.setTerminalDisabled(projectId, terminal.id, false)
-    store.setActiveTab(projectId, terminal.id, tab.id)
-    return terminal.id
+    if (tab) return { terminal, tab }
   }
   return null
+}
+
+/**
+ * Makes the first open terminal tab that `matches` the active one (see `findTab`); returns its
+ * terminal id, or null when none matches. A disabled terminal is enabled again: its tab still
+ * counts the campaign as Active.
+ */
+function activateTab(projectId: string, matches: (tab: SubTab) => boolean): string | null {
+  const store = useProjectsStore.getState()
+  const found = findTab(
+    store.projects.find((item) => item.id === projectId)?.terminals ?? [],
+    useUiStore.getState().activeTerminal?.terminalId,
+    matches,
+  )
+  if (!found) return null
+  const { terminal, tab } = found
+  if (terminal.disabled) store.setTerminalDisabled(projectId, terminal.id, false)
+  store.setActiveTab(projectId, terminal.id, tab.id)
+  return terminal.id
 }
 
 /**
@@ -952,4 +967,141 @@ export function useCampaignFacts(campaign: Campaign, checkouts: GitCheckouts) {
       : '—',
     updated: updated === null ? null : t('todo.campaigns.updated', { when: updated }),
   }
+}
+
+/** What a campaign's agent last said: its last answer, and a question it still waits on. */
+export type AgentTail = { message: string | null; question: string | null }
+
+/** The roles that come after a question once it is answered, as the Remote Control chat reads it. */
+const ANSWERED: ReadonlySet<TranscriptMessage['role']> = new Set([
+  'user',
+  'assistant',
+  'tool-result',
+  'question',
+])
+
+/** A session tail's last answer, and its last question when nothing has come after it. */
+export function agentTail(messages: readonly TranscriptMessage[]): AgentTail {
+  const answer = [...messages]
+    .reverse()
+    .find((item) => item.role === 'assistant' && item.text.trim())
+  const last = messages.map((item) => item.role).lastIndexOf('question')
+  const question =
+    last >= 0 &&
+    (messages[last].questions?.length ?? 0) > 0 &&
+    !messages.slice(last + 1).some((item) => ANSWERED.has(item.role))
+      ? messages[last].text
+      : null
+  return { message: answer?.text ?? null, question }
+}
+
+type AgentTab = {
+  campaignId: string
+  provider: 'claude' | 'codex'
+  cwd: string
+  sessionId: string
+  ptyId: string
+}
+
+/**
+ * What each campaign's agent tab (the one Go to tab focuses) last said, from its session's
+ * transcript. A tab is read once it shows up, then each time its agent goes from working to
+ * waiting or stopped, when a new answer or question can have been written; `since` makes the read
+ * of an unchanged transcript cost nothing. What was read belongs to the session, with its
+ * revision, so tabs on one session share it, and an older reply never replaces a newer one. Only
+ * Claude and Codex tabs with a session are read.
+ */
+export function useAgentTails(
+  projectId: string | null,
+  campaignIds: readonly string[],
+): ReadonlyMap<string, AgentTail> {
+  const focused = useUiStore((state) => state.activeTerminal?.terminalId)
+  // One line per readable tab, as a string, so that nothing else in the projects re-renders.
+  const key = useProjectsStore((state) => {
+    const terminals = state.projects.find((project) => project.id === projectId)?.terminals ?? []
+    return campaignIds
+      .flatMap((id) => {
+        const found = findTab(terminals, focused, (tab) => tab.campaignId === id)
+        const tab = found?.tab
+        if (!found || !tab?.sessionId || (tab.type !== 'claude' && tab.type !== 'codex')) return []
+        return [
+          [id, tab.type, tab.cwd || found.terminal.cwd, tab.sessionId, tab.ptyId ?? ''].join('\t'),
+        ]
+      })
+      .join('\n')
+  })
+  const tabs = useMemo(
+    () =>
+      key
+        ? key.split('\n').map((line): AgentTab & { key: string; session: string } => {
+            const [campaignId, provider, cwd, sessionId, ptyId] = line.split('\t')
+            return {
+              key: line,
+              session: [provider, cwd, sessionId].join('\t'),
+              campaignId,
+              provider: provider as AgentTab['provider'],
+              cwd,
+              sessionId,
+              ptyId,
+            }
+          })
+        : [],
+    [key],
+  )
+  // Their agents' statuses, a primitive per tab.
+  const statusKey = useTerminalsStore((state) =>
+    tabs.map((tab) => state.byPtyId[tab.ptyId]?.status ?? '').join('\n'),
+  )
+  // By session: the last tail read and its revision, kept together.
+  const [tails, setTails] = useState<ReadonlyMap<string, AgentTail>>(new Map())
+  const revisions = useRef(new Map<string, number>())
+  const read = useRef(new Set<string>())
+  const statuses = useRef(new Map<string, string>())
+
+  const fetchTail = useCallback((tab: AgentTab & { session: string }) => {
+    const { session, sessionId } = tab
+    sessionTranscriptTail({
+      provider: tab.provider,
+      cwd: tab.cwd,
+      sessionId,
+      since: revisions.current.get(session),
+    }).then(
+      (tail) => {
+        // Unchanged, what the session showed stays. Another session of the same folder is no
+        // answer of this one's, and a reply older than the one shown came in late.
+        if (tail.unchanged || tail.sessionId !== sessionId) return
+        if (tail.revision < (revisions.current.get(session) ?? -1)) return
+        revisions.current.set(session, tail.revision)
+        setTails((current) => new Map(current).set(session, agentTail(tail.messages)))
+      },
+      () => {},
+    )
+  }, [])
+
+  useEffect(() => {
+    for (const tab of tabs) {
+      if (read.current.has(tab.key)) continue
+      read.current.add(tab.key)
+      fetchTail(tab)
+    }
+  }, [tabs, fetchTail])
+
+  useEffect(() => {
+    const now = statusKey.split('\n')
+    tabs.forEach((tab, index) => {
+      const status = now[index] ?? ''
+      const before = statuses.current.get(tab.key)
+      statuses.current.set(tab.key, status)
+      if (before === 'working' && (status === 'waiting' || status === 'stopped')) fetchTail(tab)
+    })
+  }, [statusKey, tabs, fetchTail])
+
+  return useMemo(() => {
+    const byCampaign = new Map<string, AgentTail>()
+    for (const tab of tabs) {
+      const tail = tails.get(tab.session)
+      if (tail) byCampaign.set(tab.campaignId, tail)
+    }
+    return byCampaign
+  }, [tabs, tails])
 }

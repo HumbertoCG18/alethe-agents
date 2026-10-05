@@ -444,6 +444,7 @@ pub fn run() {
             handoff::prepare_agent_handoff,
             handoff::materialize_agent_handoff,
             handoff::complete_agent_handoff,
+            handoff::session_transcript_tail,
             antigravity_sessions::snapshot_antigravity_sessions,
             cursor_sessions::create_cursor_chat,
             claude_usage::get_claude_usage,

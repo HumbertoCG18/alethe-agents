@@ -542,6 +542,36 @@ pub(crate) fn transcript_snapshot(
     })
 }
 
+/// The most messages the Todo panel reads from a session's tail: it shows only its last ones.
+const MAX_TAIL_EVENTS: usize = 20;
+
+fn tail_limit(limit: Option<usize>) -> usize {
+    limit.unwrap_or(MAX_TAIL_EVENTS).clamp(1, MAX_TAIL_EVENTS)
+}
+
+/// The tail of a Claude or Codex session for the Todo panel: `transcript_snapshot`, with its
+/// `limit` clamped, read off the main thread.
+#[tauri::command]
+pub async fn session_transcript_tail(
+    provider: String,
+    cwd: String,
+    session_id: Option<String>,
+    since: Option<u64>,
+    limit: Option<usize>,
+) -> Result<TranscriptSnapshot, String> {
+    tokio::task::spawn_blocking(move || {
+        transcript_snapshot(
+            &provider,
+            &cwd,
+            session_id.as_deref(),
+            since,
+            tail_limit(limit),
+        )
+    })
+    .await
+    .map_err(|error| format!("session_transcript_tail task failed: {error}"))?
+}
+
 pub(crate) fn active_remote_questions(
     provider: &str,
     cwd: &str,
@@ -857,6 +887,14 @@ mod tests {
         assert!(capsule.contains("Build the feature"));
         assert!(capsule.contains("Keep the old terminal open"));
         assert!(capsule.contains("Private reasoning"));
+    }
+
+    #[test]
+    fn clamps_the_todo_tail_to_a_few_messages() {
+        assert_eq!(tail_limit(None), MAX_TAIL_EVENTS);
+        assert_eq!(tail_limit(Some(5)), 5);
+        assert_eq!(tail_limit(Some(0)), 1);
+        assert_eq!(tail_limit(Some(10_000)), MAX_TAIL_EVENTS);
     }
 
     #[test]

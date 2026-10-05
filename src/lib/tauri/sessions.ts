@@ -186,3 +186,32 @@ export async function opencodeExportSession(
 ): Promise<OpenCodeExportSession> {
   return invoke<OpenCodeExportSession>('opencode_export_session', { cwd, sessionId })
 }
+
+/** A transcript message as `session_transcript_tail` reads it. */
+export type TranscriptMessage = {
+  role: 'user' | 'assistant' | 'tool' | 'tool-result' | 'question'
+  text: string
+  questionSetId?: string
+  questions?: unknown[]
+}
+
+export type TranscriptTail = {
+  /** The session read: another one of `cwd` when the one asked for is not found; null for none. */
+  sessionId: string | null
+  /** When its transcript last changed: given back as `since`, an unchanged one is not read again. */
+  revision: number
+  /** `since` was current: no messages are returned. */
+  unchanged: boolean
+  messages: TranscriptMessage[]
+}
+
+/** The last messages (20 at most) of a Claude or Codex session in `cwd`. */
+export function sessionTranscriptTail(args: {
+  provider: 'claude' | 'codex'
+  cwd: string
+  sessionId: string
+  since?: number
+  limit?: number
+}): Promise<TranscriptTail> {
+  return invoke<TranscriptTail>('session_transcript_tail', args)
+}

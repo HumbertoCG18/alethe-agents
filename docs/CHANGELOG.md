@@ -223,6 +223,10 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
   lists them with the done ones checked, and a campaign's terminal is titled by the task it is
   midway through, as `MOTOR · MOTOR-08 2/5`. A malformed step list refuses the registry, as other
   malformed entries do.
+- **What a campaign's agent says, in the Todo panel.** Each active campaign shows its agent's last
+  answer under its controls, in full in the tooltip, and a question the agent waits on is listed in
+  Pending with **Go to tab**, to answer it in the terminal. Claude Code and Codex tabs are read
+  once, then each time their agent stops working.
 
 ### Changed
 

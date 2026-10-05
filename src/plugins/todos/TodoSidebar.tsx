@@ -33,6 +33,7 @@ import {
   type NightDiary,
   type NightEntry,
   resumeTask,
+  stepProgress,
   type TaskWorkers,
 } from '../../lib/campaigns'
 import { askConfirm } from '../../lib/dialog'
@@ -1549,6 +1550,14 @@ function CampaignTaskRow({
   // A task done elsewhere has no state here to go back to.
   const label = t(done ? (undoable ? 'todo.reopen' : STATE_KEYS[task.state]) : 'todo.complete')
   const live = workersLabel(t, workers.get(task.id))
+  // Through its steps when it has them, its result in the tooltip; else its result.
+  const progress = stepProgress(task)
+  const stepLine =
+    progress.total === 0
+      ? task.result
+      : progress.current === null
+        ? `${progress.total}/${progress.total}`
+        : `${progress.done}/${progress.total} · ${progress.current}`
   const title = (
     <>
       <span className={campaignStyles.id}>{task.id}</span>{' '}
@@ -1606,12 +1615,12 @@ function CampaignTaskRow({
           {t(STATE_KEYS[task.state])}
         </span>
       )}
-      {step && !done && task.result ? (
+      {step && !done && stepLine ? (
         <span
           className={`${styles.detailMeta} ${styles.todoTitleText} ${styles.stepLine}`}
-          title={task.result}
+          title={task.result ?? stepLine}
         >
-          {task.result}
+          {stepLine}
         </span>
       ) : null}
       {actions?.menu}

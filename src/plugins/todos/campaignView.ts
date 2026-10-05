@@ -12,6 +12,7 @@ import {
   campaignBlock,
   campaignCwd,
   type CampaignRegistry,
+  campaignStepTitle,
   type CampaignTab,
   type CampaignTask,
   campaignWorkers,
@@ -60,6 +61,7 @@ import {
 } from '../../lib/tauri'
 import { getProjectDefaultCwd } from '../../lib/terminalFactory'
 import type { PtyStatus, SubTab, Terminal } from '../../lib/types'
+import { useCampaignStepsStore } from '../../stores/campaignStepsStore'
 import { selectActiveProject, useProjectsStore } from '../../stores/projectsStore'
 import { anyTabWorking, type PtyRuntime, useTerminalsStore } from '../../stores/terminalsStore'
 import { useUiStore } from '../../stores/uiStore'
@@ -234,6 +236,21 @@ export function useCampaignView(): CampaignView {
   useEffect(() => {
     if (projectId && activeId && activeId !== remembered) rememberCampaign(projectId, activeId)
   }, [projectId, activeId, remembered, rememberCampaign])
+
+  // Where each campaign is by its steps, for the terminal titles; none once the registry is gone,
+  // or once the Todo panel is, since nothing would keep them current.
+  const publishSteps = useCampaignStepsStore((state) => state.publish)
+  useEffect(() => {
+    if (!projectId) return
+    const titles = registry?.campaigns.flatMap((campaign) => {
+      const title = campaignStepTitle(campaign)
+      return title ? [[campaign.id, title] as const] : []
+    })
+    publishSteps(projectId, titles ? Object.fromEntries(titles) : null)
+  }, [projectId, registry, publishSteps])
+  useEffect(() => {
+    if (projectId) return () => publishSteps(projectId, null)
+  }, [projectId, publishSteps])
 
   return { projectId, registry, activeId, reload, publish }
 }

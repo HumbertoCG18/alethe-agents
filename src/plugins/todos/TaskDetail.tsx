@@ -6,6 +6,7 @@ import {
   type Finding,
   inCheckouts,
   type NightDiary,
+  stepProgress,
 } from '../../lib/campaigns'
 import { type MessageKey, useT } from '../../lib/i18n'
 import { LANE_OF, RUN_LANE_ORDER } from '../../lib/orchestratorRuns'
@@ -25,9 +26,9 @@ export type DetailSources = {
 }
 
 /**
- * A campaign task's detail, read-only: its level and window, then its result, evidence, unmet
- * prerequisites, orchestration workers by the board's lanes, night entries and findings, each row
- * left out when empty. Agents write all of it, so it is shown as plain text.
+ * A campaign task's detail, read-only: its level and window, then its result, steps, evidence,
+ * unmet prerequisites, orchestration workers by the board's lanes, night entries and findings, each
+ * row left out when empty. Agents write all of it, so it is shown as plain text.
  */
 export function TaskDetail({
   id,
@@ -76,8 +77,32 @@ export function TaskDetail({
         ))
       : null
   const { evidence } = task
+  const progress = stepProgress(task)
+  const current = task.steps.findIndex((step) => !step.done)
   const rows: Array<[MessageKey, ReactNode]> = [
     ['todo.taskDetail.result', task.result],
+    [
+      'todo.taskDetail.steps',
+      // Read-only, as the agents write them: the done ones checked, the current one pointed at.
+      progress.total > 0 ? (
+        <>
+          <span className={sidebarStyles.detailLine} data-line>
+            {t('todo.taskDetail.stepsDone', { done: progress.done, total: progress.total })}
+          </span>
+          {task.steps.map((step, index) => (
+            <span
+              key={index}
+              className={sidebarStyles.detailLine}
+              data-line
+              aria-current={index === current ? 'step' : undefined}
+            >
+              {step.done ? '✓ ' : index === current ? '→ ' : ''}
+              {step.text}
+            </span>
+          ))}
+        </>
+      ) : null,
+    ],
     [
       'todo.taskDetail.evidence',
       evidence ? (

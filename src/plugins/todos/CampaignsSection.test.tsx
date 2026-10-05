@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import exemplo from '../../lib/__fixtures__/campanhas.exemplo.json'
 import { isoDay, parseCampaigns } from '../../lib/campaigns'
 import { EMPTY_PROJECTS_FILE, type SubTab } from '../../lib/types'
+import { useCampaignStepsStore } from '../../stores/campaignStepsStore'
 import { useProjectsStore } from '../../stores/projectsStore'
 import { useTerminalsStore } from '../../stores/terminalsStore'
 import { useUiStore } from '../../stores/uiStore'
@@ -3485,5 +3486,107 @@ describe('Active campaign step', () => {
       ['interrupted', 'stopped'],
       ['queued', 'waiting on you'],
     ])
+  })
+})
+
+describe('Task steps', () => {
+  const projectId = () => useProjectsStore.getState().projects[0].id
+  const row = (id: string) => document.querySelector(`[data-task="${id}"]`) as HTMLElement
+  const T = (texto: string) => ({ texto, feito: true })
+  const F = (texto: string) => ({ texto, feito: false })
+  /** The example registry with these task fields. */
+  const withTasks = (fields: Record<string, Record<string, unknown>>) => {
+    const data = structuredClone(exemplo)
+    for (const item of data.campanhas.flatMap((campaign) => campaign.tarefas)) {
+      if (item.id in fields) Object.assign(item, fields[item.id])
+    }
+    return JSON.stringify(data)
+  }
+  const RESULT = 'W-Y v3 aprovado no aceite 05/10; aguarda revisão da tabela A e Gate 1'
+
+  beforeEach(() => useCampaignStepsStore.setState({ byProject: {} }))
+
+  it('reads an open task step line as done/total and its current step, its result in the tooltip', async () => {
+    fs.files.set(
+      REGISTRY,
+      withTasks({
+        'OITO-03': {
+          resultado: RESULT,
+          passos: [T('Ler o registro'), F('Medir a tabela A'), F('Comparar')],
+        },
+        'OITO-05': { passos: [T('Ler'), T('Medir')] },
+        'OITO-06': { resultado: 'sem passos' },
+      }),
+    )
+    openTerminal('C:\\repo', 'claude', 'OITO')
+    render(<TodoSidebar />)
+    await waitFor(() => expect(row('OITO-03')).not.toBeNull())
+    const line = within(row('OITO-03')).getByText('1/3 · Medir a tabela A')
+    expect(line).toHaveAttribute('title', RESULT)
+    // All done, it reads total/total; without a result, the line is its own tooltip.
+    expect(within(row('OITO-05')).getByText('2/2')).toHaveAttribute('title', '2/2')
+    // Without steps, the result as before.
+    expect(within(row('OITO-06')).getByText('sem passos')).toHaveAttribute('title', 'sem passos')
+  })
+
+  it('lists the steps in the task detail, the done ones marked and the current one set apart', async () => {
+    fs.files.set(
+      REGISTRY,
+      withTasks({
+        'OITO-03': { passos: [T('Ler o registro'), F('Medir a tabela A'), F('Comparar')] },
+      }),
+    )
+    openTerminal('C:\\repo', 'claude', 'OITO')
+    render(<TodoSidebar />)
+    await waitFor(() => expect(row('OITO-03')).not.toBeNull())
+    fireEvent.click(within(row('OITO-03')).getByRole('button', { name: 'Details of OITO-03' }))
+    const detail = screen.getByRole('group', { name: 'Details of OITO-03' })
+    const term = within(detail).getByText('Steps')
+    const lines = [...term.nextElementSibling!.querySelectorAll('[data-line]')]
+    expect(lines.map((item) => item.textContent)).toEqual([
+      '1 of 3 done',
+      '✓ Ler o registro',
+      '→ Medir a tabela A',
+      'Comparar',
+    ])
+    expect(lines[2]).toHaveAttribute('aria-current', 'step')
+    expect(lines.filter((item) => item.hasAttribute('aria-current'))).toHaveLength(1)
+
+    // A task without steps has no such row.
+    fireEvent.click(within(row('OITO-02')).getByRole('button', { name: 'Details of OITO-02' }))
+    const other = screen.getByRole('group', { name: 'Details of OITO-02' })
+    expect(within(other).queryByText('Steps')).toBeNull()
+  })
+
+  it('publishes where each campaign is by its steps, for the terminal titles, until the registry goes', async () => {
+    fs.files.set(
+      REGISTRY,
+      withTasks({
+        'OITO-03': { passos: [T('a'), F('b'), F('c')] },
+        'PARADA-01': { passos: [F('a')] },
+      }),
+    )
+    render(<TodoSidebar />)
+    await waitFor(() =>
+      expect(useCampaignStepsStore.getState().byProject).toEqual({
+        [projectId()]: { OITO: 'OITO-03 1/3' },
+      }),
+    )
+
+    fs.files.delete(REGISTRY)
+    act(() => fs.onChange?.(REGISTRY))
+    await waitFor(() => expect(useCampaignStepsStore.getState().byProject).toEqual({}))
+  })
+
+  it('takes the step titles back once the Todo panel is gone, so none goes stale', async () => {
+    fs.files.set(REGISTRY, withTasks({ 'OITO-03': { passos: [T('a'), F('b')] } }))
+    const { unmount } = render(<TodoSidebar />)
+    await waitFor(() =>
+      expect(useCampaignStepsStore.getState().byProject[projectId()]).toEqual({
+        OITO: 'OITO-03 1/2',
+      }),
+    )
+    unmount()
+    expect(useCampaignStepsStore.getState().byProject).toEqual({})
   })
 })

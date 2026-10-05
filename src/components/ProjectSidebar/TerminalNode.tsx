@@ -5,6 +5,7 @@ import { useSidebarChatTitle } from '../../hooks/useSidebarChatTitle'
 import { campaignTabTitle } from '../../lib/campaigns'
 import { useT } from '../../lib/i18n'
 import { type AgentType, type Project, type Terminal } from '../../lib/types'
+import { useCampaignStepTitle } from '../../stores/campaignStepsStore'
 import { useProjectsStore } from '../../stores/projectsStore'
 import { anyTabWorking, useTerminalsStore } from '../../stores/terminalsStore'
 import { Favicon } from '../Favicon'
@@ -41,8 +42,9 @@ export function TerminalNode({
 
   const activeTab = terminal.tabs.find((tab) => tab.id === terminal.activeTabId) ?? terminal.tabs[0]
   const chatTitle = useSidebarChatTitle(activeTab)
+  const steps = useCampaignStepTitle(project.id, activeTab?.campaignId)
   const displayName =
-    campaignTabTitle(activeTab, chatTitle) ?? chatTitle ?? activeTab?.name ?? terminal.name
+    campaignTabTitle(activeTab, chatTitle, steps) ?? chatTitle ?? activeTab?.name ?? terminal.name
   const uniqueTypes = Array.from(new Set(terminal.tabs.map((tab) => tab.type))) as AgentType[]
   const orderedTypes =
     activeTab && uniqueTypes.length > 1

@@ -800,6 +800,8 @@ export const en = {
   'todo.findings.more': '+{count} more',
   'todo.taskDetail.toggle': 'Details of {id}',
   'todo.taskDetail.result': 'Result',
+  'todo.taskDetail.steps': 'Steps',
+  'todo.taskDetail.stepsDone': '{done} of {total} done',
   'todo.taskDetail.evidence': 'Evidence',
   'todo.taskDetail.waiting': 'Waiting for',
   'todo.taskDetail.workers': 'Workers',

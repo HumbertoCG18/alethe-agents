@@ -2,6 +2,7 @@ import { render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { EMPTY_PROJECTS_FILE } from '../../lib/types'
+import { useCampaignStepsStore } from '../../stores/campaignStepsStore'
 import { useProjectsStore } from '../../stores/projectsStore'
 
 vi.mock('../../lib/terminalLifecycle', () => ({ cleanupPtys: vi.fn() }))
@@ -16,6 +17,7 @@ import { TerminalNode } from './TerminalNode'
 
 beforeEach(() => {
   useProjectsStore.setState({ ...structuredClone(EMPTY_PROJECTS_FILE), hydrated: false })
+  useCampaignStepsStore.setState({ byProject: {} })
 })
 
 /** A terminal whose first tab, of `type`, was opened for `campaignId`, if any. */
@@ -49,6 +51,15 @@ describe('terminal rows in the project sidebar', () => {
       <NormalTerminalNode project={fresh} terminal={fresh.terminals[0]} selected {...handlers} />,
     )
     expect(screen.getByText('MOTOR · Tabela A')).toBeInTheDocument()
+  })
+
+  it('name a campaign tab by the task its campaign is going through by its steps', () => {
+    const row = terminal('MOTOR')
+    // Published for this project only: another project's MOTOR is not this one.
+    useCampaignStepsStore.getState().publish(row.project.id, { MOTOR: 'MOTOR-08 2/5' })
+    useCampaignStepsStore.getState().publish('elsewhere', { MOTOR: 'MOTOR-01 1/2' })
+    render(<TerminalNode {...row} selected {...handlers} />)
+    expect(screen.getByText('MOTOR · MOTOR-08 2/5')).toBeInTheDocument()
   })
 
   it('leave any other tab its chat title, in both sidebar layouts', () => {

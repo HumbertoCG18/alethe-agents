@@ -38,7 +38,11 @@ export type CampaignTask = {
   /** `resultado` and `evidencia`, null when absent. */
   result: string | null
   evidence: string | null
+  /** Its acceptance steps (`passos`), in order; none when absent. Alethe only reads them. */
+  steps: CampaignStep[]
 }
+
+export type CampaignStep = { text: string; done: boolean }
 
 export type CampaignSituation = {
   kind: 'done' | 'waits' | 'running' | 'ready' | 'blocked'
@@ -97,6 +101,18 @@ function ids(value: unknown): string[] | null {
   return Array.isArray(value) && value.every((item) => typeof item === 'string') ? value : null
 }
 
+/** A task's `passos`; absent means none, anything else but well-formed steps is malformed. */
+function steps(value: unknown): CampaignStep[] | null {
+  if (value === undefined || value === null) return []
+  if (!Array.isArray(value)) return null
+  const read: CampaignStep[] = []
+  for (const step of value) {
+    if (!isRecord(step) || !isId(step.texto) || typeof step.feito !== 'boolean') return null
+    read.push({ text: step.texto, done: step.feito })
+  }
+  return read
+}
+
 /**
  * Parses and validates the registry text with the checks of `campanhas.py validar` (window,
  * state, repeated id, unknown dependency, cycle) plus malformed entries. `null` means the text is
@@ -150,9 +166,18 @@ export function parseCampaigns(source: string): CampaignRegistry | null {
       }
       index(task.id, taskDeps)
       const own = task.janela ?? null
+      const taskSteps = steps(task.passos)
       if (!isState(task.estado)) fail('state', task.id, shown(task.estado))
       if (own !== null && !isWindow(own)) fail('window', task.id, shown(own))
-      if (!isState(task.estado) || !isWindow(window) || (own !== null && !isWindow(own))) return
+      if (!taskSteps) fail('malformed', task.id)
+      if (
+        !isState(task.estado) ||
+        !isWindow(window) ||
+        (own !== null && !isWindow(own)) ||
+        !taskSteps
+      ) {
+        return
+      }
       tasks.push({
         id: task.id,
         title: text(task.titulo),
@@ -163,6 +188,7 @@ export function parseCampaigns(source: string): CampaignRegistry | null {
         unmet: [],
         result: optionalText(task.resultado),
         evidence: optionalText(task.evidencia),
+        steps: taskSteps,
       })
     })
     if (!isWindow(window)) return
@@ -472,20 +498,48 @@ export function pathInside(path: string, root: string): boolean {
 export const inCheckouts = (path: string, checkouts: GitCheckouts) =>
   checkouts.worktrees.some((checkout) => pathInside(path, checkout.path))
 
+/** A task's steps done, their count, and its current step: the first not done, null when all are. */
+export function stepProgress(task: Pick<CampaignTask, 'steps'>): {
+  done: number
+  total: number
+  current: string | null
+} {
+  return {
+    done: task.steps.filter((step) => step.done).length,
+    total: task.steps.length,
+    current: task.steps.find((step) => !step.done)?.text ?? null,
+  }
+}
+
+/**
+ * Where a campaign is by its steps, as "TASK done/total": its first open task, in registry order,
+ * with some steps done and some not. Null when none is midway; one not started on its steps is not.
+ */
+export function campaignStepTitle(campaign: Campaign): string | null {
+  for (const task of campaign.tasks) {
+    if (task.state === DONE) continue
+    const { done, total } = stepProgress(task)
+    if (done > 0 && done < total) return `${task.id} ${done}/${total}`
+  }
+  return null
+}
+
 /** A terminal tab as the active-campaign rule sees it: its tag and its effective cwd. */
 export type CampaignTab = { campaignId?: string; cwd: string }
 
 /**
- * The title of a tab opened for a campaign: the campaign's id, then its chat title when it has one,
- * else the name it was given by hand (one other than its agent type). Null for any other tab, which
- * keeps its own title.
+ * The title of a tab opened for a campaign: the campaign's id, then the task it is going through by
+ * its steps (`steps`, from `campaignStepTitle`), else its chat title when it has one, else the name
+ * it was given by hand (one other than its agent type). Null for any other tab, which keeps its own
+ * title.
  */
 export function campaignTabTitle(
   tab: (Pick<CampaignTab, 'campaignId'> & { name?: string; type?: string }) | undefined,
   chatTitle: string | null,
+  steps: string | null = null,
 ): string | null {
   if (!tab?.campaignId) return null
-  const title = chatTitle ?? (tab.name && tab.name !== tab.type ? tab.name : null)
+  const title = steps ?? chatTitle ?? (tab.name && tab.name !== tab.type ? tab.name : null)
   return title ? `${tab.campaignId} · ${title}` : tab.campaignId
 }
 

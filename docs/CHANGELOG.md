@@ -211,9 +211,20 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
   still waits for, its orchestration workers by state with agent, model and minutes, its entries
   in the latest night diary, and the findings it raised. Rows with nothing to show are left out;
   the box still marks the task done.
+- **Close the orchestration board with its terminal.** Deleting a terminal, from its pane, the
+  sidebar or a campaign's Cancel, also closes the Orchestration board grouped with it; a board
+  grouped with several terminals closes with the last one. Preferences → Orchestration turns it
+  off.
 
 ### Changed
 
+- **A new Claude Code or Codex tab gets its first prompt at launch** (a campaign, a night task,
+  the new-terminal dialog, Home), as the CLI's own prompt argument, instead of having it typed once
+  the CLI looks ready. OpenCode and the other agents still have it typed, and so do Claude Code and
+  Codex for a prompt too long for the launch command line, or on Windows when they are started
+  through a `.cmd`/`.bat` launcher or the prompt holds a `"`. Either way, the first prompt counts
+  as the agent's turn, as one you type does: the agent shows as working, and the tab is marked and
+  notified once the reply is done, also when its pane was moved next to its board meanwhile.
 - **Continue in the terminal** on a task waiting on you (a night entry or a Gate 2 row) whose
   campaign has no tab opens Claude Code there right away, as a planner with its Orchestration
   board, instead of switching the menu to a choice of agents. A campaign with a tab still continues
@@ -262,6 +273,20 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ### Fixed
 
+- **Continue campaign** no longer loses the resume prompt of the Claude Code tab it opens: the
+  tab's pane is moved next to its Orchestration board right after it starts, and the prompt was
+  dropped with the first pane. It is now part of the launch; a first prompt that is still typed
+  (OpenCode, among others) goes on through the pane that replaces the first one, and is never
+  typed twice.
+- **A campaign shows as running once Alethe gives its agent a prompt.** The prompt a new tab
+  starts with, and the one Continue submits in an open tab, now count as the agent's turn, as one
+  you type does: Pause and Cancel appear until the agent goes quiet.
+- An agent no longer stays "working" after a reply too short to be noticed, or one that came out
+  before its terminal was listening: it is back to waiting once its output has been quiet for a
+  few seconds.
+- An argument of a terminal's launch holding a typographic single quote (’) could end the quoting
+  PowerShell reads it in and run the text after it as a command. Every argument now reaches the
+  CLI as written.
 - A new agent tab's first prompt (a campaign, a night task, the new-terminal dialog) is no longer
   confirmed with Enter while the agent is working: no Enter is sent while it works, and the extra
   Enters sent for a CLI still starting stop for good once it has started working.

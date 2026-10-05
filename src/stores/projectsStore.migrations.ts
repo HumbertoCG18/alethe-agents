@@ -125,6 +125,7 @@ export function normalizePreferences(raw: LegacyPreferences | undefined): Prefer
 
     enabledFeatures: normalizeEnabledFeatures(raw),
     orchestration: normalizeOrchestrationSettings(preferences.orchestration),
+    closeOrchestrationBoardWithTerminal: preferences.closeOrchestrationBoardWithTerminal !== false,
     leftSidebarVisible: raw?.leftSidebarVisible ?? true,
     rightSidebarVisible: raw?.rightSidebarVisible ?? true,
     leftSidebarWidth: Math.min(380, Math.max(220, Math.round(raw?.leftSidebarWidth ?? 286))),

@@ -5,6 +5,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import exemplo from '../../lib/__fixtures__/campanhas.exemplo.json'
+import { startActivityTracker } from '../../lib/activityTracker'
 import { isoDay, parseCampaigns } from '../../lib/campaigns'
 import { EMPTY_PROJECTS_FILE, type SubTab } from '../../lib/types'
 import { useProjectsStore } from '../../stores/projectsStore'
@@ -90,6 +91,11 @@ vi.mock('../../lib/tauri', async (importOriginal) => ({
     return content
   }),
   writePty: vi.fn(async () => {}),
+  // What the activity tracker listens to, for a test that runs it.
+  listenPtyData: vi.fn(async () => () => {}),
+  listenPtyActivity: vi.fn(async () => () => {}),
+  listenOpenCodeBridgeStatus: vi.fn(async () => () => {}),
+  recordActivitySamples: vi.fn(async () => {}),
   // The backend finishes a cancelled worker at once: the next snapshot shows it cancelled.
   orchestratorCancel: vi.fn(async (jobId: string) => {
     orchestrator.jobs = orchestrator.jobs.map((job) =>
@@ -1123,6 +1129,25 @@ describe('Campaign controls', () => {
     ])
     expect(useUiStore.getState().activeTerminal?.terminalId).toBe(terminal.id)
     expect(agentTerminals()).toHaveLength(1)
+  })
+
+  it('runs once Continue has submitted its prompt: Pause and Cancel take its place', async () => {
+    fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    agentTab('OITO', 'pty-o', 'waiting')
+    const stopTracker = startActivityTracker()
+    try {
+      await openControls()
+      fireEvent.click(button('Continue campaign')!)
+      await waitFor(() => expect(writePty).toHaveBeenCalledWith('pty-o', '\r'))
+
+      // Typed by Alethe, not by the user: still its agent counts as working on it.
+      await waitFor(() => expect(button('Pause campaign')).toBeEnabled())
+      expect(button('Cancel campaign')).toBeEnabled()
+      expect(button('Continue campaign')).toBeNull()
+      expect(useTerminalsStore.getState().byPtyId['pty-o']?.status).toBe('working')
+    } finally {
+      stopTracker()
+    }
   })
 
   it('gives a tab whose terminal was disabled the prompt as its initial input', async () => {

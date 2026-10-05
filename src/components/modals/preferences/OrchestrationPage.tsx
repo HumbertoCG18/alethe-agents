@@ -40,6 +40,9 @@ function secondsFrom(raw: string): number | null | undefined {
 export function OrchestrationPage() {
   const t = useT()
   const settings = useProjectsStore((state) => state.preferences.orchestration)
+  const closeBoard = useProjectsStore(
+    (state) => state.preferences.closeOrchestrationBoardWithTerminal,
+  )
   const setPreferences = useProjectsStore((state) => state.setPreferences)
   const [models, setModels] = useState<CodexModelOption[] | null>(null)
   const [modelsError, setModelsError] = useState<string | null>(null)
@@ -205,6 +208,25 @@ export function OrchestrationPage() {
             <span className={controls.hint}>{t('prefs.orchestrationWorkerPluginsHint')}</span>
           </label>
         </div>
+      </SettingsSection>
+
+      <SettingsSection
+        id="orchestration-board"
+        title={t('prefs.orchestrationBoard')}
+        description={t('prefs.orchestrationBoardDesc')}
+      >
+        <div className={styles.toggleRow}>
+          <span className={controls.label}>{t('prefs.orchestrationCloseBoard')}</span>
+          <button
+            type="button"
+            role="switch"
+            className={styles.switch}
+            aria-checked={closeBoard}
+            aria-label={t('prefs.orchestrationCloseBoard')}
+            onClick={() => setPreferences({ closeOrchestrationBoardWithTerminal: !closeBoard })}
+          />
+        </div>
+        <span className={controls.hint}>{t('prefs.orchestrationCloseBoardHint')}</span>
       </SettingsSection>
 
       <SettingsSection

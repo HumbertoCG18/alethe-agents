@@ -245,6 +245,17 @@ describe('preference normalization', () => {
     ).toBe(false)
   })
 
+  it('closes an orchestration board with its terminal unless a saved file turned it off', () => {
+    const saved = { ...DEFAULT_PREFERENCES } as Partial<typeof DEFAULT_PREFERENCES>
+    delete saved.closeOrchestrationBoardWithTerminal
+    expect(normalizePreferences(saved).closeOrchestrationBoardWithTerminal).toBe(true)
+    expect(normalizePreferences(undefined).closeOrchestrationBoardWithTerminal).toBe(true)
+    expect(
+      normalizePreferences({ ...DEFAULT_PREFERENCES, closeOrchestrationBoardWithTerminal: false })
+        .closeOrchestrationBoardWithTerminal,
+    ).toBe(false)
+  })
+
   it('defaults motion to animated and preserves a reduced-motion choice', () => {
     expect(normalizePreferences(undefined).motionPreference).toBe('animated')
     expect(

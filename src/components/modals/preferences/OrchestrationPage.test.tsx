@@ -244,3 +244,19 @@ describe('OrchestrationPage', () => {
     expect(orchestration().roles[0].fallback).toBe('reviewer')
   })
 })
+
+// UI-08: a terminal's board goes with it unless the user keeps boards.
+describe('OrchestrationPage board closing', () => {
+  it('closes the board with its terminal by default, and saves turning that off', () => {
+    render(<OrchestrationPage />)
+    const toggle = screen.getByRole('switch', {
+      name: 'Close the orchestration board with its terminal',
+    })
+    expect(toggle).toHaveAttribute('aria-checked', 'true')
+
+    fireEvent.click(toggle)
+
+    expect(useProjectsStore.getState().preferences.closeOrchestrationBoardWithTerminal).toBe(false)
+    expect(toggle).toHaveAttribute('aria-checked', 'false')
+  })
+})

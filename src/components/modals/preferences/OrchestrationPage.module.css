@@ -4,6 +4,13 @@
   gap: 16px;
 }
 
+.toggleRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
 .stepper {
   display: grid;
   grid-template-columns: 36px 1fr 36px;

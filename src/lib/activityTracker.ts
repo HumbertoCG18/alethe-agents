@@ -33,6 +33,8 @@ type TrackedAgent = AgentMeta & {
 }
 
 const tracked = new Map<string, TrackedAgent>()
+/** Prompts Alethe submitted to a pty that was not tracked yet (just spawned), by pty id. */
+const promptsBeforeTracking = new Map<string, string>()
 let pending: ActivitySample[] = []
 let flushChain: Promise<void> = Promise.resolve()
 let started = false
@@ -111,6 +113,11 @@ function syncTrackedAgents(): void {
     })
     const entry: TrackedAgent = { ...meta, monitor, unlisten: null, unlistenActivity: null }
     tracked.set(ptyId, entry)
+    const prompt = promptsBeforeTracking.get(ptyId)
+    if (prompt !== undefined) {
+      promptsBeforeTracking.delete(ptyId)
+      monitor.arm(prompt)
+    }
     void listenPtyData(ptyId, (chunk) => monitor.handleOutput(chunk))
       .then((unlisten) => {
         if (tracked.get(ptyId) !== entry) unlisten()
@@ -148,6 +155,17 @@ function scheduleSyncTrackedAgents(): void {
 
 export function recordAgentActivityInput(ptyId: string, data: string): void {
   tracked.get(ptyId)?.monitor.handleInput(data)
+}
+
+/**
+ * Counts `prompt`, submitted by Alethe itself rather than typed (an initial prompt, a campaign's
+ * Continue), as the pty's turn: its agent is `working` until the reply goes quiet, whether or not
+ * a pane shows it. A pty not tracked yet is armed once it is.
+ */
+export function armAgentPrompt(ptyId: string, prompt: string): void {
+  const entry = tracked.get(ptyId)
+  if (entry) entry.monitor.arm(prompt)
+  else if (started) promptsBeforeTracking.set(ptyId, prompt)
 }
 
 function currentAgents(): ActivityAgentSample[] {
@@ -276,6 +294,7 @@ export function startActivityTracker(): () => void {
       entry.monitor.dispose()
     }
     tracked.clear()
+    promptsBeforeTracking.clear()
     bridgeActivePtyIds.clear()
   }
 }

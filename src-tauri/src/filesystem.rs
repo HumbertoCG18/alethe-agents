@@ -260,11 +260,16 @@ pub fn delete_filesystem_entry(path: String) -> Result<(), String> {
     }
 }
 
+/// Reads a text file. "file not found" means nothing is at the path; something else there, such
+/// as a folder, is "not a file", and a path that cannot be checked gives the system's reason.
 #[tauri::command]
 pub fn read_text_file(path: String) -> Result<String, String> {
     let file = PathBuf::from(path.trim());
-    if !file.is_file() {
-        return Err("file not found".to_string());
+    match file.try_exists() {
+        Ok(false) => return Err("file not found".to_string()),
+        Err(error) => return Err(error.to_string()),
+        Ok(true) if !file.is_file() => return Err("not a file".to_string()),
+        Ok(true) => {}
     }
     fs::read_to_string(&file).map_err(|error| error.to_string())
 }
@@ -529,6 +534,29 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("alethe-watch-{tag}-{suffix}"));
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    // Only a path with nothing at it reads as missing: a folder in its place is another failure.
+    #[test]
+    fn tells_a_missing_file_from_a_path_that_is_no_file() {
+        let dir = scratch("read");
+        let missing = dir.join("campanhas.json");
+        assert_eq!(
+            read_text_file(missing.to_string_lossy().into_owned()),
+            Err("file not found".to_string())
+        );
+        fs::create_dir_all(&missing).unwrap();
+        assert_eq!(
+            read_text_file(missing.to_string_lossy().into_owned()),
+            Err("not a file".to_string())
+        );
+        let file = dir.join("ok.json");
+        fs::write(&file, "{}").unwrap();
+        assert_eq!(
+            read_text_file(file.to_string_lossy().into_owned()),
+            Ok("{}".to_string())
+        );
+        fs::remove_dir_all(&dir).ok();
     }
 
     // A folder target reports the files written directly inside it, such as a new night diary.

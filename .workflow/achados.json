@@ -111,6 +111,15 @@
       "origem": "UI-01",
       "detalhe": "Botão de ícone do cabeçalho (~130) e ação do detalhe (~870): o segundo sobrescreve borda, padding e raio do primeiro. Anterior ao #86.",
       "estado": "novo"
+    },
+    {
+      "id": "ACH-0013",
+      "data": "2026-10-05",
+      "tipo": "divida",
+      "titulo": "transcript_snapshot lê o transcript inteiro antes de cortar no limit",
+      "origem": "TODO-31",
+      "detalhe": "handoff.rs: os parsers acumulam todo o histórico e o corte (limit) vem depois (~534). Afeta o Controle Remoto e o session_transcript_tail do #87; leitura só na parada do agente. Ler do fim do arquivo se transcripts grandes pesarem (não medido).",
+      "estado": "novo"
     }
   ]
 }

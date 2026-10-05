@@ -312,6 +312,17 @@
           ],
           "origem": "USER",
           "resultado": "aguarda o Gate 2 do usuário; PR #82 mergeado (a52ec24)"
+        },
+        {
+          "id": "TODO-31",
+          "titulo": "Último recado do agente em Ativas e pergunta sem resposta em Pendentes (transcript_snapshot)",
+          "nivel": "T2",
+          "estado": "em execução",
+          "depende_de": [
+            "TODO-27"
+          ],
+          "origem": "USER",
+          "resultado": "aguarda o Gate 2 do usuário; PR #88 mergeado (b2bc3a4)"
         }
       ]
     },
@@ -622,6 +633,35 @@
           "origem": "USER",
           "evidencia": "PR #77 integrado na dev; revisões Codex com achados corrigidos; testes verdes",
           "resultado": "aguarda o Gate 2 do usuário"
+        }
+      ]
+    },
+    {
+      "id": "CHAT",
+      "titulo": "Conversa sobre as sessões de agente (upstream #297)",
+      "prioridade": 7,
+      "janela": "assistida",
+      "depende_de": [],
+      "worktrees": [],
+      "atualizado_em": "2026-10-05",
+      "tarefas": [
+        {
+          "id": "CHAT-01",
+          "titulo": "Chat e Terminal alternáveis nas abas de agente do desktop, portando o chat do Controle Remoto",
+          "nivel": "T2",
+          "estado": "proposta",
+          "depende_de": [],
+          "origem": "USER"
+        },
+        {
+          "id": "CHAT-02",
+          "titulo": "Conversa entre orquestrador e workers em formato de thread no quadro",
+          "nivel": "T2",
+          "estado": "proposta",
+          "depende_de": [
+            "CHAT-01"
+          ],
+          "origem": "USER"
         }
       ]
     }

@@ -66,6 +66,24 @@
       "origem": "TODO-25",
       "detalhe": "Mesma lacuna corrigida em cli_resolver (#77); hoje só passa valores gerados pelo Alethe (token, endpoint, caminhos).",
       "estado": "novo"
+    },
+    {
+      "id": "ACH-0008",
+      "data": "2026-10-05",
+      "tipo": "bug",
+      "titulo": "nightRunner.test.ts: 5 testes falham na suíte inteira e passam isolados",
+      "origem": "TODO-28",
+      "detalhe": "Medido em 05/10 00h20: dev 025a148 limpo (worktree forkmerge) falha os mesmos 5 (4 por timeout de 5 s, 'after a restart' em 119 ms); arquivo isolado 18/18. Às 23h30 de 04/10 a suíte inteira passava 1047/1047: suspeita de dependência de horário/data real ou de carga.",
+      "estado": "novo"
+    },
+    {
+      "id": "ACH-0009",
+      "data": "2026-10-05",
+      "tipo": "divida",
+      "titulo": "CHANGELOG [Unreleased] com entradas superadas pelo #79",
+      "origem": "TODO-29",
+      "detalhe": "Seletor de origem, List source, Current, grupos In progress/Finished e card da noite em Pendentes saíram; a entrada Changed do #79 diz isso. Reconciliar as entradas intermediárias deste ciclo antes do release.",
+      "estado": "novo"
     }
   ]
 }

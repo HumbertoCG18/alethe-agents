@@ -10,7 +10,7 @@
       "janela": "assistida",
       "depende_de": [],
       "worktrees": [],
-      "atualizado_em": "2026-10-04",
+      "atualizado_em": "2026-10-05",
       "tarefas": [
         {
           "id": "TODO-01",
@@ -280,6 +280,26 @@
             "TODO-26"
           ],
           "origem": "USER"
+        },
+        {
+          "id": "TODO-28",
+          "titulo": "Several active campaigns when none waits on another; one subsection per campaign under Current",
+          "nivel": "T2",
+          "estado": "em execução",
+          "depende_de": [],
+          "origem": "USER",
+          "resultado": "aguarda o Gate 2 do usuário; PR #80 mergeado (ab9f839)"
+        },
+        {
+          "id": "TODO-29",
+          "titulo": "Todo panel in three tabs (Tasks, Night, Personal) with one place per item",
+          "nivel": "T2",
+          "estado": "em execução",
+          "depende_de": [
+            "TODO-28"
+          ],
+          "origem": "USER",
+          "resultado": "aguarda o Gate 2 do usuário; PR #80 mergeado (ab9f839)"
         }
       ]
     },

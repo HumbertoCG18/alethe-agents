@@ -189,17 +189,22 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
   still opens and closes it. Each project keeps its own order, and **Reset section order** in the
   Todo settings puts the default back. In My todos, your own list stays in place and the other
   sections move around it.
-- **Campaign controls in the Active section.** A collapsed **Campaign** group under the add field
+- **Campaign controls in the Active section.** A collapsed **Current** group under the add field
   continues, pauses or cancels the campaign. **Continue campaign**, while nothing runs for it,
-  picks the task in progress, else the first ready one with its prerequisites done, and asks the
-  campaign's agent tab to resume from it, by its registry and handoff; without a tab it opens Claude
-  Code with its orchestration board. It is disabled, saying so, when nothing is ready. While the
+  picks the task in progress, else the first ready one with its prerequisites done, else the first
+  task not done, and asks the campaign's agent tab to resume from it, by its registry and handoff;
+  for a task that is not ready, the prompt says why it waits (its state, the prerequisites it waits
+  for, and its result). Without a tab it opens Claude Code with its orchestration board. It is
+  disabled, saying so, only when every task is done. While the
   campaign runs, **Pause campaign** sends Esc to its working agent tabs and leaves its workers
   running, and **Cancel campaign**, after you confirm, also cancels its running and queued workers,
   closes its tabs, and puts its tasks in progress back to Ready; nothing is concluded or deleted.
   Cancel does nothing when the workers cannot be listed, and a task whose worker is still live
   stays in progress, named in the summary. A prompt is never submitted into an agent that started
   working meanwhile: it is left in the input, and a toast says so.
+- **Hide the add field of a campaign list.** A button on the Active section's header hides or
+  shows the "Add a task to …" field, remembered per project. While it is hidden, Ctrl+N still shows
+  it, focused, for one task.
 
 ### Changed
 

@@ -250,6 +250,36 @@
           "origem": "USER",
           "evidencia": "PR #73 integrado na dev; revisão Codex (2 MINOR, 1 corrigido + defeito do Ctrl+N achado pelo lint); vitest 1003",
           "resultado": "aguarda o Gate 2 do usuário"
+        },
+        {
+          "id": "TODO-25",
+          "titulo": "Prompt inicial perdido na remontagem e campanha nunca aparece como rodando",
+          "nivel": "T2",
+          "estado": "em execução",
+          "depende_de": [],
+          "origem": "USER",
+          "evidencia": "PR #77 integrado na dev; revisões Codex com achados corrigidos; testes verdes",
+          "resultado": "aguarda o Gate 2 do usuário"
+        },
+        {
+          "id": "TODO-26",
+          "titulo": "Detalhe da tarefa ao abrir a linha: resultado, evidência, dependências, workers, noite e achados",
+          "nivel": "T2",
+          "estado": "em execução",
+          "depende_de": [],
+          "origem": "USER",
+          "evidencia": "PR #76 integrado na dev; revisões Codex com achados corrigidos; testes verdes",
+          "resultado": "aguarda o Gate 2 do usuário"
+        },
+        {
+          "id": "TODO-27",
+          "titulo": "Passos de aceite por tarefa: registro, CLI campanhas.py passo e progresso no Todo",
+          "nivel": "T2",
+          "estado": "proposta",
+          "depende_de": [
+            "TODO-26"
+          ],
+          "origem": "USER"
         }
       ]
     },
@@ -548,6 +578,16 @@
           "depende_de": [],
           "origem": "USER",
           "evidencia": "PR #70 integrado na dev; revisão Codex com achados corrigidos; testes verdes",
+          "resultado": "aguarda o Gate 2 do usuário"
+        },
+        {
+          "id": "UI-08",
+          "titulo": "Fechar um terminal fecha a Orquestração ligada a ele (configurável)",
+          "nivel": "T1",
+          "estado": "em execução",
+          "depende_de": [],
+          "origem": "USER",
+          "evidencia": "PR #77 integrado na dev; revisões Codex com achados corrigidos; testes verdes",
           "resultado": "aguarda o Gate 2 do usuário"
         }
       ]

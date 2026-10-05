@@ -48,6 +48,24 @@
       "detalhe": "04/10: o instalador aberto pelo script herdou NO_COLOR do terminal de ferramentas do Claude Code; o Alethe e as abas ficaram sem cor. O #58 só remove CLAUDE*. Proposta: remover NO_COLOR junto quando houver sessão externa (CLAUDECODE/CLAUDE_CODE_SESSION_ID), como CLAUDE_CODE_DISABLE_AUTO_MEMORY.",
       "estado": "virou-tarefa",
       "destino": "UI-04"
+    },
+    {
+      "id": "ACH-0006",
+      "data": "2026-10-04",
+      "tipo": "risco",
+      "titulo": "Lançador .cmd escolhido antes do .exe passa argumentos pelo cmd.exe",
+      "origem": "TODO-25",
+      "detalhe": "findCliLauncher prefere .cmd (codex.cmd do npm antes de codex.exe); args configurados pelo usuário passam pelo cmd.exe, que expande %VAR% e quebra em aspas; o prompt já cai para digitado nesse caso (#77).",
+      "estado": "novo"
+    },
+    {
+      "id": "ACH-0007",
+      "data": "2026-10-04",
+      "tipo": "divida",
+      "titulo": "ps_escape do agent_events.rs não dobra as aspas tipográficas do PowerShell",
+      "origem": "TODO-25",
+      "detalhe": "Mesma lacuna corrigida em cli_resolver (#77); hoje só passa valores gerados pelo Alethe (token, endpoint, caminhos).",
+      "estado": "novo"
     }
   ]
 }

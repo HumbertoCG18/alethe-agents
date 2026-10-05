@@ -496,14 +496,6 @@
   transform: rotate(-90deg);
 }
 
-.sectionIcon {
-  width: 14px;
-  height: 14px;
-  flex: 0 0 14px;
-  border-radius: 3px;
-  object-fit: cover;
-}
-
 .sectionName {
   min-width: 0;
   overflow: hidden;

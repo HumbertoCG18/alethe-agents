@@ -56,6 +56,7 @@ import {
   orchestratorJobs,
   type OrchestratorSnapshot,
   readTextFile,
+  recordFrontendError,
   unwatchFile,
   watchFile,
   worktreeCheckouts,
@@ -110,14 +111,67 @@ export type Registry = CampaignRegistry & {
 }
 
 /**
+ * Why there is no registry to show: nothing is at its path, or a stage of reading it failed, with
+ * the reason; an empty one is the stage's own (no main checkout, or JSON that is no registry).
+ */
+export type RegistryProblem =
+  { kind: 'missing' } | { kind: 'error'; stage: 'checkouts' | 'read' | 'parse'; message: string }
+
+const reason = (error: unknown) => (error instanceof Error ? error.message : String(error))
+
+/** The JSON error of a text that is no registry; empty when it is JSON of another shape. */
+function jsonError(text: string): string {
+  try {
+    JSON.parse(text)
+    return ''
+  } catch (error) {
+    return reason(error)
+  }
+}
+
+/** The failures already logged, oldest first, so that retrying one does not log it again. */
+const loggedProblems = new Set<string>()
+const MAX_LOGGED_PROBLEMS = 50
+
+/**
+ * Logs a registry failure of `projectPath` (`problem`) once: the same one again is skipped until
+ * that registry reads fine (null). Only the last 50 are remembered.
+ */
+export function logRegistryProblem(projectPath: string, problem: string | null) {
+  const prefix = `Campaign registry of ${projectPath}: `
+  if (problem === null) {
+    for (const line of loggedProblems) if (line.startsWith(prefix)) loggedProblems.delete(line)
+    return
+  }
+  const line = prefix + problem
+  if (loggedProblems.has(line)) return
+  loggedProblems.add(line)
+  if (loggedProblems.size > MAX_LOGGED_PROBLEMS) {
+    loggedProblems.delete(loggedProblems.values().next().value as string)
+  }
+  void recordFrontendError(line, null, 'todo-registry')
+}
+
+/** A stage's own reason, for the log, when its error has none. */
+const STAGE_REASONS = {
+  checkouts: 'no main checkout',
+  read: 'unreadable',
+  parse: 'not a campaign registry',
+} as const
+
+/**
  * Reads the registry in the main checkout of `projectPath` and re-reads it when the file changes;
- * `reload` re-reads it now, and `publish` shows text just written to it.
+ * `reload` re-reads it now, and `publish` shows text just written to it. Without a registry,
+ * `problem` says why.
  */
 export function useCampaignRegistry(
   projectId: string | null,
   projectPath: string,
-): Pick<CampaignView, 'registry' | 'reload' | 'publish'> {
+): Pick<CampaignView, 'registry' | 'problem' | 'reload' | 'publish'> {
   const [registry, setRegistry] = useState<Registry | null>(null)
+  const [problem, setProblem] = useState<{ projectId: string; problem: RegistryProblem } | null>(
+    null,
+  )
   const reloadRef = useRef<() => Promise<void>>(async () => {})
   const publishRef = useRef<(path: string, text: string) => void>(() => {})
 
@@ -128,6 +182,8 @@ export function useCampaignRegistry(
     let target: string | null = null
     let watched: string | null = null
     let watching: string | null = null
+    // The last read failed: coming back to the window tries again.
+    let failed = false
     // The path counts as watched only once the watch is in place; it fails while `.workflow`
     // does not exist, and `retry` tries again when the user comes back to the window.
     const watch = async (path: string) => {
@@ -146,26 +202,57 @@ export function useCampaignRegistry(
       if (watched) void unwatchFile(watched).catch(() => {})
       watched = path
     }
+    const show = (shown: Registry | null, next: RegistryProblem | null) => {
+      failed = next?.kind === 'error'
+      setRegistry(shown)
+      setProblem(next ? { projectId, problem: next } : null)
+      if (shown) logRegistryProblem(projectPath, null)
+      if (next?.kind !== 'error') return
+      logRegistryProblem(projectPath, `${next.stage}: ${next.message || STAGE_REASONS[next.stage]}`)
+    }
     const reload = async () => {
       // Reloads overlap (file events, focus); only the newest one may publish.
       const request = ++latest
       const stale = () => cancelled || request !== latest
-      const checkouts = await worktreeCheckouts(projectPath).catch(() => null)
+      let checkouts: GitCheckouts
+      try {
+        checkouts = await worktreeCheckouts(projectPath)
+      } catch (error) {
+        if (!stale()) show(null, { kind: 'error', stage: 'checkouts', message: reason(error) })
+        return
+      }
       if (stale()) return
-      const main = checkouts?.main
-      if (!checkouts || !main) {
-        setRegistry(null)
+      const { main } = checkouts
+      // A bare repository: no checkout to hold the registry, which is no proof that there is none.
+      if (!main) {
+        show(null, { kind: 'error', stage: 'checkouts', message: '' })
         return
       }
       const path = registryPath(main)
       target = path
       await watch(path)
-      const text = await readTextFile(path).catch(() => null)
+      let text: string
+      try {
+        text = await readTextFile(path)
+      } catch (error) {
+        if (stale()) return
+        // read_text_file's own words for a path that is no file.
+        const message = reason(error)
+        show(
+          null,
+          message === 'file not found'
+            ? { kind: 'missing' }
+            : { kind: 'error', stage: 'read', message },
+        )
+        return
+      }
       if (stale()) return
-      const parsed = text === null ? null : parseCampaigns(text)
-      setRegistry(
-        parsed && text !== null ? { ...parsed, projectId, path, main, checkouts, text } : null,
-      )
+      const parsed = parseCampaigns(text)
+      if (!parsed) {
+        show(null, { kind: 'error', stage: 'parse', message: jsonError(text) })
+        return
+      }
+      show({ ...parsed, projectId, path, main, checkouts, text }, null)
     }
     reloadRef.current = reload
     publishRef.current = (path, text) => {
@@ -174,7 +261,8 @@ export function useCampaignRegistry(
         setRegistry((shown) => (shown?.path === path ? { ...shown, ...parsed, text } : shown))
     }
     const retry = () => {
-      if (target && watched !== target && document.visibilityState !== 'hidden') void reload()
+      if (document.visibilityState === 'hidden') return
+      if ((target && watched !== target) || failed) void reload()
     }
     void reload()
     const unlisten = listenFileChanged((path) => {
@@ -195,6 +283,7 @@ export function useCampaignRegistry(
   // worktree of the same repository, and the panel should not blink while it re-reads.
   return {
     registry: registry?.projectId === projectId ? registry : null,
+    problem: problem?.projectId === projectId ? problem.problem : null,
     reload: () => reloadRef.current(),
     publish: (path, text) => publishRef.current(path, text),
   }
@@ -218,6 +307,8 @@ function useFocusedTab(): CampaignTab | null {
 export type CampaignView = {
   projectId: string | null
   registry: Registry | null
+  /** Why there is no registry, once that is known; null while it loads or once it is read. */
+  problem: RegistryProblem | null
   /** The campaign being worked on: the focused terminal's, else the project's last one. */
   activeId: string | null
   reload: () => Promise<void>
@@ -231,7 +322,7 @@ export function useCampaignView(): CampaignView {
   const projectPath = useProjectsStore((state) =>
     getProjectDefaultCwd(selectActiveProject(state), state.projects),
   )
-  const { registry, reload, publish } = useCampaignRegistry(projectId, projectPath)
+  const { registry, problem, reload, publish } = useCampaignRegistry(projectId, projectPath)
   const focused = useFocusedTab()
   const remembered = useTodosStore((state) =>
     projectId ? (state.activeCampaigns[projectId] ?? null) : null,
@@ -260,7 +351,7 @@ export function useCampaignView(): CampaignView {
     if (projectId) return () => publishSteps(projectId, null)
   }, [projectId, publishSteps])
 
-  return { projectId, registry, activeId, reload, publish }
+  return { projectId, registry, problem, activeId, reload, publish }
 }
 
 /** The first open terminal tab that `matches`, in the focused terminal first, then in enabled ones. */

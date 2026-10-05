@@ -97,6 +97,7 @@ vi.mock('../../lib/tauri', async (importOriginal) => ({
     return content
   }),
   writePty: vi.fn(async () => {}),
+  recordFrontendError: vi.fn(async () => {}),
   // No session to read unless a test gives one.
   sessionRead: vi.fn(async () => ({
     sessionId: null,
@@ -130,6 +131,7 @@ import {
   orchestratorCancel,
   orchestratorJobs,
   readTextFile,
+  recordFrontendError,
   sessionRead,
   sessionSubscribe,
   unwatchFile,
@@ -141,6 +143,7 @@ import { cleanupPtys } from '../../lib/terminalLifecycle'
 import { CampaignsSection } from './CampaignsSection'
 import {
   campaignLiveStatus,
+  logRegistryProblem,
   openCampaign,
   resumeCampaign,
   useCampaignView,
@@ -2527,10 +2530,10 @@ describe('Todo sections', () => {
     fireEvent.keyDown(window, { key: 'n', ctrlKey: true })
     await waitFor(() => expect(field()).toHaveFocus())
 
-    // Personal keeps its filters and add field on top, with no campaign header.
+    // Personal keeps its add field on top, with no campaign header and no filters.
     fireEvent.click(screen.getByRole('tab', { name: /^Personal/ }))
     expect(header(/^Active/)).toBeNull()
-    expect(screen.getByRole('tablist', { name: 'Task filters' }).closest('section')).toBeNull()
+    expect(screen.queryByRole('tablist', { name: 'Task filters' })).toBeNull()
     expect(screen.getByPlaceholderText('Add a task…').closest('section')).toBeNull()
     expect(screen.getByText('Personal one')).toBeInTheDocument()
   })
@@ -3870,5 +3873,171 @@ describe('Agent messages', () => {
       sessionId: 's-1',
       since: 5,
     })
+  })
+})
+
+describe('Registry read failures', () => {
+  const alert = () => screen.queryByRole('alert')
+  const campaigns = () => screen.queryByRole('button', { name: /^Campaigns/ })
+
+  it('says a project has no registry only when its file is missing', async () => {
+    render(<TodoSidebar />)
+    expect(await screen.findByText(/no campaign registry/)).toBeInTheDocument()
+    expect(alert()).toBeNull()
+    expect(recordFrontendError).not.toHaveBeenCalled()
+  })
+
+  it('names why git could not list the checkouts, logs it once, and Try again reads again', async () => {
+    fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    const failure = 'git_command_failed:fatal: not a git repository'
+    vi.mocked(worktreeCheckouts).mockRejectedValueOnce(failure).mockRejectedValueOnce(failure)
+    render(<TodoSidebar />)
+    await waitFor(() =>
+      expect(alert()).toHaveTextContent(`Could not read the campaign registry: ${failure}`),
+    )
+    expect(screen.queryByText(/no campaign registry/)).toBeNull()
+
+    // The same failure again is not logged twice.
+    fireEvent.click(within(alert()!).getByRole('button', { name: 'Try again' }))
+    await waitFor(() => expect(worktreeCheckouts).toHaveBeenCalledTimes(2))
+    await act(async () => {})
+    expect(recordFrontendError).toHaveBeenCalledTimes(1)
+    expect(recordFrontendError).toHaveBeenCalledWith(
+      expect.stringContaining(failure),
+      null,
+      'todo-registry',
+    )
+
+    fireEvent.click(within(alert()!).getByRole('button', { name: 'Try again' }))
+    await waitFor(() => expect(campaigns()).not.toBeNull())
+    expect(alert()).toBeNull()
+  })
+
+  it('reads again on focus after a read that failed once its file was watched', async () => {
+    fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    vi.mocked(readTextFile).mockRejectedValueOnce('Access is denied. (os error 5)')
+    render(<TodoSidebar />)
+    await waitFor(() =>
+      expect(alert()).toHaveTextContent(
+        'Could not read the campaign registry: Access is denied. (os error 5)',
+      ),
+    )
+    expect(watchFile).toHaveBeenCalledWith(REGISTRY)
+
+    act(() => window.dispatchEvent(new Event('focus')))
+    await waitFor(() => expect(campaigns()).not.toBeNull())
+    expect(alert()).toBeNull()
+  })
+
+  it('reports a repository without a main checkout, rather than no registry', async () => {
+    vi.mocked(worktreeCheckouts).mockResolvedValueOnce({ main: null, worktrees: [] })
+    render(<TodoSidebar />)
+    await waitFor(() =>
+      expect(alert()).toHaveTextContent(
+        'Could not read the campaign registry: the repository has no main checkout',
+      ),
+    )
+    expect(screen.queryByText(/no campaign registry/)).toBeNull()
+  })
+
+  it('reports a registry path that holds no file, rather than no registry', async () => {
+    vi.mocked(readTextFile).mockRejectedValueOnce('not a file')
+    render(<TodoSidebar />)
+    await waitFor(() =>
+      expect(alert()).toHaveTextContent('Could not read the campaign registry: not a file'),
+    )
+    expect(screen.queryByText(/no campaign registry/)).toBeNull()
+  })
+
+  it('logs a failure once until its registry reads fine, remembering the last 50 only', () => {
+    logRegistryProblem('C:\\a', 'read: denied')
+    logRegistryProblem('C:\\a', 'read: denied')
+    expect(recordFrontendError).toHaveBeenCalledTimes(1)
+    // Read fine, the project's failures are forgotten: the same one is logged again.
+    logRegistryProblem('C:\\a', null)
+    logRegistryProblem('C:\\a', 'read: denied')
+    expect(recordFrontendError).toHaveBeenCalledTimes(2)
+
+    vi.mocked(recordFrontendError).mockClear()
+    for (let index = 0; index < 51; index += 1) logRegistryProblem(`C:\\p${index}`, 'read: x')
+    expect(recordFrontendError).toHaveBeenCalledTimes(51)
+    // The oldest went to make room: logged again; the newest is still remembered.
+    logRegistryProblem('C:\\p0', 'read: x')
+    logRegistryProblem('C:\\p50', 'read: x')
+    expect(recordFrontendError).toHaveBeenCalledTimes(52)
+  })
+
+  it('reports a file that is not a registry, rather than no registry', async () => {
+    fs.files.set(REGISTRY, '{"campanhas": ')
+    render(<TodoSidebar />)
+    await waitFor(() =>
+      expect(alert()).toHaveTextContent(/^Could not read the campaign registry: .+/),
+    )
+    expect(screen.queryByText(/no campaign registry/)).toBeNull()
+
+    cleanup()
+    fs.files.set(REGISTRY, '{"versao": 1}')
+    render(<TodoSidebar />)
+    await waitFor(() =>
+      expect(alert()).toHaveTextContent(
+        'Could not read the campaign registry: it is not a campaign registry',
+      ),
+    )
+  })
+})
+
+describe('Personal list', () => {
+  const projectId = () => useProjectsStore.getState().projects[0].id
+  /** The personal todos' titles in the order shown. */
+  const titles = () =>
+    [...document.querySelectorAll('[class*="todoTitleText"]')].map((item) => item.textContent)
+  /** A shown todo's row. */
+  const row = (title: string) => screen.getByTitle(title).closest('[draggable]') as HTMLElement
+
+  beforeEach(() => useTodosStore.setState({ tab: 'personal' }))
+
+  it('shows one list, open todos first with their project, the done ones collapsed at its end', () => {
+    const store = useTodosStore.getState()
+    store.createTodo('Loose one')
+    store.createTodo('Write the doc', [], projectId())
+    const done = store.createTodo('Finished one', [], projectId())!
+    useTodosStore.getState().toggleTodo(done.id)
+    render(<TodoSidebar />)
+
+    // No filters, no section per project.
+    expect(screen.queryByRole('tablist', { name: 'Task filters' })).toBeNull()
+    expect(screen.queryByRole('button', { name: /^No project/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /^App \d/ })).toBeNull()
+    expect(titles()).toEqual(['Loose one', 'Write the doc'])
+    const chip = (title: string) =>
+      within(row(title)).getByRole('button', { name: 'Link task to a project' })
+    expect(chip('Write the doc')).toHaveTextContent('App')
+    expect(chip('Loose one')).toHaveTextContent('No project')
+
+    const doneGroup = screen.getByRole('button', { name: '1 done' })
+    expect(doneGroup).toHaveAttribute('aria-expanded', 'false')
+    fireEvent.click(doneGroup)
+    expect(titles()).toEqual(['Loose one', 'Write the doc', 'Finished one'])
+    expect(screen.getByRole('progressbar')).toHaveTextContent('1 / 3')
+  })
+
+  it('reorders open todos by dragging one onto another in the list', () => {
+    const store = useTodosStore.getState()
+    store.createTodo('First', [], projectId())
+    store.createTodo('Second')
+    store.createTodo('Third', [], projectId())
+    render(<TodoSidebar />)
+    expect(titles()).toEqual(['First', 'Second', 'Third'])
+
+    const dataTransfer = { setData: () => {}, effectAllowed: '', dropEffect: '' }
+    fireEvent.dragStart(row('Third'), { dataTransfer })
+    fireEvent.dragOver(row('First'), { dataTransfer })
+    fireEvent.drop(row('First'), { dataTransfer })
+    expect(titles()).toEqual(['Third', 'First', 'Second'])
+    expect(useTodosStore.getState().todos.map((todo) => todo.title)).toEqual([
+      'Third',
+      'First',
+      'Second',
+    ])
   })
 })

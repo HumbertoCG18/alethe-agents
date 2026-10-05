@@ -321,6 +321,13 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
   background for a flat one. Its message field is named for screen readers, and a worker waiting on
   your approval is announced. Corners and timings follow the app's shared values, and both screens
   follow the Clean style. Error text in several dialogs now shows in the error colour.
+- **The Todo panel says why it cannot read a campaign registry.** "No campaign registry" now
+  means only that the file is missing. Any other failure (listing the checkouts, reading the file,
+  or a file that is not a registry) is named, with **Try again**; it is logged once, and read again
+  when you come back to the window.
+- **The Personal tab is one list.** The All/Open/Done filters and the sections per project are
+  gone: your open todos keep their order and drag, each with its project as a chip, and the done
+  ones wait collapsed at the end under "N done".
 
 ### Fixed
 

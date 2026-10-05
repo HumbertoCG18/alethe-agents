@@ -62,7 +62,7 @@
 
 .counterError,
 .error {
-  color: var(--danger);
+  color: var(--status-offline);
 }
 
 .loading,

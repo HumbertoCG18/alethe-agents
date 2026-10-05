@@ -54,8 +54,8 @@
 }
 
 .dangerBtn:hover:not(:disabled) {
-  color: var(--danger);
-  border-color: var(--danger);
+  color: var(--status-offline);
+  border-color: var(--status-offline);
 }
 
 .quietBtn {
@@ -83,7 +83,7 @@
   color: var(--status-working);
 }
 .statusFailed {
-  color: var(--danger);
+  color: var(--status-offline);
 }
 
 .command {

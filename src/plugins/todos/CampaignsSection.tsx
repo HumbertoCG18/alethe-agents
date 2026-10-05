@@ -1,6 +1,7 @@
 import { Play } from 'lucide-react'
 import { useState } from 'react'
 
+import controls from '../../components/modals/controls.module.css'
 import {
   type Campaign,
   type CampaignSituation,
@@ -268,7 +269,7 @@ function CampaignRow({
               key={agent}
               type="button"
               role="menuitem"
-              className={styles.menuItem}
+              className={`${controls.btn} ${controls.btnSm} ${styles.menuItem}`}
               onClick={choose(() => onOpen(agent))}
             >
               {AGENT_TYPE_LABELS[agent]}

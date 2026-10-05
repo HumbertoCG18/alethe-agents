@@ -324,6 +324,50 @@ select.input {
   font-size: 13px;
 }
 
+/* An on/off toggle: a `button` with `role="switch"` and `aria-checked`. */
+.switch {
+  position: relative;
+  width: 32px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--bg-elevated);
+  cursor: pointer;
+  transition:
+    background var(--anim-fast) ease,
+    border-color var(--anim-fast) ease;
+}
+.switch::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--fg-faint);
+  transition:
+    transform var(--anim-fast) ease,
+    background var(--anim-fast) ease;
+}
+.switch[aria-checked='true'] {
+  background: var(--accent-soft);
+  border-color: var(--accent-border);
+}
+.switch[aria-checked='true']::after {
+  transform: translateX(14px);
+  background: var(--accent);
+}
+.switch:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.switch:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
 .themeGrid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));

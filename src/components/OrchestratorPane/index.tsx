@@ -38,7 +38,6 @@ import { taskLabel } from '../../lib/campaigns'
 import { fmtUsd } from '../../lib/costFormat'
 import { type MessageKey, type TFunction, useT } from '../../lib/i18n'
 import {
-  DOT_SPACING,
   fitView,
   focusView,
   type GraphNode,
@@ -324,11 +323,13 @@ type ApprovalAskProps = {
 }
 
 /** Everything here comes off `pendingApproval`; nothing is inferred when a field is missing. */
-function ApprovalAsk({ job, ask, answering, onAnswer, t }: ApprovalAskProps) {
+export function ApprovalAsk({ job, ask, answering, onAnswer, t }: ApprovalAskProps) {
   const elsewhere = ask.cwd && ask.cwd !== job.cwd ? ask.cwd : null
 
+  // An alert, not a status: it appears only when a worker stops to ask, and the worker then waits
+  // on the answer.
   return (
-    <div className={styles.ask} onPointerDown={(event) => event.stopPropagation()}>
+    <div className={styles.ask} role="alert" onPointerDown={(event) => event.stopPropagation()}>
       <div className={styles.askHead}>
         <span className={styles.askIcon} aria-hidden>
           {ask.kind === 'fileChange' ? <FilePen size={11} /> : <TerminalIcon size={11} />}
@@ -1604,10 +1605,6 @@ export const OrchestratorPane = memo(function OrchestratorPane({
                 ref={board}
                 className={styles.board}
                 data-panning={panning ? 'true' : undefined}
-                style={{
-                  backgroundSize: `${DOT_SPACING * view.scale}px ${DOT_SPACING * view.scale}px`,
-                  backgroundPosition: `${view.x}px ${view.y}px`,
-                }}
                 onPointerDown={startPan}
                 onPointerMove={movePan}
                 onPointerUp={endPan}
@@ -1799,6 +1796,7 @@ export const OrchestratorPane = memo(function OrchestratorPane({
                   value={draft}
                   disabled={!canSend || sending}
                   placeholder={t(MODE_PLACEHOLDER[mode])}
+                  aria-label={t(MODE_PLACEHOLDER[mode])}
                   onChange={(event) => setDraft(event.target.value)}
                   onPointerDown={(event) => event.stopPropagation()}
                 />

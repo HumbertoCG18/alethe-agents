@@ -300,6 +300,18 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
   or in progress, or a tab or worker live for it), **Not started** and **Finished**; a live
   campaign shows Running or Stopped, and blinks, in any group. Findings, and a night with nothing
   left waiting on you, come after the map.
+- **The Todo panel's wording and controls, made consistent.** The agent that plans and delegates is
+  called the orchestrator everywhere, in English and Portuguese; Portuguese now reads one word per
+  state ("aguardando você", "parada", "interrompida", "concluída"), names the panel Tarefas, the
+  night Modo noturno and the board quadro, in a formal tone. The campaign controls and menus use the
+  app's small buttons, the Todo settings name every field by its label and report a folder they
+  cannot use in a notification instead of a blocking dialog. - **The orchestration board and its
+  settings, tidied.** Clicking the "Workers at the same time" label no longer lowers the number. The
+  roles table scrolls sideways on a narrow window instead of crushing its columns, with headers in
+  the settings' label style that show their full text on hover. The board drops its dotted
+  background for a flat one. Its message field is named for screen readers, and a worker waiting on
+  your approval is announced. Corners and timings follow the app's shared values, and both screens
+  follow the Clean style. Error text in several dialogs now shows in the error colour.
 
 ### Fixed
 

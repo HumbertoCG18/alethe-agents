@@ -145,32 +145,6 @@ describe('hydrateTodos', () => {
     await Promise.resolve()
     expect(snapshot().sectionOrder).toEqual({ p4: ['findings', 'list'] })
   })
-
-  it('keeps the projects that hide the add field, reading older or broken data as none', async () => {
-    await hydrateTodos(fakeStorage().storage, { todos: [], storagePath: '' })
-    expect(useTodosStore.getState().addFieldHidden).toEqual({})
-
-    resetTodosStoreForTests()
-    const { storage, snapshot } = fakeStorage({
-      addFieldHidden: { p1: true, p2: 'yes', p3: false },
-    })
-    await hydrateTodos(storage, { todos: [], storagePath: '' })
-    expect(useTodosStore.getState().addFieldHidden).toEqual({ p1: true })
-
-    useTodosStore.getState().setAddFieldHidden('p4', true)
-    await Promise.resolve()
-    expect(snapshot().addFieldHidden).toEqual({ p1: true, p4: true })
-    useTodosStore.getState().setAddFieldHidden('p1', false)
-    await Promise.resolve()
-    expect(snapshot().addFieldHidden).toEqual({ p4: true })
-
-    resetTodosStoreForTests()
-    await hydrateTodos(fakeStorage({ addFieldHidden: ['p1'] }).storage, {
-      todos: [],
-      storagePath: '',
-    })
-    expect(useTodosStore.getState().addFieldHidden).toEqual({})
-  })
 })
 
 describe('orderedSections', () => {

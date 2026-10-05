@@ -733,10 +733,7 @@ export const ptBR: Record<MessageKey, string> = {
   'todo.campaignEmpty': 'Nenhuma tarefa aqui.',
   'todo.activeSection': 'Ativas',
   'todo.activeEmpty': 'Nenhuma campanha ativa: abra uma em Campanhas.',
-  'todo.activeDetails': 'Detalhes',
   'todo.activeDone': '{count} concluídas',
-  'todo.addFieldHide': 'Ocultar o campo de adicionar',
-  'todo.addFieldShow': 'Mostrar o campo de adicionar',
   'todo.pending.title': 'Pendentes',
   'todo.pending.hint': 'esperando sua resposta',
   'todo.pending.gate2': 'Aguardando seu Gate 2',
@@ -753,6 +750,9 @@ export const ptBR: Record<MessageKey, string> = {
   'todo.campaignWrite.invalid': 'O registro ficaria inválido; nada foi gravado.',
   'todo.campaignWrite.requeued': '{id} voltou para a fila da próxima noite.',
   'todo.campaignControls.continue': 'Continuar campanha',
+  'todo.campaignControls.continueShort': 'Continuar',
+  'todo.campaignControls.pauseShort': 'Pausar',
+  'todo.campaignControls.cancelShort': 'Cancelar',
   'todo.campaignControls.goToTab': 'Ir para a aba',
   'todo.campaignControls.allDone': 'Todas as tarefas concluídas',
   'todo.campaignControls.pause': 'Pausar campanha',
@@ -763,8 +763,6 @@ export const ptBR: Record<MessageKey, string> = {
   'todo.campaignControls.cancelledTitle': 'Campanha {id} cancelada',
   'todo.campaignControls.cancelled':
     'Abas fechadas: {tabs} · workers cancelados: {jobs} · tarefas de volta a Pronta: {tasks}',
-  'todo.campaignControls.leftInInput':
-    'O agente de {id} começou a trabalhar, então o prompt ficou no campo de entrada sem Enter.',
   'todo.campaignControls.cancelFailed':
     'Não foi possível listar os workers da orquestração, então nada foi cancelado: {message}',
   'todo.campaignControls.cancelledPartly':

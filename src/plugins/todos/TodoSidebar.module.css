@@ -628,7 +628,7 @@
 
 .controlRow {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 6px;
   padding: 2px 0 4px;
@@ -669,6 +669,12 @@
 .controlButton:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+/* An open task's step, its registry result, on one line under its title. */
+.stepLine {
+  grid-column: 3 / -1;
+  margin-top: -6px;
 }
 
 /* An active campaign's add field, inside its subsection. */

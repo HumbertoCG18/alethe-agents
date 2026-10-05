@@ -721,10 +721,7 @@ export const en = {
   'todo.campaignEmpty': 'No tasks here.',
   'todo.activeSection': 'Active',
   'todo.activeEmpty': 'No active campaign: open one from Campaigns.',
-  'todo.activeDetails': 'Details',
   'todo.activeDone': '{count} done',
-  'todo.addFieldHide': 'Hide the add field',
-  'todo.addFieldShow': 'Show the add field',
   'todo.pending.title': 'Pending',
   'todo.pending.hint': 'waiting on you',
   'todo.pending.gate2': 'Waiting for your Gate 2',
@@ -741,6 +738,9 @@ export const en = {
   'todo.campaignWrite.invalid': 'The registry would become invalid; nothing was written.',
   'todo.campaignWrite.requeued': '{id} is back in the queue for the next night.',
   'todo.campaignControls.continue': 'Continue campaign',
+  'todo.campaignControls.continueShort': 'Continue',
+  'todo.campaignControls.pauseShort': 'Pause',
+  'todo.campaignControls.cancelShort': 'Cancel',
   'todo.campaignControls.goToTab': 'Go to tab',
   'todo.campaignControls.allDone': 'Every task is done',
   'todo.campaignControls.pause': 'Pause campaign',
@@ -751,8 +751,6 @@ export const en = {
   'todo.campaignControls.cancelledTitle': 'Campaign {id} cancelled',
   'todo.campaignControls.cancelled':
     'Tabs closed: {tabs} · workers cancelled: {jobs} · tasks back to Ready: {tasks}',
-  'todo.campaignControls.leftInInput':
-    'The agent of {id} started working, so the prompt was left in its input without Enter.',
   'todo.campaignControls.cancelFailed':
     'Could not list the orchestration workers, so nothing was cancelled: {message}',
   'todo.campaignControls.cancelledPartly':

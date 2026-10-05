@@ -231,6 +231,18 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
   **Active** filter is now **Open**. The header bar shows one segment per active campaign (the
   whole registry while none is), or your own list's progress in Personal. The heading's list
   picker, the **List source** setting, the **Current** group and the campaign filter tabs are gone.
+- **Active campaigns read leaner.** A campaign with its tab open offers **Go to tab** and
+  **Cancel**, and **Pause** while its agent works; **Continue** is left to a campaign live through
+  its workers alone, without a tab. The controls fit one row with short labels. Each open task
+  shows its step, the registry's result for it, under its title. The campaign's window, worktree,
+  last update and situation moved to its header's tooltip, and its add field opens from the
+  header's **+** (or Ctrl+N) for one task; the setting that hid or showed the add field is gone.
+- **The Night tab's bar follows the latest night**: its tasks done in the registry now, over their
+  count.
+- **A night entry you already decided no longer reads as waiting on you**: it shows its task's
+  state now (Done, Ready), or stopped when its task left the registry.
+- **A campaign's terminal is named after it**: its id, then its chat title when it has one, in the
+  project sidebar and the pane header.
 - **A new Claude Code or Codex tab gets its first prompt at launch** (a campaign, a night task,
   the new-terminal dialog, Home), as the CLI's own prompt argument, instead of having it typed once
   the CLI looks ready. OpenCode and the other agents still have it typed, and so do Claude Code and

@@ -14,6 +14,7 @@ import {
   campaignActivity,
   campaignBlock,
   campaignCwd,
+  campaignTabTitle,
   campaignTaskView,
   campaignWorkers,
   checkedResult,
@@ -1089,5 +1090,17 @@ describe('campaignBlock', () => {
     const [a, b] = pair(campaign('A', { tarefas: tasks(['A-01', 'pronta']) }), B)
     expect(campaignBlock(a, b)).toBeNull()
     expect(campaignBlock(b, a)).toBeNull()
+  })
+})
+
+describe('campaignTabTitle', () => {
+  it('names a campaign tab by its campaign, then its chat title when it has one', () => {
+    expect(campaignTabTitle({ campaignId: 'MOTOR' }, 'Revisão da tabela A')).toBe(
+      'MOTOR · Revisão da tabela A',
+    )
+    expect(campaignTabTitle({ campaignId: 'MOTOR' }, null)).toBe('MOTOR')
+    // Any other tab keeps its own title.
+    expect(campaignTabTitle({}, 'Revisão da tabela A')).toBeNull()
+    expect(campaignTabTitle(undefined, null)).toBeNull()
   })
 })

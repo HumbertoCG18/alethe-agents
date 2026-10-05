@@ -18,6 +18,7 @@ import {
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 
 import { relaunchAgentPty } from '../../lib/agentRelaunch'
+import { campaignTabTitle } from '../../lib/campaigns'
 import { graphifyRepoOf } from '../../lib/claudeMcpConfigs'
 import { askConfirm } from '../../lib/dialog'
 import { buildGhosttyCommand } from '../../lib/ghosttyCommand'
@@ -385,10 +386,9 @@ export const TerminalPane = memo(function TerminalPane({
   }, [sessionTitleAgentType, sessionTitleId, cwd])
 
   const hasCustomTabName = Boolean(activeTab && activeTab.name !== activeTab.type)
+  const chatTitle = hasCustomTabName ? (activeTab?.name ?? null) : sessionTitle
   const displayName = activeTab
-    ? hasCustomTabName
-      ? activeTab.name
-      : (sessionTitle ?? activeTab.name)
+    ? (campaignTabTitle(activeTab, chatTitle) ?? chatTitle ?? activeTab.name)
     : terminal.name
 
   const setSubTabName = useProjectsStore((s) => s.setSubTabName)

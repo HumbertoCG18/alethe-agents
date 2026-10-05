@@ -108,7 +108,12 @@ pub(crate) fn read_capped_line(reader: &mut impl BufRead, buf: &mut Vec<u8>) -> 
 }
 
 fn first_text_block(line: &str) -> Option<String> {
-    let value = serde_json::from_str::<serde_json::Value>(line).ok()?;
+    first_text(&serde_json::from_str::<serde_json::Value>(line).ok()?)
+}
+
+/// A message record's first text block: a session's first one titles it until Claude writes an
+/// `ai-title`.
+pub(crate) fn first_text(value: &serde_json::Value) -> Option<String> {
     let content = value
         .get("message")
         .and_then(|message| message.get("content"))?;
@@ -336,44 +341,6 @@ fn list_claude_sessions_inner(cwd: String) -> Result<Vec<ClaudeSessionMeta>, Str
 
     sessions.sort_by(|a, b| b.modified_at_ms.cmp(&a.modified_at_ms));
     Ok(sessions)
-}
-
-/// Sidebar rows only need the title of the session they are attached to.
-/// `list_claude_sessions` parses every JSONL of the project to answer that,
-/// so this opens the single matching file instead.
-#[tauri::command]
-pub async fn get_claude_session_title(
-    cwd: String,
-    session_id: String,
-) -> Result<Option<String>, String> {
-    tokio::task::spawn_blocking(move || {
-        let started = std::time::Instant::now();
-        let result = get_claude_session_title_inner(cwd, session_id);
-        log_slow_scan("get_claude_session_title", started, 1);
-        result
-    })
-    .await
-    .map_err(|error| format!("get_claude_session_title: falha na task bloqueante: {error}"))?
-}
-
-fn get_claude_session_title_inner(
-    cwd: String,
-    session_id: String,
-) -> Result<Option<String>, String> {
-    if session_id.is_empty() || session_id.contains(['/', '\\', '.']) {
-        return Ok(None);
-    }
-    for project_dir in project_dirs_for_cwd(&cwd)? {
-        let path = project_dir.join(format!("{session_id}.jsonl"));
-        let Ok(metadata) = fs::metadata(&path) else {
-            continue;
-        };
-        let Some(meta) = parse_session_file(session_id.clone(), path, &metadata) else {
-            continue;
-        };
-        return Ok(meta.title.or(meta.first_user_prompt));
-    }
-    Ok(None)
 }
 
 #[derive(Serialize)]

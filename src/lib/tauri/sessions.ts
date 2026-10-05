@@ -1,4 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
+import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+
+import type { SessionEvent } from '../sessionEvents'
 
 export type AntigravitySessionSnapshot = {
   id: string
@@ -87,19 +90,8 @@ export async function snapshotCodexSessions(cwd: string): Promise<CodexSessionSn
   return invoke<CodexSessionSnapshot[]>('snapshot_codex_sessions', { cwd })
 }
 
-export async function getCodexSessionTitle(sessionId: string): Promise<string | null> {
-  return invoke<string | null>('get_codex_session_title', { sessionId })
-}
-
 export async function listClaudeSessions(cwd: string): Promise<ClaudeSessionMeta[]> {
   return invoke<ClaudeSessionMeta[]>('list_claude_sessions', { cwd })
-}
-
-export async function getClaudeSessionTitle(
-  cwd: string,
-  sessionId: string,
-): Promise<string | null> {
-  return invoke<string | null>('get_claude_session_title', { cwd, sessionId })
 }
 
 // --- OpenCode Sessions ---
@@ -187,31 +179,42 @@ export async function opencodeExportSession(
   return invoke<OpenCodeExportSession>('opencode_export_session', { cwd, sessionId })
 }
 
-/** A transcript message as `session_transcript_tail` reads it. */
-export type TranscriptMessage = {
-  role: 'user' | 'assistant' | 'tool' | 'tool-result' | 'question'
-  text: string
-  questionSetId?: string
-  questions?: unknown[]
-}
+/** A Claude or Codex session, as the session reader keys it. */
+export type SessionKey = { provider: 'claude' | 'codex'; cwd: string; sessionId: string }
 
-export type TranscriptTail = {
-  /** The session read: another one of `cwd` when the one asked for is not found; null for none. */
+export type SessionRead = {
+  /** The session read; null while its transcript is not found. */
   sessionId: string | null
-  /** When its transcript last changed: given back as `since`, an unchanged one is not read again. */
+  /** Grows with each change: given back as `since`, an unchanged session returns no events. */
   revision: number
-  /** `since` was current: no messages are returned. */
+  /** `since` was current: no events are returned. */
   unchanged: boolean
-  messages: TranscriptMessage[]
+  events: SessionEvent[]
+  /** Claude's generated title, otherwise the first user prompt. */
+  title: string | null
 }
 
-/** The last messages (20 at most) of a Claude or Codex session in `cwd`. */
-export function sessionTranscriptTail(args: {
-  provider: 'claude' | 'codex'
-  cwd: string
-  sessionId: string
-  since?: number
-  limit?: number
-}): Promise<TranscriptTail> {
-  return invoke<TranscriptTail>('session_transcript_tail', args)
+/** A session's latest events (20 unless `limit` says otherwise), title and revision. */
+export function sessionRead(
+  args: SessionKey & { since?: number; limit?: number },
+): Promise<SessionRead> {
+  return invoke<SessionRead>('session_read', args)
+}
+
+/** Counts this window in for a session's changes, sent through `listenSessionChanged`. */
+export async function sessionSubscribe(key: SessionKey): Promise<void> {
+  await invoke('session_subscribe', key)
+}
+
+export async function sessionUnsubscribe(key: SessionKey): Promise<void> {
+  await invoke('session_unsubscribe', key)
+}
+
+/** A subscribed session reached `revision`; it is matched by provider and session id. */
+export type SessionChange = SessionKey & { revision: number }
+
+export function listenSessionChanged(
+  handler: (change: SessionChange) => void,
+): Promise<UnlistenFn> {
+  return listen<SessionChange>('session://changed', (event) => handler(event.payload))
 }

@@ -225,11 +225,16 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
   malformed entries do.
 - **What a campaign's agent says, in the Todo panel.** Each active campaign shows its agent's last
   answer under its controls, in full in the tooltip, and a question the agent waits on is listed in
-  Pending with **Go to tab**, to answer it in the terminal. Claude Code and Codex tabs are read
-  once, then each time their agent stops working.
+  Pending with **Go to tab**, to answer it in the terminal. Claude Code and Codex tabs follow their
+  session as its transcript grows.
 
 ### Changed
 
+- **Fresher agent lines and tab titles, lighter Remote Control.** A campaign agent's line and
+  pending question in the Todo panel, and the titles of Claude Code and Codex tabs, now follow the
+  session as its transcript grows, instead of waiting for the agent to stop or for a timer. Each
+  session is read once, then only for what was appended, and Remote Control's chat reads from the
+  same place instead of parsing the whole transcript on every refresh.
 - **The Todo panel has three tabs: Overview, Night and Personal**, and remembers the last one shown.
   Overview lists each campaign item once: **Pending** (Gate 2 tasks and the night's entries still
   waiting on you, each dated with its night), **Active** (every campaign with a tab open or a live

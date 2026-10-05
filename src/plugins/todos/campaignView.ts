@@ -2,7 +2,8 @@
  * The campaign registry as the Todo tab uses it: read and watched once, shared by the list and the
  * Campaigns map, and edited from the list through the registry write command.
  */
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
+import { useEffect, useMemo, useReducer, useRef, useState } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 
 import {
   activeCampaign,
@@ -42,6 +43,7 @@ import {
   useT,
 } from '../../lib/i18n'
 import { createOrchestratedTerminal } from '../../lib/orchestrationOnTerminal'
+import type { SessionEvent } from '../../lib/sessionEvents'
 import {
   campaignRegistryWrite,
   findRelativePath,
@@ -54,8 +56,6 @@ import {
   orchestratorJobs,
   type OrchestratorSnapshot,
   readTextFile,
-  sessionTranscriptTail,
-  type TranscriptMessage,
   unwatchFile,
   watchFile,
   worktreeCheckouts,
@@ -65,6 +65,12 @@ import { getProjectDefaultCwd } from '../../lib/terminalFactory'
 import type { PtyStatus, SubTab, Terminal } from '../../lib/types'
 import { useCampaignStepsStore } from '../../stores/campaignStepsStore'
 import { selectActiveProject, useProjectsStore } from '../../stores/projectsStore'
+import {
+  refreshSession,
+  sessionKeyId,
+  useRetainSessions,
+  useSessionStore,
+} from '../../stores/sessionStore'
 import { anyTabWorking, type PtyRuntime, useTerminalsStore } from '../../stores/terminalsStore'
 import { useUiStore } from '../../stores/uiStore'
 import { WINDOW_KEYS } from './labels'
@@ -973,7 +979,7 @@ export function useCampaignFacts(campaign: Campaign, checkouts: GitCheckouts) {
 export type AgentTail = { message: string | null; question: string | null }
 
 /** The roles that come after a question once it is answered, as the Remote Control chat reads it. */
-const ANSWERED: ReadonlySet<TranscriptMessage['role']> = new Set([
+const ANSWERED: ReadonlySet<SessionEvent['role']> = new Set([
   'user',
   'assistant',
   'tool-result',
@@ -981,7 +987,7 @@ const ANSWERED: ReadonlySet<TranscriptMessage['role']> = new Set([
 ])
 
 /** A session tail's last answer, and its last question when nothing has come after it. */
-export function agentTail(messages: readonly TranscriptMessage[]): AgentTail {
+export function agentTail(messages: readonly SessionEvent[]): AgentTail {
   const answer = [...messages]
     .reverse()
     .find((item) => item.role === 'assistant' && item.text.trim())
@@ -1004,12 +1010,11 @@ type AgentTab = {
 }
 
 /**
- * What each campaign's agent tab (the one Go to tab focuses) last said, from its session's
- * transcript. A tab is read once it shows up, then each time its agent goes from working to
- * waiting or stopped, when a new answer or question can have been written; `since` makes the read
- * of an unchanged transcript cost nothing. What was read belongs to the session, with its
- * revision, so tabs on one session share it, and an older reply never replaces a newer one. Only
- * Claude and Codex tabs with a session are read.
+ * What each campaign's agent tab (the one Go to tab focuses) last said, from its session in the
+ * session store: read once it shows up, then whenever its transcript changes, and again each time
+ * its agent goes from working to waiting or stopped. What was read belongs to the session, so tabs
+ * on one session share it, and an older reply never replaces a newer one. Only Claude and Codex
+ * tabs with a session are read.
  */
 export function useAgentTails(
   projectId: string | null,
@@ -1037,7 +1042,7 @@ export function useAgentTails(
             const [campaignId, provider, cwd, sessionId, ptyId] = line.split('\t')
             return {
               key: line,
-              session: [provider, cwd, sessionId].join('\t'),
+              session: sessionKeyId({ provider: provider as AgentTab['provider'], cwd, sessionId }),
               campaignId,
               provider: provider as AgentTab['provider'],
               cwd,
@@ -1052,56 +1057,33 @@ export function useAgentTails(
   const statusKey = useTerminalsStore((state) =>
     tabs.map((tab) => state.byPtyId[tab.ptyId]?.status ?? '').join('\n'),
   )
-  // By session: the last tail read and its revision, kept together.
-  const [tails, setTails] = useState<ReadonlyMap<string, AgentTail>>(new Map())
-  const revisions = useRef(new Map<string, number>())
-  const read = useRef(new Set<string>())
+  useRetainSessions(tabs.map((tab) => tab.session))
   const statuses = useRef(new Map<string, string>())
 
-  const fetchTail = useCallback((tab: AgentTab & { session: string }) => {
-    const { session, sessionId } = tab
-    sessionTranscriptTail({
-      provider: tab.provider,
-      cwd: tab.cwd,
-      sessionId,
-      since: revisions.current.get(session),
-    }).then(
-      (tail) => {
-        // Unchanged, what the session showed stays. Another session of the same folder is no
-        // answer of this one's, and a reply older than the one shown came in late.
-        if (tail.unchanged || tail.sessionId !== sessionId) return
-        if (tail.revision < (revisions.current.get(session) ?? -1)) return
-        revisions.current.set(session, tail.revision)
-        setTails((current) => new Map(current).set(session, agentTail(tail.messages)))
-      },
-      () => {},
-    )
-  }, [])
-
-  useEffect(() => {
-    for (const tab of tabs) {
-      if (read.current.has(tab.key)) continue
-      read.current.add(tab.key)
-      fetchTail(tab)
-    }
-  }, [tabs, fetchTail])
-
+  // The session store follows each transcript; a stop is when a new answer is most likely, so it
+  // reads again then too.
   useEffect(() => {
     const now = statusKey.split('\n')
     tabs.forEach((tab, index) => {
       const status = now[index] ?? ''
       const before = statuses.current.get(tab.key)
       statuses.current.set(tab.key, status)
-      if (before === 'working' && (status === 'waiting' || status === 'stopped')) fetchTail(tab)
+      if (before === 'working' && (status === 'waiting' || status === 'stopped')) {
+        refreshSession({ provider: tab.provider, cwd: tab.cwd, sessionId: tab.sessionId })
+      }
     })
-  }, [statusKey, tabs, fetchTail])
+  }, [statusKey, tabs])
 
+  // Each tab's session as read: one stable reference per tab, which changes only with a new read.
+  const sessions = useSessionStore(
+    useShallow((state) => tabs.map((tab) => state.sessions[tab.session])),
+  )
   return useMemo(() => {
     const byCampaign = new Map<string, AgentTail>()
-    for (const tab of tabs) {
-      const tail = tails.get(tab.session)
-      if (tail) byCampaign.set(tab.campaignId, tail)
-    }
+    tabs.forEach((tab, index) => {
+      const session = sessions[index]
+      if (session?.revision) byCampaign.set(tab.campaignId, agentTail(session.events))
+    })
     return byCampaign
-  }, [tabs, tails])
+  }, [tabs, sessions])
 }

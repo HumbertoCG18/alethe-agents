@@ -2,14 +2,14 @@
 //! remote-client asset bundle.
 
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::json;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 use crate::pty::PtySessions;
 
@@ -366,17 +366,24 @@ fn handle_api(
             );
         }
         let since = query_value(target, "since").and_then(|value| value.parse::<u64>().ok());
-        return match crate::handoff::transcript_snapshot(
-            &tab.agent,
-            &tab.cwd,
-            tab.session_id.as_deref(),
-            since,
-            MAX_TRANSCRIPT_EVENTS,
-        ) {
-            Ok(snapshot) => {
-                let mut payload = serde_json::to_value(snapshot).map_err(|e| e.to_string())?;
-                payload["supported"] = Value::Bool(true);
-                payload["agent"] = Value::String(tab.agent);
+        return match app
+            .state::<crate::session_reader::SessionReaders>()
+            .read_or_newest(
+                &tab.agent,
+                &tab.cwd,
+                tab.session_id.as_deref(),
+                since,
+                MAX_TRANSCRIPT_EVENTS,
+            ) {
+            Ok(read) => {
+                let payload = json!({
+                    "sessionId": read.session_id,
+                    "revision": read.revision,
+                    "unchanged": read.unchanged,
+                    "messages": read.events,
+                    "supported": true,
+                    "agent": tab.agent,
+                });
                 respond_large(stream, 200, "application/json", &payload.to_string())
             }
             Err(error) => respond(
@@ -422,14 +429,14 @@ fn handle_api(
                 r#"{"error":"This agent does not expose interactive questions"}"#,
             );
         }
-        let active = crate::handoff::active_remote_questions(
-            &tab.agent,
-            &tab.cwd,
-            tab.session_id.as_deref(),
-        )
-        .ok()
-        .flatten();
-        let Some(active) = active.filter(|active| active.id == payload.question_set_id) else {
+        // The question still waiting is the session's last event.
+        let active = app
+            .state::<crate::session_reader::SessionReaders>()
+            .read_or_newest(&tab.agent, &tab.cwd, tab.session_id.as_deref(), None, 1)
+            .ok()
+            .and_then(|read| read.events.into_iter().last())
+            .and_then(|event| Some((event.question_set_id.unwrap_or_default(), event.questions?)));
+        let Some((_, questions)) = active.filter(|(id, _)| *id == payload.question_set_id) else {
             return respond(
                 stream,
                 409,
@@ -437,21 +444,18 @@ fn handle_api(
                 r#"{"error":"This question changed before the answer was sent"}"#,
             );
         };
-        let input = match question_answer_input(
-            &active.questions,
-            &payload.selections,
-            &payload.custom_answers,
-        ) {
-            Ok(input) => input,
-            Err(error) => {
-                return respond(
-                    stream,
-                    409,
-                    "application/json",
-                    &json!({ "error": error }).to_string(),
-                )
-            }
-        };
+        let input =
+            match question_answer_input(&questions, &payload.selections, &payload.custom_answers) {
+                Ok(input) => input,
+                Err(error) => {
+                    return respond(
+                        stream,
+                        409,
+                        "application/json",
+                        &json!({ "error": error }).to_string(),
+                    )
+                }
+            };
         write_remote(sessions, &payload.pty_id, &input)?;
         let device_name = hub.device_name(session_id);
         eprintln!(

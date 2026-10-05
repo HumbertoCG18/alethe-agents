@@ -813,6 +813,8 @@ export const ptBR: Record<MessageKey, string> = {
   'todo.findings.more': '+{count} a mais',
   'todo.taskDetail.toggle': 'Detalhes de {id}',
   'todo.taskDetail.result': 'Resultado',
+  'todo.taskDetail.steps': 'Passos',
+  'todo.taskDetail.stepsDone': '{done} de {total} feitos',
   'todo.taskDetail.evidence': 'Evidência',
   'todo.taskDetail.waiting': 'Aguardando',
   'todo.taskDetail.workers': 'Workers',

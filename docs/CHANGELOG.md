@@ -218,6 +218,11 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 - **Several campaigns active at once.** Campaigns that do not wait on each other can each have an
   agent tab open in the same project. Opening one that waits on a campaign with an open tab, or
   that such a campaign waits on, is refused with a toast naming the dependency.
+- **Acceptance steps per task.** When the registry lists a task's steps (`passos`), its row in
+  Active reads how many are done and the current one (its result moves to the tooltip), its detail
+  lists them with the done ones checked, and a campaign's terminal is titled by the task it is
+  midway through, as `MOTOR · MOTOR-08 2/5`. A malformed step list refuses the registry, as other
+  malformed entries do.
 
 ### Changed
 

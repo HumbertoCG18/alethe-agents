@@ -46,6 +46,7 @@ import {
   type Terminal as TerminalEntry,
   type Theme,
 } from '../../lib/types'
+import { useCampaignStepTitle } from '../../stores/campaignStepsStore'
 import { useProjectsStore } from '../../stores/projectsStore'
 import { useTerminalsStore } from '../../stores/terminalsStore'
 import { useUiStore } from '../../stores/uiStore'
@@ -386,9 +387,10 @@ export const TerminalPane = memo(function TerminalPane({
   }, [sessionTitleAgentType, sessionTitleId, cwd])
 
   const hasCustomTabName = Boolean(activeTab && activeTab.name !== activeTab.type)
+  const steps = useCampaignStepTitle(projectId, activeTab?.campaignId)
   const chatTitle = hasCustomTabName ? (activeTab?.name ?? null) : sessionTitle
   const displayName = activeTab
-    ? (campaignTabTitle(activeTab, chatTitle) ?? chatTitle ?? activeTab.name)
+    ? (campaignTabTitle(activeTab, chatTitle, steps) ?? chatTitle ?? activeTab.name)
     : terminal.name
 
   const setSubTabName = useProjectsStore((s) => s.setSubTabName)

@@ -14,6 +14,7 @@ import {
   campaignActivity,
   campaignBlock,
   campaignCwd,
+  campaignStepTitle,
   campaignTabTitle,
   campaignTaskView,
   campaignWorkers,
@@ -31,6 +32,7 @@ import {
   resumePrompt,
   resumeTask,
   setCampaignTaskState,
+  stepProgress,
   taskLabel,
   validCampaignTitle,
   workflowPath,
@@ -1102,5 +1104,100 @@ describe('campaignTabTitle', () => {
     // Any other tab keeps its own title.
     expect(campaignTabTitle({}, 'Revisão da tabela A')).toBeNull()
     expect(campaignTabTitle(undefined, null)).toBeNull()
+  })
+
+  it('puts the task its campaign is going through by its steps before the chat title', () => {
+    expect(campaignTabTitle({ campaignId: 'MOTOR' }, 'Revisão da tabela A', 'MOTOR-08 2/5')).toBe(
+      'MOTOR · MOTOR-08 2/5',
+    )
+    expect(campaignTabTitle({ campaignId: 'MOTOR' }, 'Revisão da tabela A', null)).toBe(
+      'MOTOR · Revisão da tabela A',
+    )
+    // Any other tab keeps its own title.
+    expect(campaignTabTitle({}, 'Revisão da tabela A', 'MOTOR-08 2/5')).toBeNull()
+  })
+})
+
+describe('task steps', () => {
+  const T = (texto: string) => ({ texto, feito: true })
+  const F = (texto: string) => ({ texto, feito: false })
+  /** A registry of one campaign with these tasks. */
+  const registry = (...tarefas: unknown[]) =>
+    parseCampaigns(
+      JSON.stringify({ campanhas: [{ id: 'S', prioridade: 1, janela: 'assistida', tarefas }] }),
+    )
+
+  it('reads the passos of a task, and none when it has none', () => {
+    const [campaign] = registry(
+      { id: 'S-01', estado: 'pronta', passos: [T('Ler o registro'), F('Medir a tabela A')] },
+      { id: 'S-02', estado: 'pronta' },
+    )!.campaigns
+    expect(campaign.tasks[0].steps).toEqual([
+      { text: 'Ler o registro', done: true },
+      { text: 'Medir a tabela A', done: false },
+    ])
+    expect(campaign.tasks[1].steps).toEqual([])
+  })
+
+  it('refuses the whole registry for malformed passos, naming the task', () => {
+    const malformed: unknown[] = [
+      'Ler',
+      { texto: 'Ler', feito: true },
+      ['Ler'],
+      [{ feito: true }],
+      [{ texto: '', feito: false }],
+      [{ texto: 3, feito: false }],
+      [{ texto: 'Ler' }],
+      [{ texto: 'Ler', feito: 'sim' }],
+      [T('Ler'), { texto: 'Medir', feito: 1 }],
+    ]
+    for (const passos of malformed) {
+      expect(registry({ id: 'S-01', estado: 'pronta', passos })).toEqual({
+        campaigns: [],
+        errors: [{ kind: 'malformed', id: 'S-01', detail: '' }],
+      })
+    }
+  })
+
+  it('counts the steps done and names the current one, the first not done', () => {
+    const steps = (...done: boolean[]) => ({
+      steps: done.map((value, index) => ({ text: `passo ${index + 1}`, done: value })),
+    })
+    expect(stepProgress(steps(true, false, true, false))).toEqual({
+      done: 2,
+      total: 4,
+      current: 'passo 2',
+    })
+    expect(stepProgress(steps(true, true))).toEqual({ done: 2, total: 2, current: null })
+    expect(stepProgress(steps())).toEqual({ done: 0, total: 0, current: null })
+  })
+
+  it('names the first open task midway through its steps, as "TASK done/total"', () => {
+    const [campaign] = parseCampaigns(
+      JSON.stringify({
+        campanhas: [
+          {
+            id: 'MOTOR',
+            prioridade: 1,
+            janela: 'assistida',
+            tarefas: [
+              // Done; not started on its steps; through all of them: none is midway.
+              { id: 'MOTOR-01', estado: 'concluída', passos: [T('a'), F('b')] },
+              { id: 'MOTOR-02', estado: 'pronta', passos: [F('a'), F('b')] },
+              { id: 'MOTOR-03', estado: 'pronta', passos: [T('a'), T('b')] },
+              { id: 'MOTOR-04', estado: 'pronta' },
+              {
+                id: 'MOTOR-08',
+                estado: 'bloqueada',
+                passos: [T('a'), T('b'), F('c'), F('d'), F('e')],
+              },
+              { id: 'MOTOR-09', estado: 'pronta', passos: [T('a'), F('b')] },
+            ],
+          },
+        ],
+      }),
+    )!.campaigns
+    expect(campaignStepTitle(campaign)).toBe('MOTOR-08 2/5')
+    expect(campaignStepTitle({ ...campaign, tasks: campaign.tasks.slice(0, 4) })).toBeNull()
   })
 })

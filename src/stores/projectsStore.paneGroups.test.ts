@@ -84,3 +84,63 @@ describe('closing a grouped pane', () => {
     expect(groupsOf(projectId)).toEqual([])
   })
 })
+
+// A board opened next to a terminal goes when that terminal is deleted, unless the user keeps
+// boards (UI-08).
+describe('deleting a grouped terminal', () => {
+  const terminalIds = (projectId: string) => project(projectId).terminals.map((t) => t.id)
+
+  it('deletes its orchestration board with it', () => {
+    const { projectId, planner, board } = orchestration()
+
+    store().deleteTerminal(projectId, planner.id)
+
+    expect(terminalIds(projectId)).not.toContain(board.id)
+    expect(terminalIds(projectId)).not.toContain(planner.id)
+    expect(paneIds(projectId)).not.toContain(board.id)
+    expect(groupsOf(projectId)).toEqual([])
+  })
+
+  it('keeps the board while another terminal of its group is open', () => {
+    const { projectId, planner, board } = orchestration()
+    const other = createTerminal(projectId, 'Second planner')
+    store().groupPanes(projectId, [planner.id, other.id])
+
+    store().deleteTerminal(projectId, planner.id)
+    expect(terminalIds(projectId)).toContain(board.id)
+    expect(groupsOf(projectId)).toEqual([
+      expect.objectContaining({ kind: 'orchestration', paneIds: [board.id, other.id] }),
+    ])
+
+    store().deleteTerminal(projectId, other.id)
+    expect(terminalIds(projectId)).not.toContain(board.id)
+  })
+
+  it('leaves the board and its planner alone when only the board is deleted', () => {
+    const { projectId, planner, board } = orchestration()
+
+    store().deleteTerminal(projectId, board.id)
+
+    expect(terminalIds(projectId)).toEqual([planner.id])
+  })
+
+  it('keeps the board when the user turned that off', () => {
+    const { projectId, planner, board } = orchestration()
+    store().setPreferences({ closeOrchestrationBoardWithTerminal: false })
+
+    store().deleteTerminal(projectId, planner.id)
+
+    expect(terminalIds(projectId)).toEqual([board.id])
+  })
+
+  it('does not touch a group that is not an orchestration', () => {
+    const p = store().createProject({ name: 'App' })
+    const a = createTerminal(p.id, 'A')
+    const board = store().createOrchestratorPane(p.id, 'C:\repo')
+    store().groupPanes(p.id, [a.id, board.id])
+
+    store().deleteTerminal(p.id, a.id)
+
+    expect(terminalIds(p.id)).toEqual([board.id])
+  })
+})

@@ -80,6 +80,62 @@ export function claudeLaunchFlags(
   ]
 }
 
+/**
+ * The argv tail that hands `agent` its first prompt at launch, or null when it has to be typed
+ * into the running CLI instead. Only Claude Code and Codex take one (`[prompt]`), after `--` so no
+ * flag before it can claim it (Claude's `--mcp-config` takes every value that follows). On
+ * Windows the launch goes through PowerShell, which hands a batch-file launcher's arguments to
+ * cmd.exe (expanding `%VAR%`, dropping quotes, running what follows `&`), and Windows PowerShell
+ * 5.1 passes an argument's `"` (and a trailing `\`) unescaped; those prompts are typed. Claude
+ * runs the subcommand a one-word prompt names (`claude -- update`), so that one is typed too, and
+ * so is one the launch command line could not hold (`MAX_LAUNCH_LINE`).
+ */
+export function promptLaunchArgs(
+  agent: AgentType,
+  prompt: string,
+  launch: {
+    /** The launch's arguments before the prompt. */
+    args: readonly string[]
+    /** Every launcher the pty may run. */
+    launchers: readonly (string | null | undefined)[]
+    windows: boolean
+  },
+): string[] | null {
+  if (agent !== 'claude' && agent !== 'codex') return null
+  if (agent === 'claude' && !/\s/.test(prompt)) return null
+  if (launch.windows) {
+    const found = launch.launchers.filter((launcher): launcher is string => Boolean(launcher))
+    if (found.length === 0 || !found.every((launcher) => /\.exe$/i.test(launcher))) return null
+    if (/"|\\$/.test(prompt)) return null
+  }
+  const launcher = Math.max(MAX_PATH, ...launch.launchers.map((path) => path?.length ?? 0))
+  const tail = ['--', prompt]
+  if (launcher + quotedLength([...launch.args, ...tail]) > MAX_LAUNCH_LINE) return null
+  return tail
+}
+
+/**
+ * The longest launch line, in UTF-16 units, that takes a prompt. Windows' CreateProcess takes at
+ * most 32,767 for the pty's `pwsh -NoLogo -NoProfile -Command "…"`; this keeps 2,767 for the
+ * shell's own path and flags (under 300) and for what `quotedLength` cannot see. Elsewhere the
+ * line is one argument of the shell, which Linux caps at 128 KiB: 30,000 units are at most
+ * 90,000 bytes of UTF-8.
+ */
+const MAX_LAUNCH_LINE = 30_000
+const MAX_PATH = 260
+
+/**
+ * How long `args` are on the launch line, at most: `'arg'` each, after a space, with every quote
+ * PowerShell doubles and every `"` or `\` the command line escapes counted twice, plus the
+ * `& … ; exit $LASTEXITCODE` around them.
+ */
+function quotedLength(args: readonly string[]): number {
+  return args.reduce(
+    (length, arg) => length + arg.length + 3 + (arg.match(/['‘’‚‛"\\]/g)?.length ?? 0),
+    32,
+  )
+}
+
 export function buildAgentLaunch(
   agent: AgentType,
   baseArgs: readonly string[] = [],

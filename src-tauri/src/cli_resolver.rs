@@ -29,6 +29,21 @@ pub fn default_shell() -> String {
     }
 }
 
+/// `value` as the body of a PowerShell single-quoted string. PowerShell ends such a string on any
+/// single quote, the typographic ones (U+2018 to U+201B) included, and reads each one doubled as
+/// that quote itself.
+#[cfg(windows)]
+fn powershell_single_quoted(value: &str) -> String {
+    let mut quoted = String::with_capacity(value.len());
+    for ch in value.chars() {
+        if matches!(ch, '\'' | '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}') {
+            quoted.push(ch);
+        }
+        quoted.push(ch);
+    }
+    quoted
+}
+
 pub fn command_builder_for_terminal(
     initial_command: Option<&str>,
     resolved_launcher: Option<&str>,
@@ -47,10 +62,10 @@ pub fn command_builder_for_terminal(
 
             #[cfg(windows)]
             {
-                let escaped = arg.replace('\'', "''");
+                let escaped = powershell_single_quoted(&arg);
                 let extras_pwsh = extra_args
                     .iter()
-                    .map(|a| format!(" '{}'", a.replace('\'', "''")))
+                    .map(|a| format!(" '{}'", powershell_single_quoted(a)))
                     .collect::<String>();
                 let mut builder = CommandBuilder::new(&shell);
                 builder.arg("-NoLogo");
@@ -1066,6 +1081,54 @@ pub async fn discover_provider_models(provider: String) -> Result<Vec<ModelOptio
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    /// Runs a terminal's launch line through its shell, with a script that prints its arguments
+    /// as the launcher, and returns what the script received.
+    #[cfg(windows)]
+    fn argv_through_terminal_shell(args: &[String]) -> Vec<String> {
+        let dir = env::temp_dir().join(format!("alethe-argv-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let script = dir.join("argv.ps1");
+        fs::write(
+            &script,
+            "[Console]::OutputEncoding = [Text.Encoding]::UTF8\n\
+             [Console]::Out.Write((ConvertTo-Json -InputObject @($args) -Compress))\n",
+        )
+        .unwrap();
+        let builder =
+            command_builder_for_terminal(Some("probe"), Some(&script.to_string_lossy()), args);
+        let argv = builder.get_argv();
+        let output = std::process::Command::new(&argv[0])
+            .args(&argv[1..])
+            .output()
+            .unwrap();
+        let _ = fs::remove_dir_all(&dir);
+        serde_json::from_slice(&output.stdout).unwrap_or_else(|error| {
+            panic!(
+                "{error}: stdout {:?}, stderr {:?}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            )
+        })
+    }
+
+    // An initial prompt reaches the agent as an argument (#74): it is data to the shell, whatever
+    // it holds. PowerShell also closes a single-quoted string on a typographic single quote.
+    #[cfg(windows)]
+    #[test]
+    fn terminal_launch_hands_each_argument_to_the_launcher_as_data() {
+        let args: Vec<String> = [
+            "--",
+            "it's \"quoted\" $HOME $(Write-Output x) `t ; & | % %PATH% ^ < > (x) {y} @z #c",
+            "x\u{2019}; Write-Output INJECTED; \u{2019}y",
+            "\u{2018}left\u{2019} \u{201A}low\u{201B}",
+            "two\nlines",
+        ]
+        .iter()
+        .map(|arg| arg.to_string())
+        .collect();
+        assert_eq!(argv_through_terminal_shell(&args), args);
+    }
 
     #[test]
     fn accepts_model_ids_and_rejects_cli_prose() {

@@ -665,6 +665,8 @@ export type Preferences = {
   enabledFeatures: Record<FeatureId, boolean>
   /** Roles and limits for delegated workers, sent to the orchestrator. */
   orchestration: OrchestrationSettings
+  /** Deleting the last terminal of an orchestration group also deletes its board. Default true. */
+  closeOrchestrationBoardWithTerminal: boolean
   /** Playwright MCP: attach to the shared/pane browser, or launch its own. */
   playwrightBrowserMode: 'shared' | 'dedicated'
   /** Only used when playwrightBrowserMode is 'dedicated'. */
@@ -848,6 +850,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
     defaultTimeoutSeconds: 900,
     workerDisabledPlugins: [],
   },
+  closeOrchestrationBoardWithTerminal: true,
   playwrightBrowserMode: 'shared',
   playwrightDedicatedHeadless: false,
   todoStoragePath: '',

@@ -7,7 +7,7 @@ import { Terminal } from '@xterm/xterm'
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react'
 import { useEffect, useRef } from 'react'
 
-import { recordAgentActivityInput } from '../../lib/activityTracker'
+import { armAgentPrompt, recordAgentActivityInput } from '../../lib/activityTracker'
 import { cliPathMatchesAgent } from '../../lib/agentCliPath'
 import { AgentCompletionMonitor } from '../../lib/agentCompletionMonitor'
 import { deliverOpenCodePrompt } from '../../lib/agentPromptDelivery'
@@ -31,7 +31,7 @@ import {
   registerSessionClaim,
   releaseSessionClaim,
 } from '../../lib/sessionDiscovery'
-import { buildAgentLaunch } from '../../lib/sessionLaunch'
+import { buildAgentLaunch, promptLaunchArgs } from '../../lib/sessionLaunch'
 import {
   peekSession,
   removeSession,
@@ -141,27 +141,168 @@ const INITIAL_ENTER_RETRIES_MS = [1_200, 3_000, 6_000]
  * since a CLI still drawing its first screen, or sitting on a trust prompt, swallows the first
  * returns and leaves the text typed but unsent (extra ones only submit empty). No Enter goes while
  * the pty is `working`, where it could confirm whatever the agent asks next, and the retries stop
- * for good once it has been: the agent took the prompt.
+ * for good once it has been: the agent took the prompt. `onSubmitted` runs after the first Enter;
+ * marking the agent working there is not the agent taking it, so only a change to `working` after
+ * it stops the retries.
  */
-export async function submitInitialInput(ptyId: string): Promise<void> {
+export async function submitInitialInput(ptyId: string, onSubmitted?: () => void): Promise<void> {
   const working = () => useTerminalsStore.getState().byPtyId[ptyId]?.status === 'working'
   await new Promise((resolve) => window.setTimeout(resolve, 150))
   if (working()) return
   await writePty(ptyId, '\r')
-  let stopped = false
-  const unsubscribe = useTerminalsStore.subscribe((state) => {
-    if (state.byPtyId[ptyId]?.status === 'working') stopped = true
+  let stopped = working()
+  onSubmitted?.()
+  const unsubscribe = useTerminalsStore.subscribe((state, previous) => {
+    const status = state.byPtyId[ptyId]?.status
+    if (status === 'working' && previous.byPtyId[ptyId]?.status !== 'working') stopped = true
   })
   INITIAL_ENTER_RETRIES_MS.forEach((delay, index) => {
     window.setTimeout(() => {
       if (index === INITIAL_ENTER_RETRIES_MS.length - 1) unsubscribe()
-      if (stopped || working()) {
-        stopped = true
-        return
-      }
-      void writePty(ptyId, '\r').catch(() => {})
+      if (!stopped) void writePty(ptyId, '\r').catch(() => {})
     }, delay)
   })
+}
+
+/**
+ * A pty's initial input, by pty id. It belongs to the pty rather than to the pane that started
+ * it: grouping a new terminal with its board remounts the pane right after the spawn.
+ */
+type InitialInput = {
+  /** Being typed into the pty now. */
+  typing: boolean
+  /** The pane terminal showing the pty, for typing; null while no pane does. */
+  terminal: Terminal | null
+}
+const initialInputs = new Map<string, InitialInput>()
+
+/**
+ * Prompts Alethe submitted to a pty whose reply no pane has seen settle yet, and the completion
+ * monitor of the pane showing each pty, by pty id. A pane mounted while a reply is due (a remount)
+ * waits on it in place of the one that went, so the tab is told once, by the pane showing it then.
+ */
+const awaitedReplies = new Map<string, string>()
+const paneMonitors = new Map<string, AgentCompletionMonitor>()
+
+export function resetInitialInputsForTests(): void {
+  initialInputs.clear()
+  awaitedReplies.clear()
+  paneMonitors.clear()
+}
+
+/**
+ * Counts `prompt`, which Alethe submitted to `ptyId` itself, as the agent's turn, as Enter typed
+ * by the user does: for the activity tracker, and for the pane showing the pty now or next.
+ */
+function armSubmittedPrompt(ptyId: string, prompt: string): void {
+  armAgentPrompt(ptyId, prompt)
+  awaitedReplies.set(ptyId, prompt)
+  paneMonitors.get(ptyId)?.arm(prompt)
+}
+
+/** The last `rows` lines xterm.js rendered, every ANSI code already applied. */
+function visibleScreenText(terminal: Terminal, rows = 200): string {
+  const buffer = terminal.buffer.active
+  const start = Math.max(0, buffer.length - rows)
+  const lines: string[] = []
+  for (let y = start; y < buffer.length; y++) {
+    const line = buffer.getLine(y)
+    if (line) lines.push(line.translateToString(true))
+  }
+  return lines.join('\n')
+}
+
+/**
+ * Types `prompt` into `ptyId` once its CLI looks ready, then submits it, and calls `onSent`. It
+ * goes on through whichever pane shows the pty (`delivery.terminal`), and stops only when the pty
+ * exits or a new process replaces the delivery, never because a pane unmounted.
+ */
+async function typeInitialInput(
+  ptyId: string,
+  prompt: string,
+  opencode: boolean,
+  delivery: InitialInput,
+  onSent: () => void,
+): Promise<void> {
+  const sleep = (ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms))
+  const runtime = () => useTerminalsStore.getState().byPtyId[ptyId]
+  const cancelled = () => initialInputs.get(ptyId) !== delivery || runtime()?.alive === false
+  // The first Enter submits it: from then on it is the agent's turn, once.
+  let armed = false
+  const submitted = () => {
+    if (armed) return
+    armed = true
+    armSubmittedPrompt(ptyId, prompt)
+  }
+  try {
+    // "Quiet output for 700ms" is the WRONG signal for OpenCode — confirmed live, repeatedly: it
+    // goes quiet as soon as the welcome screen finishes drawing, well before it's done connecting
+    // to MCP servers. A fixed minimum wait didn't fix it either (confirmed live: it sent early and
+    // the screen stayed empty). For OpenCode, readiness is checked by reading the rendered screen
+    // (`deliverOpenCodePrompt`), with just a short wait here so it doesn't type over the very
+    // first paint. Other providers keep the old criterion, which never had this problem.
+    const earliestSendAt = Date.now() + (opencode ? 4_000 : 1_500)
+    const timedSendAt = Date.now() + 4_000
+    // Deadline much larger than the minimum, as a safety net: with a heavy panel (another TUI
+    // terminal) open alongside, the WebView's main thread can get congested enough to delay even
+    // this loop's own setTimeouts — tested live, only a much larger ceiling (2min) guarantees
+    // enough wall-clock time even with delayed ticks.
+    const deadline = Date.now() + 120_000
+    let readyToSend = false
+    while (!cancelled() && Date.now() < deadline) {
+      await sleep(250)
+      const live = runtime()
+      const quietFor = live ? Date.now() - live.lastIoAt : 0
+      const settled = opencode || quietFor >= 700 || Date.now() >= timedSendAt
+      if (Date.now() >= earliestSendAt && live?.alive && settled) {
+        readyToSend = true
+        break
+      }
+    }
+    if (cancelled() || !readyToSend) return
+    try {
+      delivery.terminal?.focus()
+    } catch {
+      /* pane may already be unmounting — ignore */
+    }
+    if (opencode) {
+      // Reads the screen xterm.js already rendered instead of the raw byte stream, whose
+      // interleaved escape codes broke any string match. Only a pane showing the pty can tell
+      // what reached the input box: an empty screen would read as nothing typed, and type again.
+      const delivered = await deliverOpenCodePrompt(prompt, deadline, {
+        readScreenText: async () => {
+          while (!delivery.terminal) {
+            if (cancelled() || Date.now() >= deadline) throw new Error('no pane shows the pty')
+            await sleep(250)
+          }
+          return visibleScreenText(delivery.terminal)
+        },
+        write: async (data) => {
+          await writePty(ptyId, data)
+          // Its own Enter retries go by the screen, so arming at the first one changes nothing.
+          if (data === '\r') submitted()
+        },
+        sleep,
+        isCancelled: cancelled,
+      })
+      if (!delivered) {
+        console.warn(
+          `[pty-launch] opencode did not confirm the typed text on screen before the deadline id=${ptyId}`,
+        )
+        return
+      }
+    } else {
+      const paste = delivery.terminal?.modes.bracketedPasteMode ?? false
+      await writePtyChunked(ptyId, prompt, paste)
+      await submitInitialInput(ptyId, submitted)
+    }
+    onSent()
+  } catch (error) {
+    console.warn('[pty-launch] could not send the initial prompt:', error)
+  } finally {
+    delivery.typing = false
+    delivery.terminal = null
+  }
 }
 
 export function useXtermSession(params: {
@@ -357,13 +498,6 @@ export function useXtermSession(params: {
     let queuedInput = ''
     let inputFlushScheduled = false
     let inputWriteChain = Promise.resolve()
-    // True while `sendInitialInput` is typing/confirming/sending Enter for
-    // the initial prompt (see `start()` below). Confirmed live: ANY write
-    // failure during that window triggered the automatic recovery below
-    // (`flushInput`), which restarts the PTY — and restarting right in the
-    // middle of delivering the initial prompt kills the just-born process
-    // and loses the session it had just started.
-    let initialInputInFlight = false
 
     const resourcePolicy = useProjectsStore.getState().preferences.resourcePolicy
     const terminal = new Terminal({
@@ -543,11 +677,11 @@ export function useXtermSession(params: {
 
     const requestWriteRecovery = (id: string, source: 'input' | 'paste', error: unknown) => {
       console.warn(`[pty-${source}] write failed for ${id}; requesting recovery`, error)
-      if (source === 'input' && initialInputInFlight) {
-        // Restarting now would kill the process right in the middle of
-        // delivering the initial prompt, losing the session with no chance
-        // to resume — let `sendInitialInput` handle the failure itself
-        // (logs and gives up) instead of triggering this destructive recovery.
+      if (source === 'input' && initialInputs.get(id)?.typing) {
+        // Confirmed live: restarting now kills the just-born process right in
+        // the middle of delivering the initial prompt, losing the session with
+        // no chance to resume — let `typeInitialInput` handle the failure
+        // itself (logs and gives up) instead of this destructive recovery.
         console.warn(
           `[pty-input] automatic recovery SUPPRESSED on ${id}: initial prompt delivery still in progress`,
         )
@@ -892,6 +1026,53 @@ export function useXtermSession(params: {
       return true
     }
 
+    /** This pane's completion monitor, waiting on a reply still due to a prompt Alethe submitted. */
+    const startCompletionMonitor = (id: string) => {
+      if (command !== 'claude' && command !== 'codex' && command !== 'opencode') return
+      const monitor = new AgentCompletionMonitor({
+        ptyId: id,
+        agent: command,
+        label: command,
+        cwd,
+        onStatusChange: (status) => useTerminalsStore.getState().setStatus(id, status),
+        onComplete: () => {
+          awaitedReplies.delete(id)
+          onAgentCompleteRef.current?.()
+        },
+      })
+      completionMonitor = monitor
+      paneMonitors.set(id, monitor)
+      const awaited = awaitedReplies.get(id)
+      if (awaited !== undefined) monitor.arm(awaited)
+    }
+
+    /** Drops this pane's monitor; a reply still due waits for the next pane unless `exited`. */
+    const stopCompletionMonitor = (id: string, exited: boolean) => {
+      if (completionMonitor && paneMonitors.get(id) === completionMonitor) paneMonitors.delete(id)
+      completionMonitor?.dispose()
+      completionMonitor = null
+      if (exited) awaitedReplies.delete(id)
+    }
+
+    /**
+     * Types the initial input into `id`, unless the pty already has its own: then a delivery still
+     * typing goes on through this pane, and one done (or a prompt given at launch) is left alone.
+     */
+    const takeInitialInput = (id: string) => {
+      const known = initialInputs.get(id)
+      if (known) {
+        if (known.typing) known.terminal = terminal
+        return
+      }
+      const prompt = initialInput?.trim()
+      if (!prompt) return
+      const delivery: InitialInput = { typing: true, terminal }
+      initialInputs.set(id, delivery)
+      void typeInitialInput(id, prompt, command === 'opencode', delivery, () =>
+        onInitialInputSentRef.current?.(),
+      )
+    }
+
     const attachExistingPty = async (existingId: string) => {
       setBootPhase('attaching')
       attachedPtyId = existingId
@@ -906,16 +1087,7 @@ export function useXtermSession(params: {
 
       void setPtyVisible(existingId, isPanelVisibleRef.current).catch(() => {})
 
-      if (command === 'claude' || command === 'codex' || command === 'opencode') {
-        completionMonitor = new AgentCompletionMonitor({
-          ptyId: existingId,
-          agent: command,
-          label: command,
-          cwd,
-          onStatusChange: (status) => useTerminalsStore.getState().setStatus(existingId, status),
-          onComplete: () => onAgentCompleteRef.current?.(),
-        })
-      }
+      startCompletionMonitor(existingId)
 
       // Defer replay work until the pane is visible.
 
@@ -938,13 +1110,11 @@ export function useXtermSession(params: {
         }
         if (payload.reason === 'suspended') {
           useTerminalsStore.getState().markSuspended(existingId)
-          completionMonitor?.dispose()
-          completionMonitor = null
+          stopCompletionMonitor(existingId, true)
           return
         }
         useTerminalsStore.getState().markExited(existingId)
-        completionMonitor?.dispose()
-        completionMonitor = null
+        stopCompletionMonitor(existingId, true)
         removeSession(sessionPersistenceKey)
         onExitRef.current?.(payload.code)
       })
@@ -953,6 +1123,7 @@ export function useXtermSession(params: {
         return
       }
       unlistenExit = exitUnlisten
+      takeInitialInput(existingId)
 
       scheduleResize()
       if (!disposed) {
@@ -1031,6 +1202,7 @@ export function useXtermSession(params: {
         }
 
         let launcherOverride: string | undefined
+        let autoLauncher: string | null = null
         if (command && command !== 'shell') {
           if (cliPathOverride) {
             if (cliPathMatchesAgent(command, cliPathOverride)) {
@@ -1058,6 +1230,7 @@ export function useXtermSession(params: {
               useTerminalsStore.getState().setStatus(ptyId, 'offline')
               return
             }
+            autoLauncher = auto
           }
         }
 
@@ -1253,11 +1426,30 @@ export function useXtermSession(params: {
               hooksSettingsPath,
             )
           : { args: preparedRuntime.args, sessionId: undefined, createdSession: false }
-        const spawnArgs = launch.args.length > 0 ? launch.args : undefined
+        const prompt = initialInput?.trim()
+        // spawn_pty runs the PATH launcher instead of an override whose file is gone.
+        const launchers =
+          launcherOverride && prompt && command
+            ? [
+                launcherOverride,
+                await findCliLauncher(resolveAgentCliCommand(command) ?? command).catch(() => null),
+              ]
+            : [autoLauncher]
+        if (disposed) return
+        const promptArgs =
+          prompt && command
+            ? promptLaunchArgs(command, prompt, {
+                args: launch.args,
+                launchers,
+                windows: isWindows(),
+              })
+            : null
+        const launchArgs = promptArgs ? [...launch.args, ...promptArgs] : launch.args
+        const spawnArgs = launchArgs.length > 0 ? launchArgs : undefined
         attachedSessionId = launch.sessionId
         if (command && command !== 'shell') {
           console.info(
-            `[pty-launch] ${command} args=${JSON.stringify(spawnArgs ?? [])} resumeId=${resumeId ?? '—'} launcherOverride=${launcherOverride ?? '(auto/PATH)'}`,
+            `[pty-launch] ${command} args=${JSON.stringify(launch.args)} promptInArgs=${Boolean(promptArgs)} resumeId=${resumeId ?? '—'} launcherOverride=${launcherOverride ?? '(auto/PATH)'}`,
           )
         }
         if (launch.sessionId && launch.sessionId !== sessionId) {
@@ -1310,6 +1502,19 @@ export function useXtermSession(params: {
         console.info(`[pty-launch] ${command ?? 'shell'} spawn OK id=${response.id}`)
         if (claudeExtras && launchesClaude)
           recordClaudeLaunch(response.id, claudeExtras.orchestrator)
+        // A new process: whatever was given to or typed into an earlier one is over.
+        initialInputs.delete(response.id)
+        awaitedReplies.delete(response.id)
+        if (promptArgs && prompt) {
+          // The CLI has the prompt now, even if this pane is already gone (a remount attaches to
+          // the pty): it counts as submitted, and leaves the tab so no relaunch sends it again. A
+          // resumed conversation that is gone exits at once and reopens fresh (EARLY_EXIT_MS),
+          // and that launch needs it too.
+          initialInputs.set(response.id, { typing: false, terminal: null })
+          armSubmittedPrompt(response.id, prompt)
+          if (resumeId) window.setTimeout(() => onInitialInputSentRef.current?.(), EARLY_EXIT_MS)
+          else onInitialInputSentRef.current?.()
+        }
         spawnedAtRef.current = Date.now()
         usedResumeRef.current = Boolean(resumeId)
         if (disposed) return
@@ -1330,16 +1535,7 @@ export function useXtermSession(params: {
           registerSessionClaim(command, cwd, attachedSessionId, response.id)
         }
 
-        if (command === 'claude' || command === 'codex' || command === 'opencode') {
-          completionMonitor = new AgentCompletionMonitor({
-            ptyId: response.id,
-            agent: command,
-            label: command,
-            cwd,
-            onStatusChange: (status) => useTerminalsStore.getState().setStatus(response.id, status),
-            onComplete: () => onAgentCompleteRef.current?.(),
-          })
-        }
+        startCompletionMonitor(response.id)
 
         // Preserve the latest identity, including hooks received during spawn.
         if (command && RESUMABLE_AGENTS.includes(command)) {
@@ -1465,8 +1661,7 @@ export function useXtermSession(params: {
           }
           if (payload.reason === 'suspended') {
             useTerminalsStore.getState().markSuspended(response.id)
-            completionMonitor?.dispose()
-            completionMonitor = null
+            stopCompletionMonitor(response.id, true)
             return
           }
           const isAgent = command ? RESUMABLE_AGENTS.includes(command) : false
@@ -1484,8 +1679,7 @@ export function useXtermSession(params: {
               `[pty-launch] ${command} exited after ${elapsed}ms with resume — opening a fresh session (fallback)`,
             )
             useTerminalsStore.getState().markExited(response.id)
-            completionMonitor?.dispose()
-            completionMonitor = null
+            stopCompletionMonitor(response.id, true)
             removeSession(sessionPersistenceKey)
             emitSessionId?.(undefined)
             terminal.write(
@@ -1505,8 +1699,7 @@ export function useXtermSession(params: {
             )
           }
           useTerminalsStore.getState().markExited(response.id)
-          completionMonitor?.dispose()
-          completionMonitor = null
+          stopCompletionMonitor(response.id, true)
 
           removeSession(sessionPersistenceKey)
           onExitRef.current?.(payload.code)
@@ -1517,99 +1710,7 @@ export function useXtermSession(params: {
         }
         unlistenExit = exitUnlisten
 
-        const prompt = initialInput?.trim()
-        if (prompt) {
-          const sendInitialInput = async () => {
-            // "Quiet output for 700ms" is the WRONG signal for OpenCode —
-            // confirmed live, repeatedly: it goes quiet as soon as the
-            // welcome screen finishes drawing, well before it's done
-            // connecting to MCP servers (the footer shows "4 MCP" — likely
-            // that connection, not the UI, is what actually takes a while).
-            // A fixed minimum wait didn't fix it either (confirmed live: it
-            // sent early and the screen stayed empty). For OpenCode,
-            // "readiness" is now checked a different way — by reading the
-            // actually-rendered screen (see the isOpencode block below)
-            // instead of guessing by time — just a short wait here so it
-            // doesn't type over the very first paint. Other providers keep
-            // the old criterion, which never had this problem.
-            const isOpencode = command === 'opencode'
-            const earliestSendAt = Date.now() + (isOpencode ? 4_000 : 1_500)
-            const timedSendAt = Date.now() + 4_000
-            // Deadline much larger than the minimum, as a safety net: with a
-            // heavy panel (another TUI terminal) open alongside, the
-            // WebView's main thread can get congested enough to delay even
-            // this loop's own setTimeouts — tested live, only a much larger
-            // ceiling (2min) guarantees enough wall-clock time even with
-            // delayed ticks.
-            const deadline = Date.now() + 120_000
-            let readyToSend = false
-            while (!disposed && Date.now() < deadline) {
-              await new Promise((resolve) => window.setTimeout(resolve, 250))
-              const runtime = useTerminalsStore.getState().byPtyId[response.id]
-              const quietFor = runtime ? Date.now() - runtime.lastIoAt : 0
-              // OpenCode: only the fixed minimum wait matters (earliestSendAt
-              // already covers it). Other providers: keep the old "quiet
-              // output" criterion, which never had this problem.
-              const settled = isOpencode || quietFor >= 700 || Date.now() >= timedSendAt
-              if (Date.now() >= earliestSendAt && runtime?.alive && settled) {
-                readyToSend = true
-                break
-              }
-            }
-            if (disposed || !readyToSend) return
-            try {
-              try {
-                terminal.focus()
-              } catch {
-                /* pane may already be unmounting — ignore */
-              }
-              if (isOpencode) {
-                // Instead of guessing "readiness" by time or scanning the
-                // raw byte stream (interleaved \x1b escape codes broke any
-                // string match), reads the screen already RENDERED by
-                // xterm.js itself — the same buffer it uses to draw, with
-                // every ANSI code already applied and resolved to plain
-                // text. The typing/confirmation logic itself lives in
-                // `agentPromptDelivery.ts` (extracted to be reusable outside
-                // this component, e.g. by the e2e suite — see
-                // `e2e/support/openCodePrompt.ts` — without duplicating or
-                // reinventing something already tested live).
-                const readVisibleScreenText = (rows = 200): string => {
-                  const buffer = terminal.buffer.active
-                  const start = Math.max(0, buffer.length - rows)
-                  const lines: string[] = []
-                  for (let y = start; y < buffer.length; y++) {
-                    const line = buffer.getLine(y)
-                    if (line) lines.push(line.translateToString(true))
-                  }
-                  return lines.join('\n')
-                }
-                const delivered = await deliverOpenCodePrompt(prompt, deadline, {
-                  readScreenText: readVisibleScreenText,
-                  write: (data) => writePty(response.id, data),
-                  sleep: (ms) => new Promise((resolve) => window.setTimeout(resolve, ms)),
-                  isCancelled: () => disposed,
-                })
-                if (!delivered) {
-                  console.warn(
-                    `[pty-launch] opencode did not confirm the typed text on screen before the deadline id=${response.id}`,
-                  )
-                  return
-                }
-              } else {
-                await writePtyChunked(response.id, prompt, terminal.modes.bracketedPasteMode)
-                await submitInitialInput(response.id)
-              }
-              onInitialInputSentRef.current?.()
-            } catch (error) {
-              console.warn('[pty-launch] could not send the initial prompt:', error)
-            }
-          }
-          initialInputInFlight = true
-          void sendInitialInput().finally(() => {
-            initialInputInFlight = false
-          })
-        }
+        takeInitialInput(response.id)
 
         scheduleResize()
         if (!disposed) {
@@ -1666,8 +1767,10 @@ export function useXtermSession(params: {
       unlistenMemoryWait?.()
       linkProviderDisposable?.dispose()
       linkScrollDisposable?.dispose()
-      completionMonitor?.dispose()
-      completionMonitor = null
+      // A reply still due, and a delivery still typing, go on with the next pane.
+      stopCompletionMonitor(attachedPtyId, false)
+      const delivery = initialInputs.get(attachedPtyId)
+      if (delivery?.terminal === terminal) delivery.terminal = null
       hideLinkActions()
       if (terminalRef.current === terminal) terminalRef.current = null
       ptyIdRef.current = null

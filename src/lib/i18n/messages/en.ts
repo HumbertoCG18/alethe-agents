@@ -888,6 +888,11 @@ export const en = {
   'prefs.categoryOrchestrationDesc': 'Roles and limits for delegated workers.',
   'prefs.orchestrationLimits': 'Worker limits',
   'prefs.orchestrationLimitsDesc': 'Apply to every delegation, from any planner.',
+  'prefs.orchestrationBoard': 'Board',
+  'prefs.orchestrationBoardDesc': 'The board opened next to a planner terminal.',
+  'prefs.orchestrationCloseBoard': 'Close the orchestration board with its terminal',
+  'prefs.orchestrationCloseBoardHint':
+    'Deleting the last terminal next to a board deletes the board too.',
   'prefs.orchestrationConcurrency': 'Workers at the same time',
   'prefs.orchestrationConcurrencyDecrease': 'Fewer workers at the same time',
   'prefs.orchestrationConcurrencyIncrease': 'More workers at the same time',

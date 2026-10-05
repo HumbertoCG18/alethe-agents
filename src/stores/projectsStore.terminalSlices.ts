@@ -412,6 +412,17 @@ export function createTerminalsSlice({ get, update, updateTerminal }: SliceCtx):
             if (sibling.gsdSyncViewer && sibling.cwd === terminal.cwd) idsToRemove.add(sibling.id)
           }
         }
+        // An orchestration board goes with the last pane it was opened next to (UI-08).
+        if (state.preferences.closeOrchestrationBoardWithTerminal) {
+          const isBoard = (id: string) =>
+            project?.terminals.find((t) => t.id === id)?.kind === 'orchestrator'
+          for (const group of project?.paneGroups ?? []) {
+            if (group.kind !== 'orchestration') continue
+            if (!group.paneIds.some((id) => idsToRemove.has(id))) continue
+            const left = group.paneIds.filter((id) => !idsToRemove.has(id))
+            if (left.every(isBoard)) for (const id of left) idsToRemove.add(id)
+          }
+        }
         const terminalsToClean = (project?.terminals ?? []).filter((t) => idsToRemove.has(t.id))
         if (terminalsToClean.length > 0) cleanupPtys(collectTerminalPtyIds(terminalsToClean))
         const projects = state.projects.map((p) => {

@@ -61,7 +61,7 @@ export class AgentCompletionMonitor {
       this.options.onStatusChange?.('working')
     }
 
-    if (this.state === 'working') this.scheduleCompletion()
+    this.scheduleCompletion()
   }
 
   dispose(): void {
@@ -69,13 +69,18 @@ export class AgentCompletionMonitor {
     this.clearIdleTimer()
   }
 
-  private arm(prompt: string): void {
-    this.clearIdleTimer()
+  /**
+   * Starts watching for the reply to `prompt`, as Enter after it does. It settles once output has
+   * been quiet for RESPONSE_IDLE_MS, also when the reply is short or came before this listened.
+   */
+  arm(prompt: string): void {
+    if (this.disposed) return
     this.state = 'armed'
     this.submittedPrompt = prompt
     this.submittedAt = Date.now()
     this.outputChars = 0
     this.options.onStatusChange?.('working')
+    this.scheduleCompletion()
   }
 
   private isLikelyImmediateEcho(text: string): boolean {
@@ -87,8 +92,11 @@ export class AgentCompletionMonitor {
     this.clearIdleTimer()
     this.idleTimer = window.setTimeout(() => {
       this.idleTimer = null
-      if (this.disposed || this.state !== 'working') return
-      if (Date.now() - this.submittedAt < MIN_RESPONSE_MS) return
+      if (this.disposed || this.state === 'idle') return
+      if (Date.now() - this.submittedAt < MIN_RESPONSE_MS) {
+        this.scheduleCompletion()
+        return
+      }
 
       this.state = 'idle'
       this.options.onStatusChange?.('waiting')

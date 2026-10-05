@@ -270,6 +270,13 @@ export function PreferencesModal() {
       },
       {
         category: 'orchestration',
+        target: 'orchestration-board',
+        label: t('prefs.orchestrationCloseBoard'),
+        description: t('prefs.orchestrationBoardDesc'),
+        keywords: 'orchestration orquestração board quadro close fechar delete apagar terminal',
+      },
+      {
+        category: 'orchestration',
         target: 'orchestration-limits',
         label: t('prefs.orchestrationLimits'),
         description: t('prefs.orchestrationLimitsDesc'),

@@ -223,8 +223,9 @@ function retryPrompt(failureContext: string, locale: Locale): string {
 }
 
 /** Initial flags to open the CLI already with the right model — never the
- *  prompt here (that goes via `initialInput`, typed into the terminal after
- *  boot). OpenCode treats a loose positional argument as a FOLDER to open,
+ *  prompt here (that goes via `initialInput`, which the terminal hands to
+ *  Claude Code and Codex at launch and types into the others after boot).
+ *  OpenCode treats a loose positional argument as a FOLDER to open,
  *  not as an initial prompt — passing the conflict text via `extraArgs`
  *  made it try to `cd` into the prompt text itself concatenated to the real
  *  cwd (`Failed to change directory to <cwd>\<whole prompt>`, confirmed

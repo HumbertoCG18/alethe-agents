@@ -901,6 +901,11 @@ export const ptBR: Record<MessageKey, string> = {
   'prefs.categoryOrchestrationDesc': 'Papéis e limites dos workers delegados.',
   'prefs.orchestrationLimits': 'Limites dos workers',
   'prefs.orchestrationLimitsDesc': 'Valem para toda delegação, de qualquer planner.',
+  'prefs.orchestrationBoard': 'Quadro',
+  'prefs.orchestrationBoardDesc': 'O quadro aberto ao lado de um terminal planner.',
+  'prefs.orchestrationCloseBoard': 'Fechar o quadro de Orquestração junto com o terminal',
+  'prefs.orchestrationCloseBoardHint':
+    'Apagar o último terminal ao lado de um quadro apaga o quadro também.',
   'prefs.orchestrationConcurrency': 'Workers ao mesmo tempo',
   'prefs.orchestrationConcurrencyDecrease': 'Menos workers ao mesmo tempo',
   'prefs.orchestrationConcurrencyIncrease': 'Mais workers ao mesmo tempo',

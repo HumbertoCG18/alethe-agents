@@ -4,6 +4,7 @@
  */
 import { useEffect, useMemo, useReducer, useRef, useState } from 'react'
 
+import { armAgentPrompt } from '../../lib/activityTracker'
 import {
   activeCampaign,
   addCampaignTask,
@@ -347,14 +348,16 @@ function campaignTabs(projectId: string, campaignId: string) {
 const tabWorking = (tab: SubTab) => anyTabWorking([tab], useTerminalsStore.getState().byPtyId)
 
 /**
- * Types `text` into a running agent, then Enter on its own, as the initial input is sent. Enter is
- * held back from an agent that started working meanwhile, so it cannot reach that turn: false then.
+ * Types `text` into a running agent, then Enter on its own, as a typed initial input is sent.
+ * Enter is held back from an agent that started working meanwhile, so it cannot reach that turn:
+ * false then. A submitted prompt makes the agent count as working, as the user's own Enter does.
  */
 async function submit(ptyId: string, text: string): Promise<boolean> {
   await writePty(ptyId, text)
   await new Promise((resolve) => window.setTimeout(resolve, 150))
   if (useTerminalsStore.getState().byPtyId[ptyId]?.status === 'working') return false
   await writePty(ptyId, '\r')
+  armAgentPrompt(ptyId, text)
   return true
 }
 

@@ -13,11 +13,12 @@ import {
   Plus,
   Settings,
   Square,
+  SquareTerminal,
   Tag,
   Trash2,
   X,
 } from 'lucide-react'
-import { type RefObject, useEffect, useId, useRef, useState } from 'react'
+import { type ReactNode, type RefObject, useEffect, useId, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 
 import { DotmCircular2 } from '../../components/ui/dotm-circular-2'
@@ -30,26 +31,28 @@ import {
   type Campaign,
   type CampaignTask,
   campaignTaskView,
+  campaignWorkers,
   type NightDiary,
+  type NightEntry,
   resumeTask,
   type TaskWorkers,
 } from '../../lib/campaigns'
 import { askConfirm } from '../../lib/dialog'
-import { useT } from '../../lib/i18n'
+import { type MessageKey, useT } from '../../lib/i18n'
 import { formatShortcut } from '../../lib/platform'
 import { type PlanningStatus, readPlanningStatus } from '../../lib/tauri'
 import { TODO_TITLE_MAX_LENGTH } from '../../lib/todos'
 import type { Terminal, TodoItem } from '../../lib/types'
 import { selectActiveProject, useProjectsStore } from '../../stores/projectsStore'
-import { useTerminalsStore } from '../../stores/terminalsStore'
 import { useUiStore } from '../../stores/uiStore'
-import { CampaignsSection } from './CampaignsSection'
+import { CampaignFacts, CampaignsSection } from './CampaignsSection'
 import campaignStyles from './CampaignsSection.module.css'
 import {
   type CampaignCancel,
   type CampaignEdits,
-  campaignLiveStatus,
+  type CampaignLive,
   cancelCampaign,
+  continueCampaign,
   nightUndecided,
   pauseCampaign,
   type Registry,
@@ -57,6 +60,7 @@ import {
   STATE_KEYS,
   TASK_LANES,
   useCampaignEdits,
+  useCampaignLive,
   useCampaignView,
   useNightDiary,
   useTaskJobs,
@@ -64,17 +68,25 @@ import {
   workersLabel,
 } from './campaignView'
 import { FindingsCard } from './FindingsCard'
+import { nightDay, situationLabel } from './labels'
 import { TODO_SETTINGS_MODAL_ID } from './manifest'
-import { NightCard, NightStatus } from './NightCard'
+import { NightCard, NightEntryRow, NightStatus } from './NightCard'
 import { SectionToggle, SortableSections } from './SectionToggle'
-import { orderedSections, useTodosStore } from './store'
+import { orderedSections, TODO_TABS, type TodoTab, useTodosStore } from './store'
 import { type TaskActions, useTaskActions } from './taskActions'
 import { type DetailSources, TaskDetail } from './TaskDetail'
 import styles from './TodoSidebar.module.css'
 import { useFindings } from './useFindings'
 
-/** The key of the active campaign's section among the collapsed ones. */
-const CAMPAIGN_SECTION = 'campaign'
+/** The keys of the Active section, and of each of its campaigns, among the collapsed ones. */
+const ACTIVE_SECTION = 'active'
+const campaignKey = (id: string) => `campaign:${id}`
+
+const TAB_KEYS: Record<TodoTab, MessageKey> = {
+  tasks: 'todo.tabs.tasks',
+  night: 'todo.tabs.night',
+  personal: 'todo.personalTitle',
+}
 
 /** How the lab's hooks and CLI start the `resultado` of a task left for the user's Gate 2. */
 const GATE_2_RESULT = 'aguarda o Gate 2'
@@ -206,6 +218,9 @@ export function TodoSidebar() {
     () => new Set(['completed']),
   )
   const addInputRef = useRef<HTMLInputElement>(null)
+  const tabsId = useId()
+  const tab = useTodosStore((state) => state.tab)
+  const setTab = useTodosStore((state) => state.setTab)
   const view = useCampaignView()
   const edits = useCampaignEdits(view)
   const jobs = useTaskJobs()
@@ -214,9 +229,9 @@ export function TodoSidebar() {
   const findings = useFindings(view.registry?.main ?? null)
   // What a task row's detail reads, only once it is expanded.
   const sources = view.registry ? { registry: view.registry, jobs, diary, findings } : null
-  // The night card's header, wherever the card is: Pending focuses it after moving it away.
-  const nightToggle = useRef<HTMLButtonElement>(null)
-  const listSource = useTodosStore((state) => state.listSource)
+  const nightRunning = useTodosStore(
+    (state) => view.projectId !== null && state.nightRun.current?.projectId === view.projectId,
+  )
   const savedOrder = useTodosStore((state) =>
     view.projectId ? state.sectionOrder[view.projectId] : undefined,
   )
@@ -226,45 +241,71 @@ export function TodoSidebar() {
   )
   const setAddFieldHidden = useTodosStore((state) => state.setAddFieldHidden)
   // Ctrl+N shows a hidden add field for one task: until it is added, or left empty. It belongs to
-  // the project it was shown in, so switching projects does not carry it over.
-  const [addFieldShownFor, setAddFieldShownFor] = useState<string | null>(null)
-  const addFieldShown = addFieldShownFor !== null && addFieldShownFor === view.projectId
-  // The Ctrl+N listener is installed once: it reads the project through this ref.
-  const projectIdRef = useRef(view.projectId)
-  projectIdRef.current = view.projectId
-  const setAddFieldShown = (shown: boolean) =>
-    setAddFieldShownFor(shown ? (projectIdRef.current ?? null) : null)
-  // The source picked in this project (a campaign id, or null for the personal list).
-  const [picked, setPicked] = useState<{ projectId: string | null; id: string | null } | null>(null)
+  // the campaign and the project it was shown in, so switching projects does not carry it over.
+  const [addFieldShownFor, setAddFieldShownFor] = useState<{
+    projectId: string
+    campaignId: string
+  } | null>(null)
+  const addFieldShown =
+    addFieldShownFor?.projectId === view.projectId ? addFieldShownFor.campaignId : null
+  const addInputs = useRef(new Map<string, HTMLInputElement>())
+  // Each campaign field's draft, by project and campaign: kept here, as the field goes with Tasks.
+  const [drafts, setDrafts] = useState<Record<string, string>>({})
+  const draftKey = (campaignId: string) => `${view.projectId}\n${campaignId}`
+  // One campaign control at a time, kept here so that leaving Tasks while one runs cannot release
+  // it: the ref is set before any await, so a second click cannot slip in.
+  const acting = useRef(false)
+  const [busy, setBusy] = useState(false)
+  /** Runs `action` unless another control is running; the controls are disabled meanwhile. */
+  const once = (action: () => Promise<void>) => () => {
+    if (acting.current) return
+    acting.current = true
+    setBusy(true)
+    void action().finally(() => {
+      acting.current = false
+      setBusy(false)
+    })
+  }
+  // Where the focus goes once a decision empties Pending, which then goes away.
+  const tasksTab = useRef<HTMLButtonElement>(null)
   const campaigns = view.registry?.campaigns ?? []
-  const fallback =
-    listSource === 'campaign'
-      ? (view.activeId ??
-        campaigns.find((campaign) => campaign.situation.kind !== 'done')?.id ??
-        null)
-      : null
-  const sourceId = picked && picked.projectId === view.projectId ? picked.id : fallback
-  const campaign = campaigns.find((item) => item.id === sourceId) ?? null
-  const pickSource = (id: string | null) => setPicked({ projectId: view.projectId, id })
-  const addPlaceholder = campaign
-    ? t('todo.campaignAddPlaceholder', { id: campaign.id })
-    : t('todo.addPlaceholder')
+  const live = useCampaignLive(view.projectId, campaigns, workers)
+  // A finished campaign shows only under Completed, even while live.
+  const activeCampaigns = campaigns.filter(
+    (campaign) => live.has(campaign.id) && campaign.situation.kind !== 'done',
+  )
+  const waiting = view.registry ? waitingOnYou(view.registry, diary) : null
+  // What Pending lists, left out wherever else a campaign's tasks are listed.
+  const pending: ReadonlySet<string> = new Set([
+    ...(waiting?.night.map((entry) => entry.task) ?? []),
+    ...(waiting?.gate2.map(({ task }) => task.id) ?? []),
+  ])
 
   const active = todos.filter((todo) => !todo.completed)
   const completed = todos.filter((todo) => todo.completed)
-  const progress = campaign
-    ? {
-        done: campaign.done,
-        total: campaign.total,
-        percent: campaign.percent,
-        label: `${campaign.done} / ${campaign.total}${campaign.decomposed ? '' : '+?'}`,
-      }
-    : {
-        done: completed.length,
-        total: todos.length,
-        percent: todos.length > 0 ? Math.round((completed.length / todos.length) * 100) : 0,
-        label: `${completed.length} / ${todos.length}`,
-      }
+  const total = (key: 'done' | 'total') =>
+    campaigns.reduce((sum, campaign) => sum + campaign[key], 0)
+  // Personal counts your own list; Tasks and Night the active campaigns, else the whole registry.
+  const parts: ProgressPart[] | null =
+    tab === 'personal'
+      ? [{ name: null, done: completed.length, total: todos.length, more: false }]
+      : activeCampaigns.length > 0
+        ? activeCampaigns.map((campaign) => ({
+            name: campaign.id,
+            done: campaign.done,
+            total: campaign.total,
+            more: !campaign.decomposed,
+          }))
+        : view.registry
+          ? [
+              {
+                name: t('todo.progressAll'),
+                done: total('done'),
+                total: total('total'),
+                more: campaigns.some((campaign) => !campaign.decomposed),
+              },
+            ]
+          : null
   const activeProjectSections = projects
     .map((project) => ({
       key: `project:${project.id}`,
@@ -281,32 +322,44 @@ export function TodoSidebar() {
     (todo) => !todo.projectId || !knownProjectIds.has(todo.projectId),
   )
 
+  // The Ctrl+N listener is installed once: it runs the latest render's handler. On Tasks it goes to
+  // the add field of the focused campaign when it is active, else of the first active one;
+  // anywhere else, to your own list's composer.
+  const newTask = useRef(() => {})
+  newTask.current = () => {
+    const target =
+      tab === 'tasks'
+        ? (activeCampaigns.find((campaign) => campaign.id === view.activeId) ?? activeCampaigns[0])
+        : undefined
+    if (target && view.projectId) {
+      setAddFieldShownFor({ projectId: view.projectId, campaignId: target.id })
+      // Its field sits in its subsection, inside Active: either may be collapsed.
+      setCollapsedSections((current) => {
+        const next = new Set(current)
+        next.delete(ACTIVE_SECTION)
+        next.delete(campaignKey(target.id))
+        return next
+      })
+      window.requestAnimationFrame(() => addInputs.current.get(target.id)?.focus())
+      return
+    }
+    setTab('personal')
+    setComposerExpanded(true)
+    window.requestAnimationFrame(() => addInputRef.current?.focus())
+  }
+
   useEffect(() => {
-    const focusComposer = (event: KeyboardEvent) => {
+    const onKeyDown = (event: KeyboardEvent) => {
       if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return
       if (event.key.toLowerCase() !== 'n') return
       event.preventDefault()
-      setComposerExpanded(true)
-      setAddFieldShownFor(projectIdRef.current ?? null)
-      // A campaign's add field sits in its section, which may be collapsed or hide the field.
-      setCollapsedSections((current) => {
-        const next = new Set(current)
-        return next.delete(CAMPAIGN_SECTION) ? next : current
-      })
-      window.requestAnimationFrame(() => addInputRef.current?.focus())
+      newTask.current()
     }
-    window.addEventListener('keydown', focusComposer, true)
-    return () => window.removeEventListener('keydown', focusComposer, true)
+    window.addEventListener('keydown', onKeyDown, true)
+    return () => window.removeEventListener('keydown', onKeyDown, true)
   }, [])
 
-  const submit = async () => {
-    if (campaign) {
-      if (!(await edits.add(campaign, title))) return
-      setTitle('')
-      setComposerExpanded(false)
-      setAddFieldShown(false)
-      return
-    }
+  const submit = () => {
     if (!createTodo(title, parseTags(tagDraft), projectDraft || undefined)) return
     setTitle('')
     setTagDraft('')
@@ -581,7 +634,6 @@ export function TodoSidebar() {
     )
   }
 
-  // In a campaign the tabs and the add field belong to its section, below the header.
   const filters = (
     <div className={styles.filters} role="tablist" aria-label={t('todo.filters')}>
       <button
@@ -618,14 +670,14 @@ export function TodoSidebar() {
       className={styles.addForm}
       onSubmit={(event) => {
         event.preventDefault()
-        void submit()
+        submit()
       }}
     >
       <div className={styles.composerBox}>
         <button
           type="submit"
           className={styles.composerSubmit}
-          disabled={!title.trim() || (campaign !== null && edits.busy)}
+          disabled={!title.trim()}
           title={t('todo.add')}
           aria-label={t('todo.add')}
         >
@@ -635,25 +687,18 @@ export function TodoSidebar() {
           ref={addInputRef}
           className={styles.composerInput}
           value={title}
-          // A campaign title is checked in code points on submit; maxLength counts UTF-16 units.
-          maxLength={campaign ? undefined : TODO_TITLE_MAX_LENGTH}
+          maxLength={TODO_TITLE_MAX_LENGTH}
           onFocus={() => setComposerExpanded(true)}
           onChange={(event) => setTitle(event.target.value)}
           onKeyDown={(event) => {
-            if (event.key !== 'Escape' || title.trim()) return
-            setComposerExpanded(false)
-            setAddFieldShown(false)
+            if (event.key === 'Escape' && !title.trim()) setComposerExpanded(false)
           }}
-          onBlur={() => {
-            if (!title.trim()) setAddFieldShown(false)
-          }}
-          placeholder={addPlaceholder}
-          aria-label={addPlaceholder}
+          placeholder={t('todo.addPlaceholder')}
+          aria-label={t('todo.addPlaceholder')}
         />
         <kbd className={styles.composerShortcut}>{formatShortcut('Ctrl+N')}</kbd>
       </div>
-      {/* Tags and project belong to personal todos only. */}
-      {composerExpanded && !campaign ? (
+      {composerExpanded ? (
         <div className={styles.composerDetails}>
           <div className={styles.tagInputWrap}>
             <Tag size={13} aria-hidden="true" />
@@ -677,137 +722,45 @@ export function TodoSidebar() {
     </form>
   )
 
-  // The active campaign's section, or your own list's sections.
-  const list = (
+  const personal =
+    todos.length === 0 ? (
+      <div className={styles.empty}>
+        <div className={styles.emptyIcon}>
+          <ListTodo size={20} />
+        </div>
+        <strong>{t('todo.emptyTitle')}</strong>
+        <span>{t('todo.emptyDescription')}</span>
+      </div>
+    ) : (
+      <>
+        {filter !== 'completed'
+          ? activeProjectSections.map((section) => renderSection(section))
+          : null}
+        {filter !== 'completed' && unassigned.length > 0
+          ? renderSection({
+              key: 'unassigned',
+              label: t('todo.noProject'),
+              items: unassigned,
+            })
+          : null}
+        {filter !== 'active'
+          ? renderSection({
+              key: 'completed',
+              label: t('todo.completed'),
+              items: completed,
+              completedSection: true,
+            })
+          : null}
+        {filter === 'active' && active.length === 0 ? (
+          <p className={styles.filterEmpty}>{t('todo.emptyTitle')}</p>
+        ) : null}
+      </>
+    )
+
+  const tasks = (
     <>
-      {filter !== 'completed' ? <GsdSyncSection /> : null}
-      {campaign ? (
-        <section className={styles.section}>
-          <SectionToggle
-            name={t('todo.activeSection', { id: campaign.id })}
-            count={`${campaign.done}/${campaign.total}${campaign.decomposed ? '' : '+?'}`}
-            open={!collapsedSections.has(CAMPAIGN_SECTION)}
-            onToggle={() => toggleSection(CAMPAIGN_SECTION)}
-          >
-            <button
-              type="button"
-              className={styles.sectionAdd}
-              onClick={() => {
-                if (view.projectId) setAddFieldHidden(view.projectId, !addFieldHidden)
-                setAddFieldShown(false)
-              }}
-              title={t(addFieldHidden ? 'todo.addFieldShow' : 'todo.addFieldHide')}
-              aria-label={t(addFieldHidden ? 'todo.addFieldShow' : 'todo.addFieldHide')}
-            >
-              {addFieldHidden ? <Eye size={13} /> : <EyeOff size={13} />}
-            </button>
-          </SectionToggle>
-          {collapsedSections.has(CAMPAIGN_SECTION) ? null : (
-            <>
-              {filters}
-              {addFieldHidden && !addFieldShown ? null : composer}
-              {view.registry ? (
-                <CampaignControls
-                  campaign={campaign}
-                  registry={view.registry}
-                  edits={edits}
-                  workers={workers}
-                />
-              ) : null}
-              <CampaignTaskRows
-                campaign={campaign}
-                filter={filter}
-                edits={edits}
-                workers={workers}
-                sources={sources}
-              />
-            </>
-          )}
-        </section>
-      ) : todos.length === 0 ? (
-        <div className={styles.empty}>
-          <div className={styles.emptyIcon}>
-            <ListTodo size={20} />
-          </div>
-          <strong>{t('todo.emptyTitle')}</strong>
-          <span>{t('todo.emptyDescription')}</span>
-        </div>
-      ) : (
-        <>
-          {filter !== 'completed'
-            ? activeProjectSections.map((section) => renderSection(section))
-            : null}
-          {filter !== 'completed' && unassigned.length > 0
-            ? renderSection({
-                key: 'unassigned',
-                label: t('todo.noProject'),
-                items: unassigned,
-              })
-            : null}
-          {filter !== 'active'
-            ? renderSection({
-                key: 'completed',
-                label: t('todo.completed'),
-                items: completed,
-                completedSection: true,
-              })
-            : null}
-          {filter === 'active' && active.length === 0 ? (
-            <p className={styles.filterEmpty}>{t('todo.emptyTitle')}</p>
-          ) : null}
-        </>
-      )}
-    </>
-  )
-
-  return (
-    <aside className={styles.sidebar} aria-label={t('todo.title')}>
-      <header className={styles.header}>
-        <div className={styles.headerTop}>
-          <div className={styles.heading}>
-            <ListTodo size={17} />
-            {campaigns.length > 0 ? (
-              <ProjectPicker
-                heading
-                value={campaign?.id ?? ''}
-                projects={campaigns.map((item) => ({ id: item.id, name: item.id }))}
-                noProjectLabel={t('todo.personalTitle')}
-                ariaLabel={t('todo.sourceLabel')}
-                onChange={(id) => pickSource(id || null)}
-              />
-            ) : (
-              <span>{t('todo.personalTitle')}</span>
-            )}
-          </div>
-          <button
-            type="button"
-            className={styles.headerAction}
-            onClick={() => openModal(TODO_SETTINGS_MODAL_ID)}
-            title={t('todo.openSettings')}
-            aria-label={t('todo.openSettings')}
-          >
-            <Settings size={14} />
-          </button>
-        </div>
-        <div
-          className={styles.progress}
-          role="progressbar"
-          aria-valuemin={0}
-          aria-valuemax={progress.total}
-          aria-valuenow={progress.done}
-        >
-          <span className={styles.progressTrack}>
-            <span className={styles.progressFill} style={{ width: `${progress.percent}%` }} />
-          </span>
-          <span className={styles.progressCount}>{progress.label}</span>
-        </div>
-        {campaign ? null : filters}
-      </header>
-
-      {campaign ? null : composer}
-
-      <div className={styles.content}>
-        <NightStatus projectId={view.projectId} />
+      <GsdSyncSection />
+      {view.registry ? (
         <SortableSections
           order={orderedSections(savedOrder)}
           onReorder={(order) => {
@@ -819,68 +772,139 @@ export function TodoSidebar() {
                 <PendingSection
                   registry={view.registry}
                   diary={diary}
+                  night={waiting?.night ?? []}
+                  gate2={waiting?.gate2 ?? []}
                   edits={edits}
                   workers={workers}
                   sources={sources}
-                  nightToggle={nightToggle}
+                  away={tasksTab}
                 />
               ),
             },
-            // Your own list spans several sections: it has no handle, the others move around it.
-            list: { node: list, fixed: !campaign },
-            campaigns: {
-              node: <CampaignsSection view={view} workers={workers} onSelect={pickSource} />,
+            active: {
+              node: (
+                <ActiveSection
+                  campaigns={activeCampaigns}
+                  registry={view.registry}
+                  live={live}
+                  edits={edits}
+                  workers={workers}
+                  sources={sources}
+                  pending={pending}
+                  once={once}
+                  busy={busy}
+                  collapsed={collapsedSections}
+                  onToggle={toggleSection}
+                  addField={{
+                    hidden: addFieldHidden,
+                    shown: addFieldShown,
+                    toggleHidden: () => {
+                      if (view.projectId) setAddFieldHidden(view.projectId, !addFieldHidden)
+                      setAddFieldShownFor(null)
+                    },
+                    leave: () => setAddFieldShownFor(null),
+                    inputs: addInputs.current,
+                    draft: (campaignId) => drafts[draftKey(campaignId)] ?? '',
+                    setDraft: (campaignId, text) =>
+                      setDrafts((current) => ({ ...current, [draftKey(campaignId)]: text })),
+                  }}
+                />
+              ),
             },
             findings: { node: <FindingsCard findings={findings} /> },
-            // A night with nothing left waiting on you is read after the map.
-            night: {
-              node:
-                view.registry &&
-                diary &&
-                !diary.entries.some((entry) => nightUndecided(entry, campaigns)) ? (
-                  <NightCard
-                    registry={view.registry}
-                    diary={diary}
-                    edits={edits}
-                    toggleRef={nightToggle}
-                  />
-                ) : null,
+            campaigns: {
+              node: <CampaignsSection view={view} workers={workers} pending={pending} />,
+            },
+            completed: {
+              node: <CampaignsSection view={view} workers={workers} pending={pending} finished />,
             },
           }}
         />
+      ) : (
+        <p className={styles.sectionEmpty}>{t('todo.noRegistry')}</p>
+      )}
+    </>
+  )
+
+  const night = (
+    <>
+      <NightStatus projectId={view.projectId} />
+      {view.registry && diary ? (
+        <NightCard registry={view.registry} diary={diary} edits={edits} />
+      ) : (
+        <p className={styles.sectionEmpty}>{t('todo.night.empty')}</p>
+      )}
+    </>
+  )
+
+  return (
+    <aside className={styles.sidebar} aria-label={t('todo.title')}>
+      <header className={styles.header}>
+        <div className={styles.headerTop}>
+          <div className={styles.heading}>
+            <ListTodo size={17} />
+            <span>{t('todo.title')}</span>
+          </div>
+          <button
+            type="button"
+            className={styles.headerAction}
+            onClick={() => openModal(TODO_SETTINGS_MODAL_ID)}
+            title={t('todo.openSettings')}
+            aria-label={t('todo.openSettings')}
+          >
+            <Settings size={14} />
+          </button>
+        </div>
+        {parts ? <ProgressBar parts={parts} /> : null}
+        <div className={styles.filters} role="tablist" aria-label={t('todo.tabs.label')}>
+          {TODO_TABS.map((item) => (
+            <button
+              key={item}
+              type="button"
+              role="tab"
+              ref={item === 'tasks' ? tasksTab : undefined}
+              id={`${tabsId}-${item}`}
+              aria-selected={tab === item}
+              aria-controls={`${tabsId}-panel`}
+              className={`${styles.filterButton} ${tab === item ? styles.filterButtonActive : ''}`}
+              onClick={() => setTab(item)}
+            >
+              {t(TAB_KEYS[item])}
+              {item === 'night' && nightRunning ? (
+                <span
+                  className={`${campaignStyles.dot} ${styles.tabDot}`}
+                  data-status="working"
+                  role="img"
+                  aria-label={t('todo.campaigns.liveRunning')}
+                />
+              ) : null}
+            </button>
+          ))}
+        </div>
+        {tab === 'personal' ? filters : null}
+      </header>
+
+      {tab === 'personal' ? composer : null}
+
+      <div
+        id={`${tabsId}-panel`}
+        role="tabpanel"
+        aria-labelledby={`${tabsId}-${tab}`}
+        className={styles.content}
+      >
+        {tab === 'tasks' ? tasks : tab === 'night' ? night : personal}
       </div>
     </aside>
   )
 }
 
 /**
- * What waits on you, hidden when nothing does: the night's card while some of its entries are
- * undecided, and the open tasks of any campaign waiting for your Gate 2 that it does not list.
+ * What waits on you: the night's entries still undecided, and the open tasks of any campaign
+ * waiting for your Gate 2 but those entries'.
  */
-function PendingSection({
-  registry,
-  diary,
-  edits,
-  workers,
-  sources,
-  nightToggle,
-}: {
-  registry: Registry | null
-  diary: NightDiary | null
-  edits: CampaignEdits
-  workers: ReadonlyMap<string, TaskWorkers>
-  sources: DetailSources | null
-  nightToggle: RefObject<HTMLButtonElement>
-}) {
-  const t = useT()
-  const [open, setOpen] = useState(true)
-  const [gate2Open, setGate2Open] = useState(true)
-  const toggle = useRef<HTMLButtonElement>(null)
-  const gate2Toggle = useRef<HTMLButtonElement>(null)
-  if (!registry) return null
-  const waiting = diary?.entries.filter((entry) => nightUndecided(entry, registry.campaigns)) ?? []
-  // While the night card sits here it lists the whole night: a task in it is not listed twice.
-  const inNight = new Set(waiting.length > 0 ? diary?.entries.map((entry) => entry.task) : [])
+function waitingOnYou(registry: Registry, diary: NightDiary | null) {
+  const night = diary?.entries.filter((entry) => nightUndecided(entry, registry.campaigns)) ?? []
+  const listed = new Set(night.map((entry) => entry.task))
   const gate2 = registry.campaigns.flatMap((campaign) =>
     campaign.tasks
       .filter(
@@ -889,11 +913,91 @@ function PendingSection({
           task.state !== 'concluída' &&
           task.state !== 'pronta' &&
           task.result?.startsWith(GATE_2_RESULT) &&
-          !inNight.has(task.id),
+          !listed.has(task.id),
       )
       .map((task) => ({ task, campaign })),
   )
-  const count = waiting.length + gate2.length
+  return { night, gate2 }
+}
+
+/** A part of the header bar; `more` when its campaign still has tasks to find. */
+type ProgressPart = { name: string | null; done: number; total: number; more: boolean }
+
+/**
+ * The header bar: one segment per part, as wide as its total and filled to its share done, then
+ * the summed count. A single part is a single bar.
+ */
+function ProgressBar({ parts }: { parts: ProgressPart[] }) {
+  const done = parts.reduce((sum, part) => sum + part.done, 0)
+  const total = parts.reduce((sum, part) => sum + part.total, 0)
+  const more = parts.some((part) => part.more) ? '+?' : ''
+  const label = (part: ProgressPart) =>
+    part.name === null
+      ? undefined
+      : `${part.name} · ${part.done}/${part.total}${part.more ? '+?' : ''}`
+  const labels = parts.map(label).filter(Boolean)
+  return (
+    <div
+      className={styles.progress}
+      role="progressbar"
+      aria-valuemin={0}
+      aria-valuemax={total}
+      aria-valuenow={done}
+      aria-valuetext={labels.length > 0 ? labels.join(', ') : undefined}
+    >
+      <span className={styles.progressSegments}>
+        {parts.map((part, index) => (
+          <span
+            key={part.name ?? index}
+            className={styles.progressTrack}
+            title={label(part)}
+            style={parts.length > 1 ? { flexGrow: part.total } : undefined}
+          >
+            <span
+              className={styles.progressFill}
+              style={{
+                width: `${part.total > 0 ? Math.round((part.done / part.total) * 100) : 0}%`,
+              }}
+            />
+          </span>
+        ))}
+      </span>
+      <span className={styles.progressCount}>{`${done} / ${total}${more}`}</span>
+    </div>
+  )
+}
+
+/**
+ * What waits on you, hidden when nothing does: the night's undecided entries, each dated with its
+ * night, and the tasks waiting for your Gate 2.
+ */
+function PendingSection({
+  registry,
+  diary,
+  night,
+  gate2,
+  edits,
+  workers,
+  sources,
+  away,
+}: {
+  registry: Registry
+  diary: NightDiary | null
+  night: NightEntry[]
+  gate2: Array<{ task: CampaignTask; campaign: Campaign }>
+  edits: CampaignEdits
+  workers: ReadonlyMap<string, TaskWorkers>
+  sources: DetailSources | null
+  /** Where the focus goes once the last decision took Pending away. */
+  away: RefObject<HTMLButtonElement>
+}) {
+  const t = useT()
+  const locale = useProjectsStore((state) => state.preferences.language)
+  const [open, setOpen] = useState(true)
+  const [gate2Open, setGate2Open] = useState(true)
+  const toggle = useRef<HTMLButtonElement>(null)
+  const gate2Toggle = useRef<HTMLButtonElement>(null)
+  const count = night.length + gate2.length
   if (count === 0) return null
   return (
     <section className={styles.section}>
@@ -907,16 +1011,20 @@ function PendingSection({
       />
       {open ? (
         <div className={campaignStyles.groups}>
-          {diary && waiting.length > 0 ? (
-            <NightCard
-              registry={registry}
-              diary={diary}
-              edits={edits}
-              nested
-              // Deciding its last entry moves the card after the map: focus stays in Pending
-              // while it is there, else follows the card.
-              focusAway={() => toggle.current ?? nightToggle.current}
-            />
+          {diary && night.length > 0 ? (
+            <ul className={campaignStyles.tasks}>
+              {night.map((entry, index) => (
+                <NightEntryRow
+                  key={`${entry.task}-${index}`}
+                  entry={entry}
+                  registry={registry}
+                  edits={edits}
+                  night={t('todo.pending.night', { date: nightDay(diary.date, locale) })}
+                  // A decided entry leaves Pending: the focus goes to its header.
+                  fallback={() => toggle.current ?? away.current}
+                />
+              ))}
+            </ul>
           ) : null}
           {gate2.length > 0 ? (
             <div
@@ -944,7 +1052,7 @@ function PendingSection({
                       sources={sources}
                       // A decided task leaves the group: the focus goes to its header, or to
                       // Pending once the group went too.
-                      fallback={() => gate2Toggle.current ?? toggle.current}
+                      fallback={() => gate2Toggle.current ?? toggle.current ?? away.current}
                     />
                   ))
                 : null}
@@ -956,58 +1064,74 @@ function PendingSection({
   )
 }
 
-// Stable fallback, so the selector below returns the same value while nothing changes.
-const NO_TERMINALS: Terminal[] = []
+type AddField = {
+  hidden: boolean
+  /** The campaign whose hidden field Ctrl+N shows, if any. */
+  shown: string | null
+  toggleHidden: () => void
+  /** Hides again a field Ctrl+N showed. */
+  leave: () => void
+  /** Each campaign's input, for Ctrl+N to focus. */
+  inputs: Map<string, HTMLInputElement>
+  draft: (campaignId: string) => string
+  setDraft: (campaignId: string, text: string) => void
+}
 
 /**
- * The selected campaign's controls, collapsed under its add field: Continue while it is not
- * running (the same rule as the Campaigns map's dot), else Pause and Cancel.
+ * The live campaigns not finished, each in its own subsection: its details, its controls, its add
+ * field, its open tasks but those Pending lists, and its done ones collapsed at its end. A campaign
+ * has Continue while it is not running (the same rule as the Campaigns map's dot), else Pause and
+ * Cancel.
  */
-function CampaignControls({
-  campaign,
+function ActiveSection({
+  campaigns,
   registry,
+  live,
   edits,
   workers,
+  sources,
+  pending,
+  once,
+  busy,
+  collapsed,
+  onToggle,
+  addField,
 }: {
-  campaign: Campaign
+  campaigns: Campaign[]
   registry: Registry
+  live: ReadonlyMap<string, CampaignLive>
   edits: CampaignEdits
   workers: ReadonlyMap<string, TaskWorkers>
+  sources: DetailSources | null
+  /** The tasks Pending lists, left out here. */
+  pending: ReadonlySet<string>
+  /** Runs a control unless another one is running. */
+  once: (action: () => Promise<void>) => () => void
+  /** A control is running: the controls are disabled. */
+  busy: boolean
+  /** The collapsed keys: the section's own and its campaigns'. */
+  collapsed: ReadonlySet<string>
+  onToggle: (key: string) => void
+  addField: AddField
 }) {
   const t = useT()
   const pushToast = useUiStore((state) => state.pushToast)
-  const [open, setOpen] = useState(false)
-  // One control at a time: the ref is set before any await, so a second click cannot slip in.
-  const acting = useRef(false)
-  const [busy, setBusy] = useState(false)
   const hint = useId()
   const { projectId, path } = registry
-  const { id } = campaign
-  const terminals = useProjectsStore(
-    (state) =>
-      state.projects.find((project) => project.id === projectId)?.terminals ?? NO_TERMINALS,
-  )
-  // A boolean, so output on a pty does not re-render the list.
-  const running = useTerminalsStore(
-    (state) =>
-      campaignLiveStatus([campaign], terminals, state.byPtyId, workers).get(id) === 'working',
-  )
-  const task = resumeTask(campaign)
+  // The campaigns with a tab open, as a string so a change elsewhere does not re-render the list;
+  // one live through a worker alone has no tab to go to.
+  const withTab = useProjectsStore((state) =>
+    (state.projects.find((project) => project.id === projectId)?.terminals ?? [])
+      .flatMap((terminal) => terminal.tabs.flatMap((tab) => tab.campaignId ?? []))
+      .join('\n'),
+  ).split('\n')
 
-  /** Runs `action` unless another control is running; the controls are disabled meanwhile. */
-  const once = (action: () => Promise<void>) => () => {
-    if (acting.current) return
-    acting.current = true
-    setBusy(true)
-    void action().finally(() => {
-      acting.current = false
-      setBusy(false)
-    })
-  }
-  const resume = async () => {
+  const resume = async (item: Campaign) => {
+    const task = resumeTask(item)
     if (!task) return
+    const { id } = item
     try {
-      if (await resumeCampaign(projectId, campaign, registry, task)) return
+      if (await resumeCampaign(projectId, item, registry, task)) return
       pushToast({
         title: t('todo.campaignControls.continue'),
         body: t('todo.campaignControls.leftInInput', { id }),
@@ -1019,7 +1143,8 @@ function CampaignControls({
       })
     }
   }
-  const cancel = async () => {
+  const cancel = async (item: Campaign) => {
+    const { id } = item
     const agreed = await askConfirm(t('todo.campaignControls.cancelConfirm', { id }), {
       title: t('todo.campaignControls.cancel'),
       kind: 'warning',
@@ -1029,7 +1154,7 @@ function CampaignControls({
     if (!agreed) return
     let done: CampaignCancel
     try {
-      done = await cancelCampaign(projectId, campaign, registry)
+      done = await cancelCampaign(projectId, item, registry)
     } catch (error) {
       pushToast({
         title: t('todo.campaignControls.cancel'),
@@ -1050,102 +1175,289 @@ function CampaignControls({
   }
   const disabled = edits.busy || busy
 
+  const controls = (item: Campaign, index: number) => {
+    const task = resumeTask(item)
+    const describedBy = `${hint}${index}`
+    return (
+      <div className={styles.controlRow}>
+        {withTab.includes(item.id) ? (
+          <button
+            type="button"
+            className={styles.controlButton}
+            onClick={() => continueCampaign(projectId, item)}
+          >
+            <SquareTerminal size={11} aria-hidden />
+            {t('todo.campaignControls.goToTab')}
+          </button>
+        ) : null}
+        {live.get(item.id) === 'working' ? (
+          <>
+            <button
+              type="button"
+              className={styles.controlButton}
+              data-tone="pause"
+              onClick={once(() => pauseCampaign(projectId, item.id))}
+              disabled={disabled}
+            >
+              <Pause size={11} aria-hidden />
+              {t('todo.campaignControls.pause')}
+            </button>
+            <button
+              type="button"
+              className={styles.controlButton}
+              data-tone="cancel"
+              onClick={once(() => cancel(item))}
+              disabled={disabled}
+            >
+              <Square size={11} aria-hidden />
+              {t('todo.campaignControls.cancel')}
+            </button>
+          </>
+        ) : (
+          <>
+            <button
+              type="button"
+              className={styles.controlButton}
+              onClick={once(() => resume(item))}
+              disabled={disabled || !task}
+              aria-describedby={task ? undefined : describedBy}
+            >
+              <Play size={11} aria-hidden />
+              {t('todo.campaignControls.continue')}
+            </button>
+            {task ? null : (
+              <span id={describedBy} className={campaignStyles.meta}>
+                {t('todo.campaignControls.allDone')}
+              </span>
+            )}
+          </>
+        )}
+      </div>
+    )
+  }
+  const open = !collapsed.has(ACTIVE_SECTION)
+
   return (
-    <div
-      role="group"
-      aria-label={t('todo.campaignControls.title')}
-      className={`${styles.list} ${styles.campaignControls}`}
-    >
+    <section className={styles.section}>
       <SectionToggle
-        name={t('todo.campaignControls.title')}
-        count={null}
+        name={t('todo.activeSection')}
+        count={campaigns.length}
         open={open}
-        onToggle={() => setOpen((current) => !current)}
+        onToggle={() => onToggle(ACTIVE_SECTION)}
+      >
+        <button
+          type="button"
+          className={styles.sectionAdd}
+          onClick={addField.toggleHidden}
+          title={t(addField.hidden ? 'todo.addFieldShow' : 'todo.addFieldHide')}
+          aria-label={t(addField.hidden ? 'todo.addFieldShow' : 'todo.addFieldHide')}
+        >
+          {addField.hidden ? <Eye size={13} /> : <EyeOff size={13} />}
+        </button>
+      </SectionToggle>
+      {!open ? null : campaigns.length === 0 ? (
+        <p className={styles.sectionEmpty}>{t('todo.activeEmpty')}</p>
+      ) : (
+        <div className={campaignStyles.groups}>
+          {campaigns.map((campaign, index) => (
+            <ActiveCampaign
+              key={campaign.id}
+              campaign={campaign}
+              registry={registry}
+              edits={edits}
+              workers={workers}
+              sources={sources}
+              pending={pending}
+              open={!collapsed.has(campaignKey(campaign.id))}
+              onToggle={() => onToggle(campaignKey(campaign.id))}
+              controls={controls(campaign, index)}
+              field={
+                addField.hidden && addField.shown !== campaign.id ? null : (
+                  <CampaignAddField
+                    campaign={campaign}
+                    edits={edits}
+                    title={addField.draft(campaign.id)}
+                    onTitle={(text) => addField.setDraft(campaign.id, text)}
+                    onLeave={addField.leave}
+                    inputRef={(node) => {
+                      if (node) addField.inputs.set(campaign.id, node)
+                      else addField.inputs.delete(campaign.id)
+                    }}
+                  />
+                )
+              }
+            />
+          ))}
+        </div>
+      )}
+    </section>
+  )
+}
+
+/** An active campaign's subsection, headed by its id, title and progress. */
+function ActiveCampaign({
+  campaign,
+  registry,
+  edits,
+  workers,
+  sources,
+  pending,
+  open,
+  onToggle,
+  controls,
+  field,
+}: {
+  campaign: Campaign
+  registry: Registry
+  edits: CampaignEdits
+  workers: ReadonlyMap<string, TaskWorkers>
+  sources: DetailSources | null
+  pending: ReadonlySet<string>
+  open: boolean
+  onToggle: () => void
+  controls: ReactNode
+  field: ReactNode
+}) {
+  const t = useT()
+  const [details, setDetails] = useState(false)
+  const [doneOpen, setDoneOpen] = useState(false)
+  const openTasks = campaignTaskView(campaign.tasks, 'active').filter(
+    (task) => !pending.has(task.id),
+  )
+  const doneTasks = campaignTaskView(campaign.tasks, 'completed')
+  const inPending = campaign.tasks.filter((task) => pending.has(task.id)).length
+  const liveWorkers = workersLabel(
+    t,
+    campaignWorkers(
+      campaign.tasks.map((task) => task.id),
+      workers,
+    ),
+  )
+  const row = (task: CampaignTask) => (
+    <CampaignTaskRow key={task.id} task={task} edits={edits} workers={workers} sources={sources} />
+  )
+  return (
+    <div role="group" aria-label={campaign.id} className={`${styles.list} ${campaignStyles.group}`}>
+      <SectionToggle
+        name={campaign.title ? `${campaign.id} · ${campaign.title}` : campaign.id}
+        count={`${campaign.done}/${campaign.total}${campaign.decomposed ? '' : '+?'}`}
+        open={open}
+        onToggle={onToggle}
         variant="sub"
       />
       {open ? (
-        <div className={styles.controlRow}>
-          {running ? (
-            <>
-              <button
-                type="button"
-                className={styles.controlButton}
-                data-tone="pause"
-                onClick={once(() => pauseCampaign(projectId, id))}
-                disabled={disabled}
-              >
-                <Pause size={11} aria-hidden />
-                {t('todo.campaignControls.pause')}
-              </button>
-              <button
-                type="button"
-                className={styles.controlButton}
-                data-tone="cancel"
-                onClick={once(cancel)}
-                disabled={disabled}
-              >
-                <Square size={11} aria-hidden />
-                {t('todo.campaignControls.cancel')}
-              </button>
-            </>
-          ) : (
-            <>
-              <button
-                type="button"
-                className={styles.controlButton}
-                onClick={once(resume)}
-                disabled={disabled || !task}
-                aria-describedby={task ? undefined : hint}
-              >
-                <Play size={11} aria-hidden />
-                {t('todo.campaignControls.continue')}
-              </button>
-              {task ? null : (
-                <span id={hint} className={campaignStyles.meta}>
-                  {t('todo.campaignControls.allDone')}
+        <>
+          <SectionToggle
+            name={t('todo.activeDetails')}
+            count={null}
+            open={details}
+            onToggle={() => setDetails((current) => !current)}
+            variant="sub"
+          />
+          {details ? (
+            <div className={campaignStyles.details}>
+              <CampaignFacts campaign={campaign} checkouts={registry.checkouts}>
+                <span className={campaignStyles.situation}>
+                  {situationLabel(t, campaign.situation)}
                 </span>
-              )}
-            </>
+                {liveWorkers ? <span className={campaignStyles.workers}>{liveWorkers}</span> : null}
+              </CampaignFacts>
+            </div>
+          ) : null}
+          {controls}
+          {field}
+          {openTasks.length > 0 ? (
+            openTasks.map(row)
+          ) : (
+            <p className={styles.filterEmpty}>{t('todo.campaignEmpty')}</p>
           )}
-        </div>
+          {inPending > 0 ? (
+            <span className={campaignStyles.meta}>
+              {t('todo.campaigns.inPending', { count: inPending })}
+            </span>
+          ) : null}
+          {doneTasks.length > 0 ? (
+            <>
+              <SectionToggle
+                name={t('todo.activeDone', { count: doneTasks.length })}
+                count={null}
+                open={doneOpen}
+                onToggle={() => setDoneOpen((current) => !current)}
+                variant="sub"
+              />
+              {doneOpen ? doneTasks.map(row) : null}
+            </>
+          ) : null}
+        </>
       ) : null}
     </div>
   )
 }
 
-/** The selected campaign's tasks for a list tab, in the Todo rows. */
-function CampaignTaskRows({
+/** A campaign's add field: a task added here goes to the registry with the campaign's next id. */
+function CampaignAddField({
   campaign,
-  filter,
   edits,
-  workers,
-  sources,
+  title,
+  onTitle,
+  onLeave,
+  inputRef,
 }: {
   campaign: Campaign
-  filter: 'all' | 'active' | 'completed'
   edits: CampaignEdits
-  workers: ReadonlyMap<string, TaskWorkers>
-  sources: DetailSources | null
+  /** Its draft, kept by the caller across a switch of tab. */
+  title: string
+  onTitle: (text: string) => void
+  /** Left empty, or once its task is added. */
+  onLeave: () => void
+  inputRef: (node: HTMLInputElement | null) => void
 }) {
   const t = useT()
-  const tasks = campaignTaskView(campaign.tasks, filter)
-  if (tasks.length === 0) return <p className={styles.filterEmpty}>{t('todo.campaignEmpty')}</p>
+  const placeholder = t('todo.campaignAddPlaceholder', { id: campaign.id })
   return (
-    <div className={styles.list}>
-      {tasks.map((task) => (
-        <CampaignTaskRow
-          key={task.id}
-          task={task}
-          edits={edits}
-          workers={workers}
-          sources={sources}
+    <form
+      className={styles.addForm}
+      onSubmit={(event) => {
+        event.preventDefault()
+        void edits.add(campaign, title).then((added) => {
+          if (!added) return
+          onTitle('')
+          onLeave()
+        })
+      }}
+    >
+      <div className={styles.composerBox}>
+        <button
+          type="submit"
+          className={styles.composerSubmit}
+          disabled={!title.trim() || edits.busy}
+          title={t('todo.add')}
+          aria-label={t('todo.add')}
+        >
+          <Plus size={15} />
+        </button>
+        <input
+          ref={inputRef}
+          className={styles.composerInput}
+          value={title}
+          // A campaign title is checked in code points on submit; maxLength counts UTF-16 units.
+          onChange={(event) => onTitle(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape' && !title.trim()) onLeave()
+          }}
+          onBlur={() => {
+            if (!title.trim()) onLeave()
+          }}
+          placeholder={placeholder}
+          aria-label={placeholder}
         />
-      ))}
-    </div>
+        <kbd className={styles.composerShortcut}>{formatShortcut('Ctrl+N')}</kbd>
+      </div>
+    </form>
   )
 }
 
-/** A task waiting for your Gate 2: its row opens a night entry's actions for it. */
+/** A task waiting for your Gate 2: its row opens a night entry's actions for it. */ /** A task waiting for your Gate 2: its row opens a night entry's actions for it. */
 function Gate2Row({
   task,
   campaign,
@@ -1285,7 +1597,6 @@ function ProjectPicker({
   noProjectLabel,
   ariaLabel,
   compact = false,
-  heading = false,
   onChange,
 }: {
   value: string
@@ -1293,8 +1604,6 @@ function ProjectPicker({
   noProjectLabel: string
   ariaLabel: string
   compact?: boolean
-  /** Reads as the panel heading itself: the list source picker. */
-  heading?: boolean
   onChange: (value: string) => void
 }) {
   const [open, setOpen] = useState(false)
@@ -1345,12 +1654,8 @@ function ProjectPicker({
   }
 
   return (
-    <div
-      className={
-        heading ? styles.sourcePicker : compact ? styles.projectLink : styles.projectInputWrap
-      }
-    >
-      {heading ? null : <FolderKanban size={compact ? 11 : 13} aria-hidden="true" />}
+    <div className={compact ? styles.projectLink : styles.projectInputWrap}>
+      <FolderKanban size={compact ? 11 : 13} aria-hidden="true" />
       <button
         ref={triggerRef}
         type="button"

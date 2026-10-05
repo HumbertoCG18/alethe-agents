@@ -120,7 +120,13 @@ import {
 } from '../../lib/tauri'
 import { cleanupPtys } from '../../lib/terminalLifecycle'
 import { CampaignsSection } from './CampaignsSection'
-import { campaignLiveStatus, useCampaignView, useTaskJobs, useTaskWorkers } from './campaignView'
+import {
+  campaignLiveStatus,
+  openCampaign,
+  useCampaignView,
+  useTaskJobs,
+  useTaskWorkers,
+} from './campaignView'
 import { TODO_SETTINGS_MODAL_ID } from './manifest'
 import { resetTodosStoreForTests, useTodosStore } from './store'
 import { TodoSettingsModal } from './TodoSettingsModal'
@@ -131,13 +137,7 @@ const REGISTRY = 'C:\\repo\\.workflow\\campanhas.json'
 /** The section as the Todo tab mounts it. */
 function Section() {
   const view = useCampaignView()
-  return (
-    <CampaignsSection
-      view={view}
-      workers={useTaskWorkers(view.registry, useTaskJobs())}
-      onSelect={() => {}}
-    />
-  )
+  return <CampaignsSection view={view} workers={useTaskWorkers(view.registry, useTaskJobs())} />
 }
 
 function withOito(registry: typeof exemplo, fields: Record<string, unknown>) {
@@ -176,7 +176,7 @@ const IDS = new RegExp(`^(${exemplo.campanhas.map((campaign) => campaign.id).joi
 const rowOrder = () => screen.getAllByText(IDS).map((element) => element.textContent)
 const activeRow = () => document.querySelector('[aria-current="true"]')
 /** A group header of the Campaigns map, named and counted, or null when the group is hidden. */
-const group = (name: 'In progress' | 'Not started' | 'Finished') =>
+const group = (name: 'Started' | 'Not started') =>
   screen.queryByRole('button', { name: new RegExp(`^${name} \\d+$`) })
 /** The project's agent terminals, without the panes opened next to them. */
 const agentTerminals = () =>
@@ -249,101 +249,82 @@ describe('CampaignsSection', () => {
     expect(await screen.findByText('Renamed by the script')).toBeInTheDocument()
   })
 
-  it('shows up in the Todo tab after the user list', async () => {
+  it('shows up in the Overview tab after Active, and not in Personal', async () => {
     fs.files.set(REGISTRY, JSON.stringify(exemplo))
-    useTodosStore.setState({ listSource: 'mine' })
     render(<TodoSidebar />)
-    const toggle = await screen.findByRole('button', { name: /Campaigns/ })
-    expect(screen.getByText('Nothing on your list').compareDocumentPosition(toggle)).toBe(
+    const toggle = await screen.findByRole('button', { name: /^Campaigns/ })
+    expect(screen.getByRole('button', { name: /^Active/ }).compareDocumentPosition(toggle)).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING,
     )
-    // The heading names the personal list, so it does not read as covering the campaigns.
-    expect(screen.getByText('My todos')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('tab', { name: /^Personal/ }))
+    expect(screen.getByText('Nothing on your list')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^Campaigns/ })).toBeNull()
   })
 
   it('puts the campaign of the focused terminal first, highlighted, and follows the focus', async () => {
-    fs.files.set(REGISTRY, JSON.stringify(withOito(exemplo, { worktrees: ['repo-feature'] })))
+    const registry = structuredClone(exemplo)
+    Object.assign(registry.campanhas[4], { worktrees: ['repo-feature'] })
+    fs.files.set(REGISTRY, JSON.stringify(registry))
+    const projectId = useProjectsStore.getState().projects[0].id
     const tagged = openTerminal('C:\\repo', 'shell', 'PARADA')
     const inWorktree = openTerminal('C:\\repo-feature', 'claude')
     render(<Section />)
     await expandSection()
-    // PARADA has a tab opened for it: it is in progress, after the started ones by priority.
-    expect(rowOrder()).toEqual(['OITO', 'ABERTA', 'PARADA', 'DEPOIS', 'NOTURNA'])
+    // PARADA has a tab opened for it: it is Active, so the map leaves it out.
+    expect(rowOrder()).toEqual(['OITO', 'ABERTA', 'DEPOIS', 'NOTURNA'])
     expect(activeRow()).toBeNull()
 
     // The tab opened for PARADA wins, although it sits in the main checkout.
     focusTerminal(tagged.id)
-    expect(rowOrder()).toEqual(['PARADA', 'OITO', 'ABERTA', 'DEPOIS', 'NOTURNA'])
-    expect(activeRow()).toHaveTextContent('PARADA')
+    expect(useTodosStore.getState().activeCampaigns).toEqual({ [projectId]: 'PARADA' })
+    expect(activeRow()).toBeNull()
 
-    // Any other terminal counts by the worktree its cwd is in; OITO leads In progress.
+    // Any other terminal counts by the worktree its cwd is in; NOTURNA leads Not started.
     focusTerminal(inWorktree.id)
-    expect(rowOrder()[0]).toBe('OITO')
-    expect(activeRow()).toHaveTextContent('OITO')
+    expect(rowOrder()).toEqual(['OITO', 'ABERTA', 'NOTURNA', 'DEPOIS'])
+    expect(activeRow()).toHaveTextContent('NOTURNA')
 
     // With no campaign terminal focused, the last active campaign of the project stays first.
     act(() => useUiStore.setState({ activeTerminal: null }))
-    expect(rowOrder()[0]).toBe('OITO')
-    expect(useTodosStore.getState().activeCampaigns).toEqual({
-      [useProjectsStore.getState().projects[0].id]: 'OITO',
-    })
+    expect(rowOrder()).toEqual(['OITO', 'ABERTA', 'NOTURNA', 'DEPOIS'])
+    expect(useTodosStore.getState().activeCampaigns).toEqual({ [projectId]: 'NOTURNA' })
 
     // Continue never takes over a terminal opened by hand: it offers the agents and starts a tab
-    // tagged for OITO, even though a Claude tab already runs in its worktree.
-    fireEvent.click(screen.getByRole('button', { name: 'Continue campaign OITO' }))
+    // tagged for NOTURNA, even though a Claude tab already runs in its worktree.
+    fireEvent.click(screen.getByRole('button', { name: 'Continue campaign NOTURNA' }))
     fireEvent.click(screen.getByRole('menuitem', { name: 'Claude Code' }))
     await waitFor(() => expect(agentTerminals()).toHaveLength(3))
     const created = agentTerminals()[2]
     expect(created.tabs[0]).toMatchObject({
       type: 'claude',
       cwd: 'C:\\repo-feature',
-      campaignId: 'OITO',
+      campaignId: 'NOTURNA',
     })
     expect(useUiStore.getState().activeTerminal?.terminalId).toBe(created.id)
   })
 
-  it('groups the map into In progress, Not started and Finished, where a finished campaign always goes', async () => {
+  it('groups the map into Started and Not started, leaving out live and finished campaigns', async () => {
     fs.files.set(REGISTRY, JSON.stringify(exemplo))
-    const projectId = useProjectsStore.getState().projects[0].id
-    // The selected campaign is finished: it goes to Finished all the same.
-    useTodosStore.setState({ activeCampaigns: { [projectId]: 'BASE' } })
     // PARADA and BASE have a tab open for them, DEPOIS a live worker.
     openTerminal('C:\\repo', 'claude', 'PARADA')
     openTerminal('C:\\repo', 'shell', 'BASE')
     orchestrator.jobs = [{ task: 'DEPOIS-01', status: 'queued', cwd: 'C:\\repo' }]
     render(<Section />)
     await expandSection()
-    await waitFor(() => expect(group('In progress')).toHaveTextContent('4'))
-    expect(screen.getByRole('button', { name: /Campaigns/ })).toHaveTextContent('6')
+    // Live, PARADA and DEPOIS are Active; BASE is finished, under Completed.
+    await waitFor(() => expect(rowOrder()).toEqual(['OITO', 'ABERTA', 'NOTURNA']))
+    expect(screen.getByRole('button', { name: /Campaigns/ })).toHaveTextContent('3')
     // Started: OITO has a task done and one in progress, ABERTA a task done (it is not fully
-    // decomposed, so it stays open); PARADA and DEPOIS are live. NOTURNA has neither.
-    expect(rowOrder()).toEqual(['OITO', 'ABERTA', 'DEPOIS', 'PARADA', 'NOTURNA'])
-    expect(group('In progress')).toHaveAttribute('aria-expanded', 'true')
-    expect(group('Not started')).toHaveAttribute('aria-expanded', 'true')
+    // decomposed, so it stays open). NOTURNA has neither.
+    expect(group('Started')).toHaveTextContent('2')
+    expect(group('Started')).toHaveAttribute('aria-expanded', 'true')
     expect(group('Not started')).toHaveTextContent('1')
-    expect(group('Finished')).toHaveAttribute('aria-expanded', 'false')
-    expect(group('Finished')).toHaveTextContent('1')
-
-    fireEvent.click(group('Finished')!)
-    expect(rowOrder()).toEqual(['OITO', 'ABERTA', 'DEPOIS', 'PARADA', 'NOTURNA', 'BASE'])
-    expect(activeRow()).toHaveTextContent('BASE')
-    // A live tab shows on its row in any group.
-    expect(activeRow()).toHaveAttribute('data-status', 'stopped')
-    expect(activeRow()).toHaveTextContent('Stopped')
     fireEvent.click(group('Not started')!)
-    expect(rowOrder()).toEqual(['OITO', 'ABERTA', 'DEPOIS', 'PARADA', 'BASE'])
+    expect(rowOrder()).toEqual(['OITO', 'ABERTA'])
     fireEvent.click(group('Not started')!)
 
-    // The script finishes PARADA's last task: it moves to Finished on its own.
-    const edited = structuredClone(exemplo)
-    edited.campanhas[5].tarefas[0].estado = 'concluída'
-    fs.files.set(REGISTRY, JSON.stringify(edited))
-    act(() => fs.onChange?.(REGISTRY))
-    await waitFor(() =>
-      expect(rowOrder()).toEqual(['OITO', 'ABERTA', 'DEPOIS', 'NOTURNA', 'BASE', 'PARADA']),
-    )
-
-    // Once its worker settles, DEPOIS has not started.
+    // Once its worker settles, DEPOIS is back in the map, not started.
     act(() => orchestrator.emit?.({ jobs: [] }))
     expect(group('Not started')).toHaveTextContent('2')
     expect(
@@ -353,19 +334,17 @@ describe('CampaignsSection', () => {
     ).toEqual(['DEPOIS', 'NOTURNA'])
   })
 
-  it('nests In progress, Not started and Finished under Campaigns as lighter sub-groups that hold their rows', async () => {
+  it('nests Started and Not started under Campaigns as lighter sub-groups that hold their rows', async () => {
     fs.files.set(REGISTRY, JSON.stringify(exemplo))
     openTerminal('C:\\repo', 'claude', 'PARADA')
     render(<Section />)
     await expandSection()
-    fireEvent.click(group('Finished')!)
     const campaigns = screen.getByRole('button', { name: /^Campaigns/ })
     expect(campaigns.parentElement).not.toHaveAttribute('data-variant')
 
     const members = {
-      'In progress': ['OITO', 'ABERTA', 'PARADA'],
+      Started: ['OITO', 'ABERTA'],
       'Not started': ['DEPOIS', 'NOTURNA'],
-      Finished: ['BASE'],
     }
     for (const [name, ids] of Object.entries(members)) {
       const header = group(name as keyof typeof members)!
@@ -381,17 +360,17 @@ describe('CampaignsSection', () => {
     }
   })
 
-  it('shows an active campaign running only while its tab works or a worker runs one of its tasks', async () => {
+  it('shows a finished campaign running only while its tab works or a worker runs one of its tasks', async () => {
     fs.files.set(REGISTRY, JSON.stringify(exemplo))
-    const terminal = openTerminal('C:\\repo', 'claude', 'PARADA')
+    const terminal = openTerminal('C:\\repo', 'claude', 'BASE')
     const projectId = useProjectsStore.getState().projects[0].id
-    useProjectsStore.getState().setSubTabPtyId(projectId, terminal.id, terminal.tabs[0].id, 'pty-p')
-    useTerminalsStore.getState().registerPty('pty-p')
+    useProjectsStore.getState().setSubTabPtyId(projectId, terminal.id, terminal.tabs[0].id, 'pty-b')
+    useTerminalsStore.getState().registerPty('pty-b')
     const setStatus = (status: 'working' | 'waiting') =>
-      act(() => useTerminalsStore.getState().setStatus('pty-p', status))
-    render(<Section />)
-    await expandSection()
-    const row = () => screen.getByText('PARADA').closest('[data-status]')
+      act(() => useTerminalsStore.getState().setStatus('pty-b', status))
+    render(<TodoSidebar />)
+    fireEvent.click(await screen.findByRole('button', { name: /^Completed/ }))
+    const row = () => screen.getByText('BASE').closest('[data-status]')
     expect(row()).toHaveAttribute('data-status', 'stopped')
     expect(row()).toHaveTextContent('Stopped')
 
@@ -401,17 +380,18 @@ describe('CampaignsSection', () => {
     setStatus('waiting')
     expect(row()).toHaveAttribute('data-status', 'stopped')
 
-    // A queued worker keeps it active but not running; a running one runs it.
+    // A queued worker keeps it live but not running; a running one runs it.
     act(() =>
-      orchestrator.emit?.({ jobs: [{ task: 'PARADA-01', status: 'queued', cwd: 'C:\\repo' }] }),
+      orchestrator.emit?.({ jobs: [{ task: 'BASE-01', status: 'queued', cwd: 'C:\\repo' }] }),
     )
     expect(row()).toHaveAttribute('data-status', 'stopped')
     act(() =>
-      orchestrator.emit?.({ jobs: [{ task: 'PARADA-01', status: 'running', cwd: 'C:\\repo' }] }),
+      orchestrator.emit?.({ jobs: [{ task: 'BASE-01', status: 'running', cwd: 'C:\\repo' }] }),
     )
     expect(row()).toHaveAttribute('data-status', 'working')
 
     // With nothing live for it, a task left in progress is not shown as running.
+    fireEvent.click(screen.getByRole('button', { name: /^Campaigns/ }))
     const oito = screen.getByText('OITO').closest('[data-lane]')
     expect(oito).toHaveAttribute('data-lane', 'interrupted')
     expect(oito).not.toHaveAttribute('data-status')
@@ -437,11 +417,8 @@ describe('CampaignsSection', () => {
     expect(useProjectsStore.getState().preferences.enabledFeatures.orchestrator).toBe(true)
     expect(useUiStore.getState().activeTerminal?.terminalId).toBe(terminal.id)
 
-    // Continuing focuses that tab: no second agent, no second board.
-    act(() => useUiStore.setState({ activeTerminal: null }))
-    fireEvent.click(screen.getByRole('button', { name: 'Continue campaign OITO' }))
-    expect(useUiStore.getState().activeTerminal?.terminalId).toBe(terminal.id)
-    expect(useProjectsStore.getState().projects[0].terminals).toHaveLength(2)
+    // Open, it is Active: it leaves the map.
+    await waitFor(() => expect(screen.queryByText('OITO')).toBeNull())
   })
 
   it('opens a new tab for a campaign whose checkout another campaign tab already uses', async () => {
@@ -463,16 +440,13 @@ describe('CampaignsSection', () => {
     // Open keeps the user's own permission mode; only night tabs are started in auto mode.
     expect(created.tabs[0].extraArgs).toBeUndefined()
     expect(useUiStore.getState().activeTerminal?.terminalId).toBe(created.id)
-    expect(activeRow()).toHaveTextContent('OITO')
+    await waitFor(() => expect(screen.queryByText('OITO')).toBeNull())
   })
 
   it('closes the agent menu on Escape, and gives the focus back to its button', async () => {
     fs.files.set(REGISTRY, JSON.stringify(exemplo))
-    // Already in progress through its worker, its row stays where it is once its tab opens.
-    orchestrator.jobs = [{ task: 'DEPOIS-01', status: 'queued', cwd: 'C:\\repo' }]
     render(<Section />)
     await expandSection()
-    await waitFor(() => expect(group('In progress')).toHaveTextContent('3'))
     const open = screen.getByRole('button', { name: 'Open campaign DEPOIS' })
     const focusCodex = () => {
       fireEvent.click(open)
@@ -491,21 +465,17 @@ describe('CampaignsSection', () => {
     await waitFor(() => expect(agentTerminals()).toHaveLength(1))
   })
 
-  it('continues the active campaign in its terminal; only the active row has Continue', async () => {
+  it('offers Continue only on the active row; a campaign with a tab has no row in the map', async () => {
     fs.files.set(REGISTRY, JSON.stringify(exemplo))
-    const tagged = openTerminal('C:\\repo', 'claude', 'PARADA')
-    const other = openTerminal('D:\\notes', 'shell')
-    focusTerminal(tagged.id)
+    const projectId = useProjectsStore.getState().projects[0].id
+    useTodosStore.setState({ activeCampaigns: { [projectId]: 'OITO' } })
+    openTerminal('C:\\repo', 'claude', 'PARADA')
     render(<Section />)
     await expandSection()
     expect(screen.getAllByRole('button', { name: /^Continue campaign/ })).toHaveLength(1)
-    expect(screen.queryByRole('button', { name: 'Open campaign PARADA' })).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Open campaign OITO' })).toBeInTheDocument()
-
-    focusTerminal(other.id)
-    fireEvent.click(screen.getByRole('button', { name: 'Continue campaign PARADA' }))
-    expect(useUiStore.getState().activeTerminal?.terminalId).toBe(tagged.id)
-    expect(useProjectsStore.getState().projects[0].terminals).toHaveLength(2)
+    expect(screen.getByRole('button', { name: 'Continue campaign OITO' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Open campaign DEPOIS' })).toBeInTheDocument()
+    expect(screen.queryByText('PARADA')).toBeNull()
   })
 
   it('continues a campaign whose tab sits in a disabled terminal of another grid, from Home', async () => {
@@ -518,25 +488,19 @@ describe('CampaignsSection', () => {
     store.moveTerminalToGrid(projectId, tagged.id, other)
     store.openProjectGrid(projectId, shown)
     store.setTerminalDisabled(projectId, tagged.id, true)
-    useTodosStore.setState({ activeCampaigns: { [projectId]: 'PARADA' } })
     useUiStore.getState().setActiveView('home')
     const visible = () =>
       useProjectsStore
         .getState()
         .workspace.containers.some((container) => container.paneIds.includes(tagged.id))
     expect(visible()).toBe(false)
-    render(<Section />)
-    await expandSection()
-    // Its tab makes it live, so Continue must reach that tab instead of offering the agents.
-    expect(screen.getByText('PARADA').closest('[data-status]')).toHaveAttribute(
-      'data-status',
-      'stopped',
-    )
+    render(<TodoSidebar />)
+    // Its tab makes it live, so it is Active, where Continue reaches that tab.
+    const parada = await screen.findByRole('group', { name: 'PARADA' })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Continue campaign PARADA' }))
-    expect(screen.queryByRole('menu')).toBeNull()
+    fireEvent.click(within(parada).getByRole('button', { name: 'Continue campaign' }))
+    await waitFor(() => expect(agentTerminals()[0].disabled).toBe(false))
     expect(agentTerminals()).toHaveLength(1)
-    expect(agentTerminals()[0].disabled).toBe(false)
     expect(useUiStore.getState().activeTerminal?.terminalId).toBe(tagged.id)
     expect(visible()).toBe(true)
     expect(useUiStore.getState().activeView).toBe('workspace')
@@ -561,7 +525,7 @@ describe('CampaignsSection', () => {
     expect(useUiStore.getState().activeTerminal?.terminalId).toBe(terminal.id)
   })
 
-  it('opens the chosen agent in the campaign worktree once, then focuses it', async () => {
+  it('opens the chosen agent in the campaign worktree, after which it leaves the map', async () => {
     const registry = withOito(exemplo, {
       worktrees: ['repo-gone', 'repo-feature'],
       handoff: 'docs/handoff.md',
@@ -590,13 +554,8 @@ describe('CampaignsSection', () => {
         `${REGISTRY} e pelo handoff «C:\\repo\\docs\\handoff.md».`,
     })
     expect(useUiStore.getState().activeTerminal?.terminalId).toBe(terminal.id)
-    // Its tab is focused now, so OITO became the active campaign and continues there.
-    expect(rowOrder()[0]).toBe('OITO')
-
-    act(() => useUiStore.setState({ activeTerminal: null }))
-    fireEvent.click(screen.getByRole('button', { name: 'Continue campaign OITO' }))
-    await waitFor(() => expect(useUiStore.getState().activeTerminal?.terminalId).toBe(terminal.id))
-    expect(agentTerminals()).toHaveLength(1)
+    // Its tab makes it Active: it leaves the map.
+    await waitFor(() => expect(rowOrder()).not.toContain('OITO'))
   })
 
   it('publishes only the newest reload when reads finish out of order', async () => {
@@ -651,9 +610,93 @@ describe('CampaignsSection', () => {
   })
 })
 
-describe('Todo list source', () => {
+describe('Opening a campaign beside an active one', () => {
   const projectId = () => useProjectsStore.getState().projects[0].id
-  const source = () => screen.getByRole('button', { name: 'List source' })
+  /** The fixture as the Todo tab reads it. */
+  const registry = () => {
+    const text = JSON.stringify(exemplo)
+    return {
+      ...parseCampaigns(text)!,
+      projectId: projectId(),
+      path: REGISTRY,
+      main: 'C:\\repo',
+      checkouts: {
+        main: 'C:\\repo',
+        worktrees: [{ path: 'C:\\repo', branch: 'dev', lastCommitMs: null }],
+      },
+      text,
+    }
+  }
+  const named = (id: string) => registry().campaigns.find((campaign) => campaign.id === id)!
+  const BLOCKED = 'NOTURNA waits on OITO (OITO-02): the two cannot be active at once.'
+
+  beforeEach(() => useUiStore.setState({ toasts: [], notifications: [] }))
+
+  it('refuses from the map a campaign waiting on one with an open tab, and opens an unrelated one', async () => {
+    fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    // NOTURNA-01 waits on OITO-02, in progress.
+    openTerminal('C:\\repo', 'claude', 'OITO')
+    render(<Section />)
+    await expandSection()
+    fireEvent.click(screen.getByRole('button', { name: 'Open campaign NOTURNA' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Claude Code' }))
+    await waitFor(() =>
+      expect(lastToast()).toMatchObject({ title: 'Campaign NOTURNA not opened', body: BLOCKED }),
+    )
+    expect(agentTerminals()).toHaveLength(1)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open campaign PARADA' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Claude Code' }))
+    await waitFor(() => expect(agentTerminals()).toHaveLength(2))
+    expect(agentTerminals()[1].tabs[0].campaignId).toBe('PARADA')
+    expect(useUiStore.getState().toasts).toHaveLength(1)
+  })
+
+  it('refuses one an open campaign waits on; the night and a campaign already open go through', async () => {
+    openTerminal('C:\\repo', 'claude', 'NOTURNA')
+    expect(await openCampaign(projectId(), named('OITO'), 'claude', registry())).toBeNull()
+    expect(lastToast()).toMatchObject({ title: 'Campaign OITO not opened', body: BLOCKED })
+    expect(agentTerminals()).toHaveLength(1)
+
+    // The night scheduler is never refused.
+    const oito = named('OITO')
+    const night = oito.tasks.find((item) => item.id === 'OITO-08')!
+    const opened = await openCampaign(projectId(), oito, 'claude', registry(), night)
+    expect(agentTerminals()).toHaveLength(2)
+    expect(agentTerminals()[1]).toMatchObject({ id: opened, tabs: [{ campaignId: 'OITO' }] })
+
+    // With a tab of its own, OITO is focused there as before.
+    act(() => useUiStore.setState({ activeTerminal: null }))
+    expect(await openCampaign(projectId(), oito, 'claude', registry())).toBe(opened)
+    expect(useUiStore.getState().activeTerminal?.terminalId).toBe(opened)
+    expect(agentTerminals()).toHaveLength(2)
+    expect(useUiStore.getState().toasts).toHaveLength(1)
+  })
+
+  it('refuses a campaign whose blocker opened while its handoff was looked up', async () => {
+    let release: (path: string | null) => void = () => {}
+    vi.mocked(findRelativePath).mockImplementationOnce(
+      () => new Promise((resolve) => (release = resolve)),
+    )
+    const noturna = { ...named('NOTURNA'), handoff: 'docs/handoff.md' }
+    const opening = openCampaign(projectId(), noturna, 'claude', registry())
+    openTerminal('C:\\repo', 'claude', 'OITO')
+    release(null)
+    expect(await opening).toBeNull()
+    expect(lastToast()).toMatchObject({ title: 'Campaign NOTURNA not opened', body: BLOCKED })
+    expect(agentTerminals()).toHaveLength(1)
+  })
+})
+
+describe('Active campaigns in the Todo tab', () => {
+  const projectId = () => useProjectsStore.getState().projects[0].id
+  /** A Claude Code tab opened for `campaignId` in `project`, which makes the campaign active. */
+  const activate = (campaignId = 'OITO', project = projectId(), cwd = 'C:\\repo') =>
+    useProjectsStore.getState().createTerminal(project, {
+      name: campaignId,
+      cwd,
+      firstTab: { type: 'claude', cwd, campaignId },
+    })
   /** Task ids in the order the main list shows them. */
   const listed = () =>
     [...document.querySelectorAll('[data-task]')].map((row) => row.getAttribute('data-task'))
@@ -661,15 +704,13 @@ describe('Todo list source', () => {
 
   beforeEach(() => useUiStore.setState({ toasts: [], notifications: [] }))
 
-  it('opens on the active campaign, with its tabs and progress', async () => {
+  it('lists an active campaign with its progress, its done tasks collapsed at its end', async () => {
     fs.files.set(REGISTRY, JSON.stringify(exemplo))
-    useTodosStore.setState({ activeCampaigns: { [projectId()]: 'OITO' } })
+    activate()
     render(<TodoSidebar />)
-    await waitFor(() => expect(source()).toHaveTextContent('OITO'))
+    await waitFor(() => expect(row('OITO-03')).not.toBeNull())
     expect(screen.queryByText('Nothing on your list')).not.toBeInTheDocument()
     expect(screen.getByRole('progressbar')).toHaveTextContent('1 / 8')
-
-    fireEvent.click(screen.getByRole('tab', { name: 'Active' }))
     expect(listed()).toEqual([
       'OITO-02',
       'OITO-03',
@@ -679,53 +720,41 @@ describe('Todo list source', () => {
       'OITO-06',
       'OITO-07',
     ])
-    fireEvent.click(screen.getByRole('tab', { name: 'Completed' }))
-    expect(listed()).toEqual(['OITO-01'])
-    fireEvent.click(screen.getByRole('tab', { name: 'All' }))
+    fireEvent.click(screen.getByRole('button', { name: '1 done' }))
     expect(listed()).toHaveLength(8)
+    expect(listed().at(-1)).toBe('OITO-01')
     expect(row('OITO-03')).toHaveTextContent('pronta sem dependência')
   })
 
-  it('counts an undecomposed campaign as +?, and opens on the first open one when none is active', async () => {
+  it('counts an undecomposed campaign as +?', async () => {
     fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    activate('ABERTA')
     render(<TodoSidebar />)
-    // BASE is done; OITO is the first open campaign by priority.
-    await waitFor(() => expect(source()).toHaveTextContent('OITO'))
-
-    fireEvent.click(source())
-    fireEvent.click(screen.getByRole('option', { name: 'ABERTA' }))
-    expect(source()).toHaveTextContent('ABERTA')
+    const aberta = await screen.findByRole('group', { name: 'ABERTA' })
+    expect(within(aberta).getByRole('button', { name: /^ABERTA ·/ })).toHaveTextContent('1/1+?')
     expect(screen.getByRole('progressbar')).toHaveTextContent('1 / 1+?')
+    expect(within(aberta).getByText('No tasks here.')).toBeInTheDocument()
+    fireEvent.click(within(aberta).getByRole('button', { name: '1 done' }))
     expect(listed()).toEqual(['ABERTA-01'])
   })
 
-  it('switches to another campaign or to My todos, and the Campaigns map selects too', async () => {
+  it('keeps campaign tasks and personal todos apart, each in its own tab', async () => {
     fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    activate()
     useTodosStore.getState().createTodo('Personal one')
     render(<TodoSidebar />)
-    await waitFor(() => expect(source()).toHaveTextContent('OITO'))
-    // Each list stays pure: no personal todo among campaign tasks.
+    await waitFor(() => expect(row('OITO-03')).not.toBeNull())
     expect(screen.queryByText('Personal one')).not.toBeInTheDocument()
 
-    fireEvent.click(source())
-    fireEvent.click(screen.getByRole('option', { name: 'PARADA' }))
-    expect(listed()).toEqual(['PARADA-01'])
-
-    fireEvent.click(source())
-    fireEvent.click(screen.getByRole('option', { name: 'My todos' }))
-    expect(source()).toHaveTextContent('My todos')
+    fireEvent.click(screen.getByRole('tab', { name: /^Personal/ }))
     expect(screen.getByText('Personal one')).toBeInTheDocument()
     expect(listed()).toEqual([])
-
-    fireEvent.click(screen.getByRole('button', { name: /Campaigns/ }))
-    fireEvent.click(screen.getByRole('button', { name: /Espera a campanha ABERTA inteira/ }))
-    expect(source()).toHaveTextContent('DEPOIS')
-    expect(listed()).toEqual(['DEPOIS-01'])
   })
 
-  it('adds a task to the selected campaign with the next id, through the registry write', async () => {
+  it('adds a task to an active campaign with the next id, through the registry write', async () => {
     const text = JSON.stringify(exemplo)
     fs.files.set(REGISTRY, text)
+    activate()
     render(<TodoSidebar />)
     const input = await screen.findByPlaceholderText('Add a task to OITO…')
 
@@ -755,8 +784,11 @@ describe('Todo list source', () => {
 
   it('checks a task done for the user, and undo restores it from the toast or a second click', async () => {
     fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    activate()
     render(<TodoSidebar />)
     await waitFor(() => expect(row('OITO-03')).not.toBeNull())
+    // A task checked here joins the done ones: shown, to reopen it from its row.
+    fireEvent.click(screen.getByRole('button', { name: '1 done' }))
 
     fireEvent.click(within(row('OITO-03')).getByRole('button', { name: 'Mark complete' }))
     await waitFor(() =>
@@ -785,6 +817,7 @@ describe('Todo list source', () => {
 
   it('undo puts the state back but keeps a result written since the check', async () => {
     fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    activate()
     render(<TodoSidebar />)
     await waitFor(() => expect(row('OITO-03')).not.toBeNull())
     fireEvent.click(within(row('OITO-03')).getByRole('button', { name: 'Mark complete' }))
@@ -800,8 +833,10 @@ describe('Todo list source', () => {
 
   it('shows a check as soon as the write lands, before the worktrees are read again', async () => {
     fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    activate()
     render(<TodoSidebar />)
     await waitFor(() => expect(row('OITO-03')).not.toBeNull())
+    fireEvent.click(screen.getByRole('button', { name: '1 done' }))
     // Reading the worktrees runs git: 0.2 to 0.4 s per read on Windows (ACH-0001).
     const checkouts = await worktreeCheckouts('C:\\repo')
     let readWorktrees: () => void = () => {}
@@ -837,6 +872,8 @@ describe('Todo list source', () => {
       .getState()
       .createProject({ name: 'Other', defaultCwd: OTHER_REPO }).id
     useProjectsStore.setState({ activeProjectId: first })
+    activate('OITO', first)
+    activate('OITO', second, OTHER_REPO)
     let finish: () => void = () => {}
     vi.mocked(campaignRegistryWrite).mockImplementationOnce(
       (path, _expected, content) =>
@@ -868,7 +905,7 @@ describe('Todo list source', () => {
 
   it('hides the add field per project, and Ctrl+N still brings it back for one task', async () => {
     fs.files.set(REGISTRY, JSON.stringify(exemplo))
-    useTodosStore.setState({ activeCampaigns: { [projectId()]: 'OITO' } })
+    activate()
     render(<TodoSidebar />)
     const field = () => screen.queryByPlaceholderText('Add a task to OITO…')
     await waitFor(() => expect(field()).not.toBeNull())
@@ -876,11 +913,11 @@ describe('Todo list source', () => {
     const hide = screen.getByRole('button', { name: 'Hide the add field' })
     expect(hide).toHaveAttribute('title', 'Hide the add field')
     expect(hide.closest('section')).toContainElement(
-      screen.getByRole('button', { name: /^Active · OITO/ }),
+      screen.getByRole('button', { name: /^Active/ }),
     )
     fireEvent.click(hide)
     expect(field()).toBeNull()
-    expect(listed()).toContain('OITO-01')
+    expect(listed()).toContain('OITO-03')
     expect(useTodosStore.getState().addFieldHidden).toEqual({ [projectId()]: true })
 
     // Ctrl+N shows it, focused, for one task; it hides again once the task is added.
@@ -910,6 +947,8 @@ describe('Todo list source', () => {
       .getState()
       .createProject({ name: 'Other', defaultCwd: OTHER_REPO }).id
     useProjectsStore.setState({ activeProjectId: first })
+    activate('OITO', first)
+    activate('OITO', second, OTHER_REPO)
     useTodosStore.setState({ addFieldHidden: { [first]: true, [second]: true } })
     render(<TodoSidebar />)
     const field = () => screen.queryByPlaceholderText('Add a task to OITO…')
@@ -930,6 +969,7 @@ describe('Todo list source', () => {
 
   it('checks campaign titles in code points, not UTF-16 units', async () => {
     fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    activate()
     render(<TodoSidebar />)
     const input = await screen.findByPlaceholderText('Add a task to OITO…')
     // 140 emoji are 280 UTF-16 units: a maxLength would cut them short.
@@ -950,6 +990,7 @@ describe('Todo list source', () => {
 
   it('refuses a write over a registry changed since it was read, reloads and asks to retry', async () => {
     fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    activate()
     render(<TodoSidebar />)
     await waitFor(() => expect(row('OITO-03')).not.toBeNull())
     // The script wrote, and the panel has not seen it yet.
@@ -970,8 +1011,8 @@ describe('Todo list source', () => {
   it('keeps the personal list as it was in a project without a registry', async () => {
     render(<TodoSidebar />)
     await waitFor(() => expect(fs.onChange).not.toBeNull())
-    expect(screen.queryByRole('button', { name: 'List source' })).not.toBeInTheDocument()
-    expect(screen.getByText('My todos')).toBeInTheDocument()
+    expect(screen.getByText(/no campaign registry/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('tab', { name: /^Personal/ }))
     const input = screen.getByPlaceholderText('Add a task…')
     fireEvent.change(input, { target: { value: 'Mine' } })
     fireEvent.submit(input.closest('form')!)
@@ -980,24 +1021,16 @@ describe('Todo list source', () => {
     expect(campaignRegistryWrite).not.toHaveBeenCalled()
   })
 
-  it('opens on My todos when the settings say so, and the settings store that choice', async () => {
-    fs.files.set(REGISTRY, JSON.stringify(exemplo))
+  it('asks for no list source in the settings: your own list is the Personal tab', () => {
     useUiStore.setState({ openModal: TODO_SETTINGS_MODAL_ID })
     render(<TodoSettingsModal />)
     expect(screen.getByText('Folder for your personal todos')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'My todos' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
-    await waitFor(() => expect(useTodosStore.getState().listSource).toBe('mine'))
-    cleanup()
-
-    render(<TodoSidebar />)
-    await waitFor(() => expect(source()).toHaveTextContent('My todos'))
-    expect(screen.getByText('Nothing on your list')).toBeInTheDocument()
+    expect(screen.queryByText('List source')).toBeNull()
+    act(() => useUiStore.getState().closeModal())
   })
 
-  it('shows the live workers of the active campaign on its row and on its task rows', async () => {
+  it('shows the live workers of an active campaign in its details and on its task rows', async () => {
     fs.files.set(REGISTRY, JSON.stringify(exemplo))
-    useTodosStore.setState({ activeCampaigns: { [projectId()]: 'OITO' } })
     orchestrator.jobs = [
       { task: 'OITO-02', status: 'running', cwd: 'C:\\repo-feature' },
       { task: 'OITO-02', status: 'blocked', cwd: 'C:\\repo' },
@@ -1008,14 +1041,16 @@ describe('Todo list source', () => {
       { task: null, status: 'running', cwd: 'C:\\repo' },
     ]
     render(<TodoSidebar />)
+    // Its workers make OITO active.
     await waitFor(() => expect(row('OITO-02')).toHaveTextContent('2 running'))
     expect(row('OITO-03')).toHaveTextContent('1 queued')
     for (const id of ['OITO-05', 'OITO-06']) {
       expect(row(id)).not.toHaveTextContent(/running|queued/)
     }
-    await expandSection()
-    expect(activeRow()).toHaveTextContent('2 running · 1 queued')
-    fireEvent.click(screen.getByRole('button', { name: /^Finished/ }))
+    const oito = screen.getByRole('group', { name: 'OITO' })
+    fireEvent.click(within(oito).getByRole('button', { name: 'Details' }))
+    expect(within(oito).getByText('2 running · 1 queued')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /^Completed/ }))
     // A finished campaign shows that a worker is live for it, but not its counts.
     const base = screen.getByText('BASE').closest('[data-status]')
     expect(base).toHaveTextContent('Running')
@@ -1027,8 +1062,9 @@ describe('Todo list source', () => {
         jobs: [{ task: 'OITO-03', status: 'running', cwd: 'C:\\repo', summary: 'streaming' }],
       }),
     )
-    expect(activeRow()).toHaveTextContent('1 running')
-    expect(activeRow()).not.toHaveTextContent('queued')
+    // In its details and on OITO-03's row.
+    expect(within(oito).getAllByText('1 running')).toHaveLength(2)
+    expect(oito).not.toHaveTextContent('queued')
     expect(row('OITO-02')).not.toHaveTextContent('running')
     expect(row('OITO-03')).toHaveTextContent('1 running')
   })
@@ -1036,13 +1072,16 @@ describe('Todo list source', () => {
 
 describe('Campaign controls', () => {
   const projectId = () => useProjectsStore.getState().projects[0].id
-  const toggle = () => screen.findByRole('button', { name: 'Current' })
-  const button = (name: string) => screen.queryByRole('button', { name })
-  /** Shows OITO in the list, with its Campaign group opened. */
-  async function openControls() {
-    useTodosStore.setState({ activeCampaigns: { [projectId()]: 'OITO' } })
+  /** A control, in `campaign`'s own subsection when given. */
+  const button = (name: string | RegExp, campaign?: string) =>
+    (campaign ? within(screen.getByRole('group', { name: campaign })) : screen).queryByRole(
+      'button',
+      { name },
+    )
+  /** Shows the Todo tab once `campaign` is active: a tab or a worker is live for it. */
+  async function openControls(campaign = 'OITO') {
     render(<TodoSidebar />)
-    fireEvent.click(await toggle())
+    await screen.findByRole('group', { name: campaign })
   }
   /** A terminal opened for `campaignId`, its first tab on `ptyId` in `status`. */
   function agentTab(campaignId: string, ptyId: string, status: 'working' | 'waiting') {
@@ -1061,23 +1100,18 @@ describe('Campaign controls', () => {
   })
   afterEach(() => useTerminalsStore.getState().reset())
 
-  it('sits collapsed in the Active section, under the add field and above the first task row', async () => {
+  it('sits in its campaign subsection, under its details and above its add field and tasks', async () => {
     fs.files.set(REGISTRY, JSON.stringify(exemplo))
-    useTodosStore.setState({ activeCampaigns: { [projectId()]: 'OITO' } })
-    render(<TodoSidebar />)
-    const header = await toggle()
-    expect(header).toHaveAttribute('aria-expanded', 'false')
-    expect(button('Continue campaign')).toBeNull()
-    const section = screen.getByRole('button', { name: /^Active · OITO/ }).closest('section')!
-    expect(section).toContainElement(header)
+    agentTab('OITO', 'pty-o', 'waiting')
+    await openControls()
+    const oito = screen.getByRole('group', { name: 'OITO' })
+    const resume = button('Continue campaign', 'OITO')!
+    expect(resume).toBeEnabled()
     const follows = (a: Element, b: Element) =>
       Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)
-    expect(follows(screen.getByPlaceholderText('Add a task to OITO…'), header)).toBe(true)
-    expect(follows(header, document.querySelector('[data-task]')!)).toBe(true)
-
-    fireEvent.click(header)
-    expect(header).toHaveAttribute('aria-expanded', 'true')
-    expect(button('Continue campaign')).toBeEnabled()
+    expect(follows(within(oito).getByRole('button', { name: 'Details' }), resume)).toBe(true)
+    expect(follows(resume, within(oito).getByPlaceholderText('Add a task to OITO…'))).toBe(true)
+    expect(follows(resume, oito.querySelector('[data-task]')!)).toBe(true)
     // Not running: no Pause or Cancel.
     expect(button('Pause campaign')).toBeNull()
     expect(button('Cancel campaign')).toBeNull()
@@ -1085,6 +1119,8 @@ describe('Campaign controls', () => {
 
   it('continues from the task in progress in a new Claude Code tab, next to its board', async () => {
     fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    // Active through a queued worker only: it has no tab yet.
+    orchestrator.jobs = [{ id: 'job-q', task: 'OITO-03', status: 'queued', cwd: 'C:\\repo' }]
     await openControls()
     fireEvent.click(button('Continue campaign')!)
     await waitFor(() => expect(agentTerminals()).toHaveLength(1))
@@ -1168,10 +1204,9 @@ describe('Campaign controls', () => {
 
   it('with nothing ready, continues from its first open task and tells the agent why it waits', async () => {
     fs.files.set(REGISTRY, JSON.stringify(exemplo))
-    // DEPOIS-01 is ready, but its campaign waits for ABERTA.
-    useTodosStore.setState({ activeCampaigns: { [projectId()]: 'DEPOIS' } })
-    render(<TodoSidebar />)
-    fireEvent.click(await toggle())
+    // DEPOIS-01 is ready, but its campaign waits for ABERTA; a queued worker makes DEPOIS active.
+    orchestrator.jobs = [{ id: 'job-d', task: 'DEPOIS-01', status: 'queued', cwd: 'C:\\repo' }]
+    await openControls('DEPOIS')
     expect(button('Continue campaign')).toBeEnabled()
     fireEvent.click(button('Continue campaign')!)
     await waitFor(() => expect(agentTerminals()).toHaveLength(1))
@@ -1180,11 +1215,11 @@ describe('Campaign controls', () => {
     )
   })
 
-  it('cannot continue a finished campaign, and says so', async () => {
+  it('cannot continue a campaign with every task done, and says so', async () => {
     fs.files.set(REGISTRY, JSON.stringify(exemplo))
-    useTodosStore.setState({ activeCampaigns: { [projectId()]: 'BASE' } })
-    render(<TodoSidebar />)
-    fireEvent.click(await toggle())
+    // ABERTA's only task is done, but more are still to be found: it is not finished.
+    agentTab('ABERTA', 'pty-a', 'waiting')
+    await openControls('ABERTA')
     expect(button('Continue campaign')).toBeDisabled()
     expect(screen.getByText('Every task is done')).toBeInTheDocument()
   })
@@ -1196,10 +1231,10 @@ describe('Campaign controls', () => {
     agentTab('OITO', 'pty-b', 'waiting')
     agentTab('PARADA', 'pty-c', 'working')
     await openControls()
-    expect(button('Continue campaign')).toBeNull()
-    expect(button('Cancel campaign')).toBeEnabled()
+    expect(button('Continue campaign', 'OITO')).toBeNull()
+    expect(button('Cancel campaign', 'OITO')).toBeEnabled()
 
-    fireEvent.click(button('Pause campaign')!)
+    fireEvent.click(button('Pause campaign', 'OITO')!)
     await waitFor(() => expect(writePty).toHaveBeenCalledTimes(1))
     expect(writePty).toHaveBeenCalledWith('pty-a', '\x1b')
     expect(orchestratorCancel).not.toHaveBeenCalled()
@@ -1225,10 +1260,10 @@ describe('Campaign controls', () => {
       .createSubTab(projectId(), shared.id, { type: 'shell', cwd: 'C:\\repo' })
     const other = agentTab('PARADA', 'pty-c', 'working')
     await openControls()
-    await waitFor(() => expect(button('Cancel campaign')).toBeEnabled())
+    await waitFor(() => expect(button('Cancel campaign', 'OITO')).toBeEnabled())
 
     // No: nothing happens.
-    fireEvent.click(button('Cancel campaign')!)
+    fireEvent.click(button('Cancel campaign', 'OITO')!)
     await waitFor(() => expect(askConfirm).toHaveBeenCalledTimes(1))
     expect(askConfirm.mock.calls[0][0]).toContain('OITO')
     await act(async () => {})
@@ -1247,7 +1282,7 @@ describe('Campaign controls', () => {
         }),
     )
     askConfirm.mockResolvedValueOnce(true)
-    fireEvent.click(button('Cancel campaign')!)
+    fireEvent.click(button('Cancel campaign', 'OITO')!)
     await waitFor(() => expect(campaignRegistryWrite).toHaveBeenCalledTimes(1))
     expect(writePty).toHaveBeenCalledTimes(1)
     expect(writePty).toHaveBeenCalledWith('pty-a', '\x1b')
@@ -1264,8 +1299,8 @@ describe('Campaign controls', () => {
     expect(cleanupPtys).toHaveBeenCalledWith(['pty-a'])
     expect(cleanupPtys).toHaveBeenCalledWith(['pty-b'])
     // Its workers still show live until the board says otherwise: the controls wait on the write.
-    expect(button('Pause campaign')).toBeDisabled()
-    expect(button('Cancel campaign')).toBeDisabled()
+    expect(button('Pause campaign', 'OITO')).toBeDisabled()
+    expect(button('Cancel campaign', 'OITO')).toBeDisabled()
 
     await act(async () => release())
     await waitFor(() => expect(task('OITO-02')?.estado).toBe('pronta'))
@@ -1278,7 +1313,7 @@ describe('Campaign controls', () => {
         'Tabs closed: 2 · workers cancelled: 3 · tasks back to Ready: 1',
       ),
     )
-    await waitFor(() => expect(button('Cancel campaign')).toBeEnabled())
+    await waitFor(() => expect(button('Cancel campaign', 'OITO')).toBeEnabled())
   })
 
   /** OITO with these tasks set to these states. */
@@ -1469,6 +1504,52 @@ describe('Campaign controls', () => {
     expect(task('OITO-02')?.estado).toBe('em execução')
     expect(campaignRegistryWrite).not.toHaveBeenCalled()
   })
+
+  it('gives every active campaign its own controls, one control running at a time', async () => {
+    fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    // DEPOIS is live through a queued worker, OITO and PARADA through their tabs.
+    orchestrator.jobs = [{ id: 'job-d', task: 'DEPOIS-01', status: 'queued', cwd: 'C:\\repo' }]
+    agentTab('OITO', 'pty-o', 'waiting')
+    agentTab('PARADA', 'pty-p', 'working')
+    await openControls()
+    await waitFor(() => expect(screen.queryByRole('group', { name: 'DEPOIS' })).not.toBeNull())
+    expect(button('Continue campaign', 'OITO')).toBeEnabled()
+    expect(button('Continue campaign', 'DEPOIS')).toBeEnabled()
+    expect(button('Continue campaign', 'PARADA')).toBeNull()
+
+    // Each subsection collapses on its own.
+    fireEvent.click(button(/^DEPOIS ·/, 'DEPOIS')!)
+    expect(button('Continue campaign', 'DEPOIS')).toBeNull()
+    expect(button('Pause campaign', 'PARADA')).toBeEnabled()
+
+    fireEvent.click(button('Pause campaign', 'PARADA')!)
+    await waitFor(() => expect(writePty).toHaveBeenCalledWith('pty-p', '\x1b'))
+    await waitFor(() => expect(button('Continue campaign', 'OITO')).toBeEnabled())
+
+    // One control at a time, across the campaigns.
+    fireEvent.click(button('Continue campaign', 'OITO')!)
+    expect(button('Pause campaign', 'PARADA')).toBeDisabled()
+    await waitFor(() => expect(writePty).toHaveBeenCalledWith('pty-o', '\r'))
+  })
+
+  it('continues a campaign that waits on an active one only with a refusal toast', async () => {
+    fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    // NOTURNA-01 waits on OITO-02. NOTURNA is active through a queued worker, without a tab.
+    orchestrator.jobs = [{ id: 'job-n', task: 'NOTURNA-01', status: 'queued', cwd: 'C:\\repo' }]
+    agentTab('OITO', 'pty-o', 'waiting')
+    await openControls('NOTURNA')
+    fireEvent.click(button('Continue campaign', 'NOTURNA')!)
+    await waitFor(() =>
+      expect(lastToast()).toMatchObject({
+        title: 'Campaign NOTURNA not opened',
+        body: 'NOTURNA waits on OITO (OITO-02): the two cannot be active at once.',
+      }),
+    )
+    await waitFor(() => expect(button('Continue campaign', 'NOTURNA')).toBeEnabled())
+    expect(useUiStore.getState().toasts).toHaveLength(1)
+    expect(agentTerminals()).toHaveLength(1)
+    expect(writePty).not.toHaveBeenCalled()
+  })
 })
 
 describe('Night card', () => {
@@ -1482,6 +1563,9 @@ describe('Night card', () => {
     hora: '03:41',
   })
   const card = () => screen.queryByRole('button', { name: /^Night of/ })
+
+  // The card is in the Night tab; Pending, in Tasks, lists the entries waiting on you.
+  beforeEach(() => useTodosStore.setState({ tab: 'night' }))
 
   it('is hidden without a diary', async () => {
     fs.files.set(REGISTRY, JSON.stringify(exemplo))
@@ -1511,12 +1595,8 @@ describe('Night card', () => {
     expect(toggle).toHaveTextContent('1 waiting on you')
     expect(toggle).toHaveTextContent('1 stopped')
     expect(toggle).not.toHaveTextContent('failed')
-    // An entry waits on you: the card sits open in Pending, above the list.
-    expect(toggle).toHaveAttribute('aria-expanded', 'true')
-    expect(toggle.compareDocumentPosition(document.querySelector('[data-task]')!)).toBe(
-      Node.DOCUMENT_POSITION_FOLLOWING,
-    )
-    fireEvent.click(toggle)
+    // Collapsed at first, even with an entry waiting on you: Pending lists that one in Tasks.
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
     expect(screen.queryByText('OITO-07 resumo')).toBeNull()
 
     fireEvent.click(toggle)
@@ -1691,6 +1771,7 @@ describe('Night card', () => {
       ]),
     )
     render(<TodoSidebar />)
+    fireEvent.click(await screen.findByRole('button', { name: /^Night of/ }))
     const viewer = () => useUiStore.getState().linkViewerUrl
     const link = async (evidence: string) =>
       fireEvent.click(await screen.findByRole('button', { name: evidence }))
@@ -1734,7 +1815,10 @@ describe('Night card', () => {
       fireEvent.click(choice)
     }
 
-    beforeEach(() => useUiStore.setState({ toasts: [], notifications: [], linkViewerUrl: null }))
+    beforeEach(() => {
+      useUiStore.setState({ toasts: [], notifications: [], linkViewerUrl: null })
+      useTodosStore.setState({ tab: 'tasks' })
+    })
 
     it('is concluded or put back in the queue only by your click', async () => {
       fs.files.set(REGISTRY, JSON.stringify(exemplo))
@@ -1810,8 +1894,10 @@ describe('Night card', () => {
         ]),
       )
       fs.found.set('docs/oito.md', 'C:\\repo\\docs\\oito.md')
+      useTodosStore.setState({ tab: 'night' })
       render(<TodoSidebar />)
       const card = await screen.findByRole('button', { name: /^Night of/ })
+      fireEvent.click(card)
       await waitFor(() => expect(actions('OITO-07')).not.toBeNull())
       const trigger = actions('OITO-07')!
       /** Opens the menu and moves the focus onto `name`, as the keyboard would. */
@@ -1846,7 +1932,7 @@ describe('Night card', () => {
       await waitFor(() => expect(card).toHaveFocus())
     })
 
-    it('leaves Pending once you decide, and the focus goes to Pending or to the card where it went', async () => {
+    it('leaves Pending once you decide, and the focus goes to Pending', async () => {
       const data = structuredClone(exemplo)
       Object.assign(data.campanhas[5].tarefas[0], { resultado: 'aguarda o Gate 2 do usuário' })
       fs.files.set(REGISTRY, JSON.stringify(data))
@@ -1856,36 +1942,37 @@ describe('Night card', () => {
       )
       render(<TodoSidebar />)
       const pending = () => screen.queryByRole('button', { name: /^Pending/ })
-      const card = () => screen.getByRole('button', { name: /^Night of/ })
       await waitFor(() => expect(actions('OITO-07')).not.toBeNull())
       expect(pending()).toHaveTextContent('2')
-      expect(card()).toHaveTextContent('1 waiting on you')
 
-      // Back in the queue it no longer waits on you: the card, with its whole night, goes after
-      // the map, and the focus to Pending, still there for the Gate 2 task.
+      // Back in the queue it no longer waits on you: it leaves Pending, and the focus goes to
+      // Pending, still there for the Gate 2 task.
       await choose('OITO-07', 'Back to the queue')
       await waitFor(() => expect(task('OITO-07')?.estado).toBe('pronta'))
       await waitFor(() => expect(pending()).toHaveTextContent('1'))
-      expect(pending()!.closest('section')).not.toContainElement(card())
-      expect(
-        screen.getByRole('button', { name: /^Campaigns/ }).compareDocumentPosition(card()),
-      ).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
-      expect(card()).not.toHaveTextContent('waiting on you')
-      expect(card()).toHaveAttribute('aria-expanded', 'false')
+      expect(actions('OITO-07')).toBeNull()
       await waitFor(() => expect(pending()).toHaveFocus())
 
-      // Waiting again, it is back in Pending; once concluded, with nothing else pending, the focus
-      // goes to the card in its place after the map.
+      // Waiting again, it is back in Pending, now alone there.
       await editRegistry((edited) => {
         Object.assign(edited.campanhas[1].tarefas[6], { estado: 'bloqueada' })
         delete (edited.campanhas[5].tarefas[0] as { resultado?: string }).resultado
       })
       await waitFor(() => expect(pending()).toHaveTextContent('1'))
-      expect(pending()!.closest('section')).toContainElement(card())
+      expect(pending()!.closest('section')).toContainElement(actions('OITO-07'))
+
+      // The Night tab keeps the whole night.
+      fireEvent.click(screen.getByRole('tab', { name: /^Night/ }))
+      expect(screen.getByRole('button', { name: /^Night of/ })).toHaveTextContent(
+        '1 waiting on you',
+      )
+
+      // Once concluded, nothing is pending: the focus goes to the Tasks tab, not to the page.
+      fireEvent.click(screen.getByRole('tab', { name: /^Overview/ }))
       await waitFor(() => expect(actions('OITO-07')).not.toBeNull())
       await choose('OITO-07', 'Conclude (Gate 2)')
       await waitFor(() => expect(pending()).toBeNull())
-      await waitFor(() => expect(card()).toHaveFocus())
+      await waitFor(() => expect(screen.getByRole('tab', { name: /^Overview/ })).toHaveFocus())
     })
 
     it('opens its evidence and continues its campaign in the terminal', async () => {
@@ -2080,7 +2167,7 @@ describe('Todo sections', () => {
 
   beforeEach(() => useUiStore.setState({ toasts: [], notifications: [] }))
 
-  it('puts Pending first, then the active campaign, Campaigns, Findings and a night with nothing waiting', async () => {
+  it('puts Pending first, then Active, Findings, Campaigns and Completed; the night is in its tab', async () => {
     fs.files.set(REGISTRY, withResults({ 'OITO-07': GATE_2 }))
     fs.files.set(
       FINDINGS,
@@ -2092,14 +2179,14 @@ describe('Todo sections', () => {
     )
     night(['OITO-03', 'ok'])
     render(<TodoSidebar />)
-    const nightCard = await screen.findByRole('button', { name: /^Night of 10\/03/ })
     await screen.findByRole('button', { name: /^Findings/ })
+    await waitFor(() => expect(pending()).not.toBeNull())
     const order = [
       pending(),
-      header(/^Active · OITO/),
-      header(/^Campaigns/),
+      header(/^Active/),
       header(/^Findings/),
-      nightCard,
+      header(/^Campaigns/),
+      header(/^Completed/),
     ]
     order
       .slice(1)
@@ -2108,9 +2195,8 @@ describe('Todo sections', () => {
       )
     expect(pending()).toHaveAttribute('aria-expanded', 'true')
     expect(pending()).toHaveTextContent('waiting on you')
-    expect(pending()!.closest('section')).not.toContainElement(nightCard)
-    expect(nightCard).toHaveAttribute('aria-expanded', 'false')
     expect(header(/^Findings/)).toHaveAttribute('aria-expanded', 'false')
+    expect(header(/^Night of/)).toBeNull()
 
     // Nothing waits on you: Pending is hidden.
     await editRegistry((data) => {
@@ -2129,7 +2215,7 @@ describe('Todo sections', () => {
         'NOTURNA-02': GATE_2,
         'BASE-01': GATE_2,
         'OITO-04': GATE_2,
-        // Shown in the night card with another result: listed there, not twice in Pending.
+        // Done tonight with another result, which the Night tab shows: still waiting here.
         'OITO-06': GATE_2,
         'OITO-03': 'aguarda revisão',
       }),
@@ -2145,17 +2231,16 @@ describe('Todo sections', () => {
       ['OITO-06', 'ok'],
     )
     render(<TodoSidebar />)
-    const nightCard = await screen.findByRole('button', { name: /^Night of 10\/03/ })
+    await waitFor(() => expect(pending()).toHaveTextContent('5'))
     const section = pending()!.closest('section')!
-    expect(pending()).toHaveTextContent('4')
     expect(pending()).toHaveAttribute('aria-expanded', 'true')
 
-    // The night card sits in Pending as a lighter sub-group, open on its entries and their actions.
-    expect(section).toContainElement(nightCard)
-    expect(nightCard.parentElement).toHaveAttribute('data-variant', 'sub')
-    expect(nightCard).toHaveTextContent('2 waiting on you')
-    expect(nightCard).toHaveAttribute('aria-expanded', 'true')
-    expect(await screen.findByRole('button', { name: /^NOTURNA-02 / })).toBeInTheDocument()
+    // The night's entries waiting on you are its rows, with their actions and their night's date.
+    expect(header(/^Night of/)).toBeNull()
+    const noturna = screen.getByRole('button', { name: /^NOTURNA-02 / })
+    expect(section).toContainElement(noturna)
+    expect(noturna).toHaveTextContent('night 10/03')
+    expect(section).toContainElement(screen.getByRole('button', { name: /^OITO-02 / }))
 
     // Gate 2 tasks of any campaign, with their id, title and campaign.
     const box = gate2()!
@@ -2163,7 +2248,7 @@ describe('Todo sections', () => {
     expect(
       within(box).getByRole('button', { name: /^Waiting for your Gate 2/ }).parentElement,
     ).toHaveAttribute('data-variant', 'sub')
-    expect(gate2Rows()).toEqual(['OITO-07', 'PARADA-01'])
+    expect(gate2Rows()).toEqual(['OITO-06', 'OITO-07', 'PARADA-01'])
     const row = box.querySelector('[data-task="OITO-07"]') as HTMLElement
     expect(within(row).getByText('bloqueada')).toBeInTheDocument()
     expect(within(row).getByText('OITO')).toBeInTheDocument()
@@ -2177,13 +2262,13 @@ describe('Todo sections', () => {
       }),
     )
     await waitFor(() => expect(lastToast()?.body).toBe('OITO-07 marked done.'))
-    await waitFor(() => expect(gate2Rows()).toEqual(['PARADA-01']))
-    expect(pending()).toHaveTextContent('3')
+    await waitFor(() => expect(gate2Rows()).toEqual(['OITO-06', 'PARADA-01']))
+    expect(pending()).toHaveTextContent('4')
     await act(async () => lastToast()?.actions?.[0].run())
     await waitFor(() =>
       expect(task('OITO-07')).toEqual({ ...original('OITO-07'), resultado: GATE_2 }),
     )
-    await waitFor(() => expect(gate2Rows()).toEqual(['OITO-07', 'PARADA-01']))
+    await waitFor(() => expect(gate2Rows()).toEqual(['OITO-06', 'OITO-07', 'PARADA-01']))
 
     // What the task already said stays, without the waiting note the check answers; undo puts it back.
     const other = box.querySelector('[data-task="PARADA-01"]') as HTMLElement
@@ -2204,7 +2289,7 @@ describe('Todo sections', () => {
 
     fireEvent.click(pending()!)
     expect(gate2()).toBeNull()
-    expect(header(/^Night of/)).toBeNull()
+    expect(screen.queryByRole('button', { name: /^NOTURNA-02 / })).toBeNull()
   })
 
   it('opens evidence from the checkout its campaign has at the click, not the one it had', async () => {
@@ -2321,11 +2406,11 @@ describe('Todo sections', () => {
       [...document.querySelectorAll('[data-section]')].map((item) =>
         item.getAttribute('data-section'),
       )
-    const DEFAULT = ['pending', 'list', 'campaigns', 'findings', 'night']
+    const DEFAULT = ['pending', 'active', 'findings', 'campaigns', 'completed']
 
     afterEach(() => act(() => useUiStore.getState().closeModal()))
 
-    /** Every section on screen: Pending, Active, Campaigns, Findings and a decided night. */
+    /** Every section on screen: Pending, Active, Findings, Campaigns and Completed. */
     async function renderAll(shown = DEFAULT) {
       fs.files.set(REGISTRY, withResults({ 'OITO-07': GATE_2 }))
       fs.files.set(
@@ -2343,7 +2428,6 @@ describe('Todo sections', () => {
           <TodoSettingsModal />
         </>,
       )
-      await screen.findByRole('button', { name: /^Night of 10\/03/ })
       await screen.findByRole('button', { name: /^Findings/ })
       await waitFor(() => expect(order()).toEqual(shown))
       return view
@@ -2355,18 +2439,18 @@ describe('Todo sections', () => {
       toggle.focus()
 
       fireEvent.keyDown(toggle, { key: 'ArrowDown', altKey: true })
-      expect(order()).toEqual(['list', 'pending', 'campaigns', 'findings', 'night'])
+      expect(order()).toEqual(['active', 'pending', 'findings', 'campaigns', 'completed'])
       await waitFor(() => expect(pending()).toHaveFocus())
       expect(pending()).toHaveAttribute('aria-expanded', 'true')
       fireEvent.keyDown(header(/^Findings/)!, { key: 'ArrowUp', altKey: true })
-      expect(order()).toEqual(['list', 'pending', 'findings', 'campaigns', 'night'])
-      // The first goes no higher, and an arrow without Alt moves nothing.
-      fireEvent.keyDown(header(/^Active · OITO/)!, { key: 'ArrowUp', altKey: true })
-      fireEvent.keyDown(header(/^Night of/)!, { key: 'ArrowDown', altKey: true })
+      expect(order()).toEqual(['active', 'findings', 'pending', 'campaigns', 'completed'])
+      // The first goes no higher, the last no lower, and an arrow without Alt moves nothing.
+      fireEvent.keyDown(header(/^Active/)!, { key: 'ArrowUp', altKey: true })
+      fireEvent.keyDown(header(/^Completed/)!, { key: 'ArrowDown', altKey: true })
       fireEvent.keyDown(pending()!, { key: 'ArrowDown' })
-      expect(order()).toEqual(['list', 'pending', 'findings', 'campaigns', 'night'])
+      expect(order()).toEqual(['active', 'findings', 'pending', 'campaigns', 'completed'])
       expect(useTodosStore.getState().sectionOrder).toEqual({
-        [projectId()]: ['list', 'pending', 'findings', 'campaigns', 'night'],
+        [projectId()]: ['active', 'findings', 'pending', 'campaigns', 'completed'],
       })
       // A click on a header still opens and closes it.
       fireEvent.click(pending()!)
@@ -2374,7 +2458,7 @@ describe('Todo sections', () => {
 
       // Kept across a remount.
       unmount()
-      await renderAll(['list', 'pending', 'findings', 'campaigns', 'night'])
+      await renderAll(['active', 'findings', 'pending', 'campaigns', 'completed'])
 
       // The settings put the default order back.
       act(() => useUiStore.getState().openModal_(TODO_SETTINGS_MODAL_ID))
@@ -2412,21 +2496,21 @@ describe('Todo sections', () => {
       try {
         // A press that moves less than the activation distance is a click.
         const findings = header(/^Findings/)!
-        fireEvent.pointerDown(findings, { button: 0, clientX: 20, clientY: 313 })
-        fireEvent.pointerMove(document, { clientX: 22, clientY: 316 })
-        fireEvent.pointerUp(document, { clientX: 22, clientY: 316 })
+        fireEvent.pointerDown(findings, { button: 0, clientX: 20, clientY: 213 })
+        fireEvent.pointerMove(document, { clientX: 22, clientY: 216 })
+        fireEvent.pointerUp(document, { clientX: 22, clientY: 216 })
         fireEvent.click(findings)
         expect(findings).toHaveAttribute('aria-expanded', 'true')
         expect(order()).toEqual(DEFAULT)
 
-        // Findings, the fourth, goes up to the second place.
-        fireEvent.pointerDown(findings, { button: 0, clientX: 20, clientY: 313 })
-        fireEvent.pointerMove(document, { clientX: 20, clientY: 300 })
+        // Findings, the third, goes up to the second place.
+        fireEvent.pointerDown(findings, { button: 0, clientX: 20, clientY: 213 })
+        fireEvent.pointerMove(document, { clientX: 20, clientY: 200 })
         fireEvent.pointerMove(document, { clientX: 20, clientY: 113 })
         fireEvent.pointerUp(document, { clientX: 20, clientY: 113 })
         // The click that ends a drag does not toggle the section.
         fireEvent.click(findings)
-        expect(order()).toEqual(['pending', 'findings', 'list', 'campaigns', 'night'])
+        expect(order()).toEqual(['pending', 'findings', 'active', 'campaigns', 'completed'])
         expect(findings).toHaveAttribute('aria-expanded', 'true')
       } finally {
         view.PointerEvent = native
@@ -2437,32 +2521,31 @@ describe('Todo sections', () => {
     })
   })
 
-  it('shows the active campaign under its own header, with its tabs, add field and rows', async () => {
+  it('shows each active campaign in Active, with its add field and rows', async () => {
     fs.files.set(REGISTRY, JSON.stringify(exemplo))
     useTodosStore.getState().createTodo('Personal one')
-    useTodosStore.setState({ activeCampaigns: { [projectId()]: 'OITO' } })
+    openTerminal('C:\\repo', 'claude', 'OITO')
     render(<TodoSidebar />)
-    const active = await screen.findByRole('button', { name: /^Active · OITO/ })
-    expect(active).toHaveTextContent('1/8')
+    const field = () => screen.getByPlaceholderText('Add a task to OITO…')
+    const active = await screen.findByRole('button', { name: /^Active/ })
+    await waitFor(() => expect(active).toHaveTextContent('1'))
     expect(active).toHaveAttribute('aria-expanded', 'true')
     const section = active.closest('section')!
-    expect(section).toContainElement(screen.getByRole('tablist', { name: 'Task filters' }))
-    expect(section).toContainElement(screen.getByPlaceholderText('Add a task to OITO…'))
-    expect(section).toContainElement(document.querySelector('[data-task="OITO-01"]') as HTMLElement)
+    expect(section).toContainElement(field())
+    expect(section).toContainElement(document.querySelector('[data-task="OITO-02"]') as HTMLElement)
+    expect(screen.queryByRole('tablist', { name: 'Task filters' })).toBeNull()
     // The progress bar stays on top.
     expect(screen.getByRole('progressbar').closest('section')).toBeNull()
 
     fireEvent.click(active)
-    expect(screen.queryByRole('tablist')).toBeNull()
     expect(document.querySelector('[data-task]')).toBeNull()
     // Ctrl+N opens it again on its add field.
     fireEvent.keyDown(window, { key: 'n', ctrlKey: true })
-    await waitFor(() => expect(screen.getByPlaceholderText('Add a task to OITO…')).toHaveFocus())
+    await waitFor(() => expect(field()).toHaveFocus())
 
-    // My todos keeps its tabs and add field on top, with no campaign header.
-    fireEvent.click(screen.getByRole('button', { name: 'List source' }))
-    fireEvent.click(screen.getByRole('option', { name: 'My todos' }))
-    expect(header(/^Active ·/)).toBeNull()
+    // Personal keeps its filters and add field on top, with no campaign header.
+    fireEvent.click(screen.getByRole('tab', { name: /^Personal/ }))
+    expect(header(/^Active/)).toBeNull()
     expect(screen.getByRole('tablist', { name: 'Task filters' }).closest('section')).toBeNull()
     expect(screen.getByPlaceholderText('Add a task…').closest('section')).toBeNull()
     expect(screen.getByText('Personal one')).toBeInTheDocument()
@@ -2558,7 +2641,9 @@ describe('Task detail', () => {
     render(<TodoSidebar />)
     await waitFor(() => expect(row('OITO-02')).toHaveTextContent('2 running'))
     await screen.findByRole('button', { name: /^Findings 2/ })
-    await screen.findByRole('button', { name: /^Night of/ })
+    // The night card is in the Night tab: wait for the diary its rows read.
+    await waitFor(() => expect(readTextFile).toHaveBeenCalledWith(`${NIGHTS}\\2026-10-03.json`))
+    await act(async () => {})
     expect(toggle('OITO-02')).toHaveAttribute('aria-expanded', 'false')
     expect(detail('OITO-02')).toBeNull()
 
@@ -2591,7 +2676,9 @@ describe('Task detail', () => {
     seed(['BASE'])
     render(<TodoSidebar />)
     await screen.findByRole('button', { name: /^Findings 2/ })
-    await screen.findByRole('button', { name: /^Night of/ })
+    // The night card is in the Night tab: wait for the diary its rows read.
+    await waitFor(() => expect(readTextFile).toHaveBeenCalledWith(`${NIGHTS}\\2026-10-03.json`))
+    await act(async () => {})
     await waitFor(() => expect(row('OITO-03')).toHaveTextContent('1 running'))
     fireEvent.click(toggle('OITO-05'))
     expect(within(detail('OITO-05')!).getByText('T1 · Assisted')).toBeInTheDocument()
@@ -2801,7 +2888,7 @@ describe('Modo noite', () => {
         startedAt: new Date(2026, 9, 3, 23, 0).getTime(),
         deadline: new Date(2026, 9, 4, 0, 30).getTime(),
       }
-      useTodosStore.setState({ nightRun: { current: running, nights: {} } })
+      useTodosStore.setState({ nightRun: { current: running, nights: {} }, tab: 'night' })
       render(<TodoSidebar />)
       expect(await screen.findByText('Night running: OITO-02 · 00:42')).toBeInTheDocument()
 
@@ -2963,5 +3050,303 @@ describe('campaign dots', () => {
     expect(rule(".campaign[data-status='stopped'] .dot")).not.toContain('animation')
     const reduced = css.slice(css.indexOf('@media (prefers-reduced-motion: reduce)'))
     expect(reduced).toMatch(/\.campaign\[data-status='working'\] \.dot[^{]*\{[^}]*animation: none/)
+  })
+})
+
+describe('Todo tabs', () => {
+  const NIGHTS = 'C:\\repo\\.workflow\\local\\noites'
+  const GATE_2 = 'aguarda o Gate 2 do usuário'
+  const projectId = () => useProjectsStore.getState().projects[0].id
+  const tab = (name: RegExp) => screen.getByRole('tab', { name })
+  const header = (name: RegExp) => screen.queryByRole('button', { name })
+  /** An active campaign's subsection. */
+  const active = (id: string) => screen.queryByRole('group', { name: id })
+  const rows = (box: HTMLElement | null) =>
+    [...(box?.querySelectorAll('[data-task]') ?? [])].map((row) => row.getAttribute('data-task'))
+  const segments = () =>
+    [...screen.getByRole('progressbar').querySelectorAll('[title]')].map((item) =>
+      item.getAttribute('title'),
+    )
+  const withResults = (results: Record<string, string>) => {
+    const data = structuredClone(exemplo)
+    for (const item of data.campanhas.flatMap((campaign) => campaign.tarefas)) {
+      if (item.id in results) Object.assign(item, { resultado: results[item.id] })
+    }
+    return JSON.stringify(data)
+  }
+
+  beforeEach(() => useUiStore.setState({ toasts: [], notifications: [] }))
+
+  it('shows Overview, Night and Personal tabs and remembers the last one shown', async () => {
+    fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    useTodosStore.getState().createTodo('Personal one')
+    render(<TodoSidebar />)
+    await screen.findByRole('button', { name: /^Campaigns/ })
+    expect(tab(/^Overview/)).toHaveAttribute('aria-selected', 'true')
+    expect(screen.queryByRole('button', { name: 'List source' })).toBeNull()
+    expect(screen.queryByText('Personal one')).toBeNull()
+
+    fireEvent.click(tab(/^Personal/))
+    expect(tab(/^Personal/)).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByText('Personal one')).toBeInTheDocument()
+    expect(screen.getByPlaceholderText('Add a task…')).toBeInTheDocument()
+    expect(screen.getByRole('progressbar')).toHaveTextContent('0 / 1')
+    expect(header(/^Campaigns/)).toBeNull()
+    expect(useTodosStore.getState().tab).toBe('personal')
+
+    cleanup()
+    render(<TodoSidebar />)
+    expect(tab(/^Personal/)).toHaveAttribute('aria-selected', 'true')
+
+    // A night running in this project shows on the Night tab.
+    act(() =>
+      useTodosStore.setState({
+        nightRun: {
+          current: {
+            projectId: projectId(),
+            campaignId: 'OITO',
+            taskId: 'OITO-08',
+            terminalId: null,
+            tabId: null,
+            startedAt: Date.now(),
+            deadline: Date.now() + 60_000,
+          },
+          nights: {},
+        },
+      }),
+    )
+    expect(tab(/^Night/)).toHaveAccessibleName('Night Running')
+    fireEvent.click(tab(/^Night/))
+    expect(screen.getByRole('status')).toHaveTextContent('OITO-08')
+  })
+
+  it('shows a finished campaign only under Completed, even with its tab open', async () => {
+    fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    openTerminal('C:\\repo', 'claude', 'BASE')
+    render(<TodoSidebar />)
+    const map = await screen.findByRole('button', { name: /^Campaigns/ })
+    expect(active('BASE')).toBeNull()
+    expect(screen.getByText('No active campaign: open one from Campaigns.')).toBeInTheDocument()
+    fireEvent.click(map)
+    expect(screen.getByRole('group', { name: 'Started' })).toBeInTheDocument()
+    expect(screen.queryByText('BASE')).toBeNull()
+
+    const completed = header(/^Completed/)!
+    expect(completed).toHaveAttribute('aria-expanded', 'false')
+    fireEvent.click(completed)
+    const row = screen.getByText('BASE').closest('[data-status]')!
+    expect(row).toHaveAttribute('data-status', 'stopped')
+    fireEvent.click(within(row as HTMLElement).getByRole('button', { name: /^BASE/ }))
+    expect(screen.getByText('BASE-02')).toBeInTheDocument()
+  })
+
+  it('gives each active campaign its own subsection: controls, add field, open tasks and done ones', async () => {
+    fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    openTerminal('C:\\repo', 'claude', 'OITO')
+    openTerminal('C:\\repo', 'claude', 'PARADA')
+    render(<TodoSidebar />)
+    await waitFor(() => expect(active('PARADA')).not.toBeNull())
+    const oito = active('OITO')!
+    expect(
+      within(oito).getByRole('button', { name: /^OITO · Uma de oito feitas/ }),
+    ).toHaveTextContent('1/8')
+    expect(
+      screen.getAllByRole('group').filter((box) => /^(OITO|PARADA)$/.test(box.ariaLabel ?? '')),
+    ).toEqual([oito, active('PARADA')])
+    expect(within(oito).getByRole('button', { name: 'Continue campaign' })).toBeEnabled()
+    expect(
+      within(active('PARADA')!).getByRole('button', { name: 'Continue campaign' }),
+    ).toBeEnabled()
+    expect(rows(oito)).toEqual([
+      'OITO-02',
+      'OITO-03',
+      'OITO-04',
+      'OITO-05',
+      'OITO-08',
+      'OITO-06',
+      'OITO-07',
+    ])
+    expect(rows(active('PARADA'))).toEqual(['PARADA-01'])
+    // Its done tasks wait, collapsed, at its end; no filter tabs.
+    fireEvent.click(within(oito).getByRole('button', { name: '1 done' }))
+    expect(rows(oito).at(-1)).toBe('OITO-01')
+    expect(screen.queryByRole('tab', { name: 'All' })).toBeNull()
+    // Its details are the map row's.
+    fireEvent.click(within(oito).getByRole('button', { name: 'Details' }))
+    expect(within(oito).getByText('Assisted')).toBeInTheDocument()
+    expect(within(oito).getByText('In progress, 4 ready')).toBeInTheDocument()
+
+    // Each add field writes to its own campaign.
+    const field = within(active('PARADA')!).getByPlaceholderText('Add a task to PARADA…')
+    fireEvent.change(field, { target: { value: 'Nova tarefa' } })
+    fireEvent.submit(field.closest('form')!)
+    await waitFor(() => expect(rows(active('PARADA'))).toContain('PARADA-02'))
+    expect(within(oito).getByPlaceholderText('Add a task to OITO…')).toHaveValue('')
+
+    // Live campaigns leave the map.
+    fireEvent.click(header(/^Campaigns/)!)
+    const map = header(/^Campaigns/)!.closest('section')!
+    expect(within(map).getByText('DEPOIS')).toBeInTheDocument()
+    expect(within(map).queryByText('OITO')).toBeNull()
+    expect(within(map).queryByText('PARADA')).toBeNull()
+  })
+
+  it('splits the progress bar into one segment per active campaign, with the summed count', async () => {
+    fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    openTerminal('C:\\repo', 'claude', 'OITO')
+    openTerminal('C:\\repo', 'claude', 'PARADA')
+    render(<TodoSidebar />)
+    await waitFor(() => expect(segments()).toEqual(['OITO · 1/8', 'PARADA · 0/1']))
+    expect(screen.getByRole('progressbar')).toHaveTextContent('1 / 9')
+    expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '1')
+    expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuemax', '9')
+  })
+
+  it('covers the whole registry with one segment while no campaign is active', async () => {
+    fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    render(<TodoSidebar />)
+    await screen.findByRole('button', { name: /^Campaigns/ })
+    // BASE 2/2, OITO 1/8, ABERTA 1/1 (not decomposed), DEPOIS 0/1, NOTURNA 0/2, PARADA 0/1.
+    expect(segments()).toEqual(['All campaigns · 4/15+?'])
+    expect(screen.getByRole('progressbar')).toHaveTextContent('4 / 15+?')
+    expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '4')
+    expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuemax', '15')
+  })
+
+  it('lists a Gate 2 task and an undecided night entry only in Pending; the night card is in Night', async () => {
+    fs.files.set(REGISTRY, withResults({ 'OITO-07': GATE_2 }))
+    fs.files.set(
+      `${NIGHTS}\\2026-10-03.json`,
+      JSON.stringify({
+        data: '2026-10-03',
+        entradas: [
+          {
+            tarefa: 'OITO-06',
+            resultado: 'aguarda-voce',
+            resumo: 'resumo',
+            evidencia: '',
+            hora: '03:41',
+          },
+          { tarefa: 'OITO-03', resultado: 'ok', resumo: 'feito', evidencia: '', hora: '04:10' },
+        ],
+      }),
+    )
+    openTerminal('C:\\repo', 'claude', 'OITO')
+    render(<TodoSidebar />)
+    const pending = await screen.findByRole('button', { name: /^Pending/ })
+    const section = pending.closest('section')!
+    await waitFor(() => expect(within(section).getByText('night 10/03')).toBeInTheDocument())
+    expect(within(section).getByRole('button', { name: /^OITO-06 / })).toBeInTheDocument()
+    expect(document.querySelectorAll('[data-task="OITO-07"]')).toHaveLength(1)
+    expect(section).toContainElement(document.querySelector('[data-task="OITO-07"]') as HTMLElement)
+    expect(rows(active('OITO'))).not.toContain('OITO-06')
+    expect(rows(active('OITO'))).not.toContain('OITO-07')
+    expect(header(/^Night of/)).toBeNull()
+
+    fireEvent.click(tab(/^Night/))
+    expect(await screen.findByRole('button', { name: /^Night of 10\/03/ })).toBeInTheDocument()
+    expect(header(/^Pending/)).toBeNull()
+  })
+
+  it('Ctrl+N goes to the add field of the active campaign, else to the personal composer', async () => {
+    fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    useTodosStore.setState({ addFieldHidden: { [projectId()]: true } })
+    openTerminal('C:\\repo', 'claude', 'OITO')
+    const parada = openTerminal('C:\\repo', 'claude', 'PARADA')
+    focusTerminal(parada.id)
+    render(<TodoSidebar />)
+    await waitFor(() => expect(active('PARADA')).not.toBeNull())
+    const field = (id: string) => screen.queryByPlaceholderText(`Add a task to ${id}…`)
+    expect(field('PARADA')).toBeNull()
+
+    // Collapsed or hidden, the focused campaign's field opens for one task.
+    fireEvent.click(within(active('PARADA')!).getByRole('button', { name: /^PARADA ·/ }))
+    fireEvent.keyDown(window, { key: 'n', ctrlKey: true })
+    await waitFor(() => expect(field('PARADA')).toHaveFocus())
+    expect(field('OITO')).toBeNull()
+    fireEvent.keyDown(field('PARADA')!, { key: 'Escape' })
+    expect(field('PARADA')).toBeNull()
+
+    // Elsewhere, it opens Personal on its composer.
+    fireEvent.click(tab(/^Night/))
+    fireEvent.keyDown(window, { key: 'n', ctrlKey: true })
+    await waitFor(() => expect(screen.getByPlaceholderText('Add a task…')).toHaveFocus())
+    expect(tab(/^Personal/)).toHaveAttribute('aria-selected', 'true')
+  })
+
+  it('keeps one campaign control at a time across a switch of tab', async () => {
+    fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    const terminal = openTerminal('C:\\repo', 'claude', 'OITO')
+    useProjectsStore
+      .getState()
+      .setSubTabPtyId(projectId(), terminal.id, terminal.tabs[0].id, 'pty-o')
+    useTerminalsStore.getState().registerPty('pty-o')
+    useTerminalsStore.getState().setStatus('pty-o', 'waiting')
+    // The prompt's write stays pending until released.
+    let release: () => void = () => {}
+    vi.mocked(writePty).mockImplementationOnce(
+      () => new Promise<void>((resolve) => (release = resolve)),
+    )
+    try {
+      render(<TodoSidebar />)
+      await waitFor(() => expect(active('OITO')).not.toBeNull())
+      const resume = () =>
+        within(active('OITO')!).getByRole('button', { name: 'Continue campaign' })
+      fireEvent.click(resume())
+      await waitFor(() => expect(writePty).toHaveBeenCalledTimes(1))
+
+      // Leaving Tasks and coming back while it runs keeps the controls held.
+      fireEvent.click(tab(/^Night/))
+      fireEvent.click(tab(/^Overview/))
+      expect(resume()).toBeDisabled()
+      fireEvent.click(resume())
+      expect(writePty).toHaveBeenCalledTimes(1)
+      await act(async () => release())
+      await waitFor(() => expect(writePty).toHaveBeenCalledWith('pty-o', '\r'))
+    } finally {
+      useTerminalsStore.getState().reset()
+    }
+  })
+
+  it('goes to an active campaign tab without typing anything into it', async () => {
+    fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    const terminal = openTerminal('C:\\repo', 'claude', 'OITO')
+    useProjectsStore
+      .getState()
+      .setSubTabPtyId(projectId(), terminal.id, terminal.tabs[0].id, 'pty-o')
+    act(() => useUiStore.setState({ activeTerminal: null }))
+    render(<TodoSidebar />)
+    await waitFor(() => expect(active('OITO')).not.toBeNull())
+    fireEvent.click(within(active('OITO')!).getByRole('button', { name: 'Go to tab' }))
+    expect(useUiStore.getState().activeTerminal?.terminalId).toBe(terminal.id)
+    expect(writePty).not.toHaveBeenCalled()
+  })
+
+  it('lists a task in Pending only there: Active and the map count it instead', async () => {
+    fs.files.set(REGISTRY, withResults({ 'OITO-07': GATE_2, 'PARADA-01': GATE_2 }))
+    openTerminal('C:\\repo', 'claude', 'OITO')
+    render(<TodoSidebar />)
+    await waitFor(() => expect(active('OITO')).not.toBeNull())
+    expect(document.querySelectorAll('[data-task="OITO-07"]')).toHaveLength(1)
+    expect(within(active('OITO')!).getByText('1 in Pending')).toBeInTheDocument()
+
+    fireEvent.click(header(/^Campaigns/)!)
+    const map = header(/^Campaigns/)!.closest('section')!
+    fireEvent.click(within(map).getByRole('button', { name: /^PARADA/ }))
+    expect(within(map).queryByText('PARADA-01')).toBeNull()
+    expect(within(map).getByText('1 in Pending')).toBeInTheDocument()
+  })
+
+  it('keeps an add field draft across a switch of tab', async () => {
+    fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    openTerminal('C:\\repo', 'claude', 'OITO')
+    render(<TodoSidebar />)
+    const field = () => screen.getByPlaceholderText('Add a task to OITO…')
+    await waitFor(() => expect(field()).toBeInTheDocument())
+    fireEvent.change(field(), { target: { value: 'unsaved draft' } })
+
+    fireEvent.click(tab(/^Night/))
+    fireEvent.click(tab(/^Overview/))
+    expect(field()).toHaveValue('unsaved draft')
   })
 })

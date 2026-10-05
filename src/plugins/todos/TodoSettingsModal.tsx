@@ -10,7 +10,7 @@ import { ensureTodoTemplate } from '../../lib/tauri'
 import { useProjectsStore } from '../../stores/projectsStore'
 import { useUiStore } from '../../stores/uiStore'
 import { TODO_SETTINGS_MODAL_ID } from './manifest'
-import { type ListSource, useTodosStore } from './store'
+import { useTodosStore } from './store'
 import styles from './TodoSidebar.module.css'
 
 /** A whole count from 1 to `max`; `fallback` for anything else. */
@@ -37,8 +37,6 @@ export function TodoSettingsModal() {
   const savedPath = useTodosStore((state) => state.storagePath)
   const setStoragePath = useTodosStore((state) => state.setStoragePath)
   const resetTodosToDefault = useTodosStore((state) => state.resetTodosToDefault)
-  const savedSource = useTodosStore((state) => state.listSource)
-  const setListSource = useTodosStore((state) => state.setListSource)
   const savedWorkMinutes = useProjectsStore((state) => state.preferences.pomodoroWorkMinutes)
   const savedShortBreakMinutes = useProjectsStore(
     (state) => state.preferences.pomodoroShortBreakMinutes,
@@ -58,7 +56,6 @@ export function TodoSettingsModal() {
   const setSectionOrder = useTodosStore((state) => state.setSectionOrder)
   const [night, setNight] = useState<NightSettings>(DEFAULT_NIGHT_SETTINGS)
   const [path, setPath] = useState('')
-  const [source, setSource] = useState<ListSource>(savedSource)
   const [saving, setSaving] = useState(false)
   const [workMinutes, setWorkMinutes] = useState(savedWorkMinutes)
   const [shortBreakMinutes, setShortBreakMinutes] = useState(savedShortBreakMinutes)
@@ -67,10 +64,6 @@ export function TodoSettingsModal() {
   useEffect(() => {
     if (open) setPath(savedPath)
   }, [open, savedPath])
-
-  useEffect(() => {
-    if (open) setSource(savedSource)
-  }, [open, savedSource])
 
   useEffect(() => {
     if (open) setNight(savedNight ?? DEFAULT_NIGHT_SETTINGS)
@@ -98,7 +91,6 @@ export function TodoSettingsModal() {
         await ensureTodoTemplate(finalPath)
       }
       setStoragePath(finalPath)
-      setListSource(source)
       if (projectId) {
         const saved = savedNight ?? DEFAULT_NIGHT_SETTINGS
         const next = nightToSave(night, saved)
@@ -146,23 +138,6 @@ export function TodoSettingsModal() {
         </>
       }
     >
-      <div className={controls.field}>
-        <span className={controls.label}>{t('todo.sourceLabel')}</span>
-        <div className={controls.pillRow}>
-          {(['campaign', 'mine'] as const).map((value) => (
-            <button
-              key={value}
-              type="button"
-              className={`${controls.pill} ${source === value ? controls.pillActive : ''}`}
-              aria-pressed={source === value}
-              onClick={() => setSource(value)}
-            >
-              {t(value === 'campaign' ? 'todo.sourceActiveCampaign' : 'todo.personalTitle')}
-            </button>
-          ))}
-        </div>
-        <span className={controls.hint}>{t('todo.sourceHint')}</span>
-      </div>
       {projectId ? (
         <div className={controls.field}>
           <span className={controls.label}>{t('todo.nightMode.title')}</span>

@@ -12,6 +12,7 @@ import {
   addCampaignTask,
   type Campaign,
   campaignActivity,
+  campaignBlock,
   campaignCwd,
   campaignTaskView,
   campaignWorkers,
@@ -1018,5 +1019,75 @@ describe('resuming from an open task that is not ready', () => {
     // The one in progress comes first, a ready one waiting for its campaign does not count as ready.
     expect(resumeTask(campaign)?.id).toBe('M-03')
     expect(resumeTask({ ...campaign, tasks: [waiting, ready] })?.id).toBe('M-01')
+  })
+})
+
+describe('campaignBlock', () => {
+  const campaign = (id: string, fields: Record<string, unknown> = {}) => ({
+    id,
+    prioridade: 1,
+    janela: 'assistida',
+    tarefas: [],
+    ...fields,
+  })
+  const tasks = (...items: Array<[string, string, string[]?]>) =>
+    items.map(([id, estado, depende_de = []]) => ({ id, estado, depende_de }))
+  const pair = (a: Record<string, unknown>, b: Record<string, unknown>) => {
+    const campaigns = parse({ campanhas: [a, b] })
+    return [byId(campaigns, String(a.id)), byId(campaigns, String(b.id))] as const
+  }
+  const B = campaign('B', { tarefas: tasks(['B-01', 'pronta'], ['B-02', 'proposta']) })
+
+  it('names the campaign that waits on its own depende_de, in either order', () => {
+    const [a, b] = pair(campaign('A', { depende_de: ['B'], tarefas: tasks(['A-01', 'pronta']) }), B)
+    const block = { waiting: 'A', on: 'B', ids: ['B'] }
+    expect(campaignBlock(a, b)).toEqual(block)
+    expect(campaignBlock(b, a)).toEqual(block)
+  })
+
+  it('counts a campaign with no tasks yet that waits on the other', () => {
+    const [a, b] = pair(campaign('A', { depende_de: ['B'], decomposta: false }), B)
+    expect(campaignBlock(b, a)).toEqual({ waiting: 'A', on: 'B', ids: ['B'] })
+  })
+
+  it('lists the tasks of the other campaign its open tasks wait on, once each and sorted', () => {
+    const [a, b] = pair(
+      campaign('A', {
+        tarefas: tasks(['A-01', 'proposta', ['B-02']], ['A-02', 'pronta', ['B-01', 'B-02']]),
+      }),
+      B,
+    )
+    expect(campaignBlock(a, b)).toEqual({ waiting: 'A', on: 'B', ids: ['B-01', 'B-02'] })
+  })
+
+  it('takes the first direction when each waits on a task of the other', () => {
+    const [a, b] = pair(
+      campaign('A', { tarefas: tasks(['A-01', 'pronta', ['B-01']], ['A-02', 'pronta']) }),
+      campaign('B', { tarefas: tasks(['B-01', 'pronta'], ['B-02', 'pronta', ['A-02']]) }),
+    )
+    expect(campaignBlock(a, b)).toEqual({ waiting: 'A', on: 'B', ids: ['B-01'] })
+    expect(campaignBlock(b, a)).toEqual({ waiting: 'B', on: 'A', ids: ['A-02'] })
+  })
+
+  it('ignores finished dependencies and the dependencies of done tasks', () => {
+    const done = campaign('D', { tarefas: tasks(['D-01', 'concluída']) })
+    const [a, d] = pair(
+      campaign('A', { depende_de: ['D'], tarefas: tasks(['A-01', 'pronta']) }),
+      done,
+    )
+    expect(campaignBlock(a, d)).toBeNull()
+    const [early, b] = pair(
+      campaign('A', {
+        tarefas: tasks(['A-01', 'pronta', ['B-01']], ['A-02', 'concluída', ['B-02']]),
+      }),
+      campaign('B', { tarefas: tasks(['B-01', 'concluída'], ['B-02', 'proposta']) }),
+    )
+    expect(campaignBlock(early, b)).toBeNull()
+  })
+
+  it('is null for unrelated campaigns', () => {
+    const [a, b] = pair(campaign('A', { tarefas: tasks(['A-01', 'pronta']) }), B)
+    expect(campaignBlock(a, b)).toBeNull()
+    expect(campaignBlock(b, a)).toBeNull()
   })
 })

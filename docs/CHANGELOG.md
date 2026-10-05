@@ -215,9 +215,22 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
   sidebar or a campaign's Cancel, also closes the Orchestration board grouped with it; a board
   grouped with several terminals closes with the last one. Preferences → Orchestration turns it
   off.
+- **Several campaigns active at once.** Campaigns that do not wait on each other can each have an
+  agent tab open in the same project. Opening one that waits on a campaign with an open tab, or
+  that such a campaign waits on, is refused with a toast naming the dependency.
 
 ### Changed
 
+- **The Todo panel has three tabs: Overview, Night and Personal**, and remembers the last one shown.
+  Overview lists each campaign item once: **Pending** (Gate 2 tasks and the night's entries still
+  waiting on you, each dated with its night), **Active** (every campaign with a tab open or a live
+  worker, in its own subsection with its progress, details, Go to tab, Continue/Pause/Cancel, add
+  field, open tasks and its done ones collapsed), **Findings**, **Campaigns** (the others,
+  **Started** and **Not started**) and **Completed** (finished campaigns, even with a tab open).
+  Night holds the running night and the "Night of" card; Personal holds your own list, whose
+  **Active** filter is now **Open**. The header bar shows one segment per active campaign (the
+  whole registry while none is), or your own list's progress in Personal. The heading's list
+  picker, the **List source** setting, the **Current** group and the campaign filter tabs are gone.
 - **A new Claude Code or Codex tab gets its first prompt at launch** (a campaign, a night task,
   the new-terminal dialog, Home), as the CLI's own prompt argument, instead of having it typed once
   the CLI looks ready. OpenCode and the other agents still have it typed, and so do Claude Code and

@@ -1,4 +1,4 @@
-import { type RefObject, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import {
   evidenceIsPath,
@@ -86,48 +86,31 @@ export function NightStatus({ projectId }: { projectId: string | null }) {
 
 /**
  * What the night agent did, from its latest diary. An entry waiting on the user opens its actions;
- * only the user's choice there changes the registry. `nested`: an open sub-group of Pending.
+ * only the user's choice there changes the registry.
  */
 export function NightCard({
   registry,
   diary,
   edits,
-  nested = false,
-  toggleRef,
-  focusAway,
 }: {
   registry: Registry
   diary: NightDiary
   edits: CampaignEdits
-  nested?: boolean
-  /** Its header, for whoever has to focus the card once it moved. */
-  toggleRef?: RefObject<HTMLButtonElement>
-  /** Where the focus goes when an action moved the card away from under its entry. */
-  focusAway?: () => HTMLElement | null
 }) {
   const t = useT()
   const locale = useProjectsStore((state) => state.preferences.language)
   const { campaigns } = registry
-  const [open, setOpen] = useState(nested)
-  const own = useRef<HTMLButtonElement>(null)
-  const toggle = toggleRef ?? own
-
-  const name = t('todo.night.title', { date: nightDay(diary.date, locale) })
-  const Box = nested ? 'div' : 'section'
+  const [open, setOpen] = useState(false)
+  const toggle = useRef<HTMLButtonElement>(null)
 
   return (
-    <Box
-      className={`${nested ? styles.group : sidebarStyles.section} ${styles.card}`}
-      role={nested ? 'group' : undefined}
-      aria-label={nested ? name : undefined}
-    >
+    <section className={`${sidebarStyles.section} ${styles.card}`}>
       <SectionToggle
-        name={name}
+        name={t('todo.night.title', { date: nightDay(diary.date, locale) })}
         count={diary.entries.length}
         open={open}
         onToggle={() => setOpen((current) => !current)}
         toggleRef={toggle}
-        variant={nested ? 'sub' : undefined}
         extra={
           <span className={styles.meta}>
             {NIGHT_RESULTS.map((result) => {
@@ -150,32 +133,29 @@ export function NightCard({
               entry={entry}
               registry={registry}
               edits={edits}
-              cardToggle={toggle}
-              focusAway={focusAway}
+              fallback={() => toggle.current}
             />
           ))}
         </ul>
       ) : null}
-    </Box>
+    </section>
   )
 }
 
-function NightEntryRow({
+/** A night entry; Pending shows one with `night`, the date of its night. */
+export function NightEntryRow({
   entry,
   registry,
   edits,
-  cardToggle,
-  focusAway,
+  night,
+  fallback,
 }: {
   entry: NightEntry
   registry: Registry
   edits: CampaignEdits
-  /**
-   * The card's toggle, where the focus goes when an action took this entry's actions away; once
-   * the action took the card away too, `focusAway()`.
-   */
-  cardToggle: RefObject<HTMLButtonElement>
-  focusAway?: () => HTMLElement | null
+  night?: string
+  /** Where the focus goes when an action took this entry's actions away. */
+  fallback: () => HTMLElement | null
 }) {
   const t = useT()
   // An entry waiting on the user has actions while the registry has its task.
@@ -192,8 +172,9 @@ function NightEntryRow({
     conclude: undecided ? () => edits.conclude(entry.task, entry.evidence || entry.summary) : null,
     evidence: entry.evidence,
     requeue: undecided && state !== 'pronta',
-    fallback: () => cardToggle.current ?? focusAway?.(),
+    fallback,
   })
+  const label = night ? <span className={styles.chip}>{night}</span> : null
 
   return (
     <li
@@ -207,11 +188,13 @@ function NightEntryRow({
         <button type="button" className={styles.nightToggle} {...toggle}>
           <span className={styles.id}>{entry.task}</span>{' '}
           <span className={styles.taskTitle}>{entry.summary}</span>
+          {label}
         </button>
       ) : (
         <>
           <span className={styles.id}>{entry.task}</span>
           <span className={styles.taskTitle}>{entry.summary}</span>
+          {label}
         </>
       )}
       {evidenceIsPath(entry.evidence) ? (

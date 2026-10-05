@@ -52,19 +52,19 @@ describe('hydrateTodos', () => {
     expect(useTodosStore.getState().storagePath).toBe('')
   })
 
-  it('opens on the active campaign by default and keeps the list source the user chose', async () => {
-    await hydrateTodos(fakeStorage().storage, { todos: [], storagePath: '' })
-    expect(useTodosStore.getState().listSource).toBe('campaign')
+  it('opens on Overview by default and remembers the last tab, reading anything else as Overview', async () => {
+    await hydrateTodos(fakeStorage({ tab: 'list' }).storage, { todos: [], storagePath: '' })
+    expect(useTodosStore.getState().tab).toBe('tasks')
 
     const { storage, snapshot } = fakeStorage()
     await hydrateTodos(storage, { todos: [], storagePath: '' })
-    useTodosStore.getState().setListSource('mine')
+    useTodosStore.getState().setTab('night')
     await Promise.resolve()
-    expect(snapshot().listSource).toBe('mine')
+    expect(snapshot().tab).toBe('night')
 
     resetTodosStoreForTests()
     await hydrateTodos(storage, { todos: [], storagePath: '' })
-    expect(useTodosStore.getState().listSource).toBe('mine')
+    expect(useTodosStore.getState().tab).toBe('night')
   })
 
   it('keeps Modo noite per project and the night run across a restart', async () => {
@@ -177,25 +177,35 @@ describe('orderedSections', () => {
   it('shows the saved sections first in their order, and any other at its default place', () => {
     expect(orderedSections(undefined)).toEqual([
       'pending',
-      'list',
-      'campaigns',
+      'active',
       'findings',
-      'night',
+      'campaigns',
+      'completed',
     ])
-    expect(orderedSections(['night', 'findings', 'campaigns', 'list', 'pending'])).toEqual([
-      'night',
-      'findings',
+    expect(orderedSections(['completed', 'campaigns', 'findings', 'active', 'pending'])).toEqual([
+      'completed',
       'campaigns',
-      'list',
+      'findings',
+      'active',
       'pending',
     ])
     // Unknown and repeated ids are dropped; a section missing from it takes its default index.
     expect(orderedSections(['campaigns', 'gone', 'pending', 'campaigns'])).toEqual([
       'campaigns',
-      'list',
-      'pending',
+      'active',
       'findings',
-      'night',
+      'pending',
+      'completed',
+    ])
+  })
+
+  it('reads an order saved before the tabs: the list is Active, the night card is gone', () => {
+    expect(orderedSections(['night', 'findings', 'campaigns', 'list', 'pending'])).toEqual([
+      'findings',
+      'campaigns',
+      'active',
+      'pending',
+      'completed',
     ])
   })
 })

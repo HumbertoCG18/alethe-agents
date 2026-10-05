@@ -4,7 +4,7 @@
  */
 
 /*
- * Sub-groups (the Campaigns map's, Pending's) nest under their section header as projects nest
+ * Sub-groups (the Campaigns map's, Pending's, Active's) nest under their section header as projects nest
  * under a group in the project sidebar (NormalProjectSidebar .groupBody): indented along a faint
  * guide line.
  */
@@ -71,8 +71,10 @@
 
 /*
  * A campaign with a tab or worker live shows its live state, in the terminal status colours; a
- * running one blinks once every 1.5 s, like a router LED.
+ * running one blinks once every 1.5 s, like a router LED. So does the Night tab's dot while a night
+ * runs.
  */
+.dot[data-status='working'],
 .campaign[data-status='working'] .dot {
   background: var(--status-working);
   animation: led-blink 1.5s steps(1) infinite;
@@ -416,6 +418,7 @@ button.evidence:hover {
     box-shadow: 0 0 0 2px var(--status-waiting-soft);
   }
 
+  .dot[data-status='working'],
   .campaign[data-status='working'] .dot {
     animation: none;
   }

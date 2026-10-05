@@ -1,6 +1,11 @@
 /** How the Todo tab names registry, diary and findings values, shared by its cards and task details. */
-import type { CampaignWindow, FindingType, NightResult } from '../../lib/campaigns'
-import { intlLocale, type Locale, type MessageKey } from '../../lib/i18n'
+import type {
+  CampaignSituation,
+  CampaignWindow,
+  FindingType,
+  NightResult,
+} from '../../lib/campaigns'
+import { intlLocale, type Locale, type MessageKey, type TFunction } from '../../lib/i18n'
 
 export const WINDOW_KEYS: Record<CampaignWindow, MessageKey> = {
   assistida: 'todo.campaigns.windowAssisted',
@@ -28,4 +33,20 @@ export function nightDay(iso: string, locale: Locale): string {
   return new Intl.DateTimeFormat(intlLocale(locale), { day: '2-digit', month: '2-digit' }).format(
     new Date(year, month - 1, day),
   )
+}
+
+/** A campaign's situation, as its row and its Active details say it. */
+export function situationLabel(t: TFunction, situation: CampaignSituation): string {
+  switch (situation.kind) {
+    case 'done':
+      return t('todo.campaigns.done')
+    case 'waits':
+      return t('todo.campaigns.waits', { ids: situation.waits.join(', ') })
+    case 'running':
+      return t('todo.campaigns.running', { count: situation.ready })
+    case 'ready':
+      return t('todo.campaigns.ready', { count: situation.ready })
+    case 'blocked':
+      return t('todo.campaigns.blocked')
+  }
 }

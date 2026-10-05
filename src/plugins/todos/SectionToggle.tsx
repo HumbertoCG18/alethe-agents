@@ -126,9 +126,8 @@ type Drop = { id: string; side: 'before' | 'after' }
 
 /**
  * The Todo tab's top-level sections in `order`. Each moves by dragging its header vertically, or
- * with Alt+ArrowUp/ArrowDown on it, among the sections shown; a `fixed` one has no handle, but the
- * others still move around it. A press becomes a drag only past 8 px, so a click still toggles; the
- * pointer sensor swallows the click that ends a drag.
+ * with Alt+ArrowUp/ArrowDown on it, among the sections shown. A press becomes a drag only past 8 px,
+ * so a click still toggles; the pointer sensor swallows the click that ends a drag.
  */
 export function SortableSections({
   order,
@@ -136,7 +135,7 @@ export function SortableSections({
   onReorder,
 }: {
   order: readonly string[]
-  sections: Record<string, { node: ReactNode; fixed?: boolean }>
+  sections: Record<string, { node: ReactNode }>
   onReorder: (order: string[]) => void
 }) {
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }))
@@ -176,7 +175,6 @@ export function SortableSections({
             key={id}
             id={id}
             order={order}
-            fixed={sections[id].fixed}
             drop={drop?.id === id ? drop.side : undefined}
             move={move}
           >
@@ -191,49 +189,44 @@ export function SortableSections({
 function SortableSection({
   id,
   order,
-  fixed = false,
   drop,
   move,
   children,
 }: {
   id: string
   order: readonly string[]
-  fixed?: boolean
   drop: Drop['side'] | undefined
   move: (id: string, to: string) => void
   children: ReactNode
 }) {
-  const draggable = useDraggable({ id, disabled: fixed })
+  const draggable = useDraggable({ id })
   const droppable = useDroppable({ id })
   const { droppableContainers } = useDndContext()
-  const handle: SectionHandle | null = fixed
-    ? null
-    : {
-        id,
-        setNode: draggable.setNodeRef,
-        listeners: draggable.listeners,
-        style: draggable.transform
-          ? { transform: `translate3d(0, ${draggable.transform.y}px, 0)` }
-          : undefined,
-        dragging: draggable.isDragging,
-        onKeyDown: (event) => {
-          if (!event.altKey || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) return
-          event.preventDefault()
-          const visible = order.filter((item) => {
-            const container = droppableContainers.get(item)
-            return container !== undefined && shown(container)
-          })
-          const to = visible[visible.indexOf(id) + (event.key === 'ArrowUp' ? -1 : 1)]
-          if (!to) return
-          const focused = document.activeElement
-          move(id, to)
-          // Moving the section's node can take the focus with it.
-          window.requestAnimationFrame(() => {
-            if (focused instanceof HTMLElement && document.activeElement !== focused)
-              focused.focus()
-          })
-        },
-      }
+  const handle: SectionHandle = {
+    id,
+    setNode: draggable.setNodeRef,
+    listeners: draggable.listeners,
+    style: draggable.transform
+      ? { transform: `translate3d(0, ${draggable.transform.y}px, 0)` }
+      : undefined,
+    dragging: draggable.isDragging,
+    onKeyDown: (event) => {
+      if (!event.altKey || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) return
+      event.preventDefault()
+      const visible = order.filter((item) => {
+        const container = droppableContainers.get(item)
+        return container !== undefined && shown(container)
+      })
+      const to = visible[visible.indexOf(id) + (event.key === 'ArrowUp' ? -1 : 1)]
+      if (!to) return
+      const focused = document.activeElement
+      move(id, to)
+      // Moving the section's node can take the focus with it.
+      window.requestAnimationFrame(() => {
+        if (focused instanceof HTMLElement && document.activeElement !== focused) focused.focus()
+      })
+    },
+  }
 
   return (
     <div

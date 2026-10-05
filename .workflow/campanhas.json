@@ -275,11 +275,12 @@
           "id": "TODO-27",
           "titulo": "Passos de aceite por tarefa: registro, CLI campanhas.py passo e progresso no Todo",
           "nivel": "T2",
-          "estado": "proposta",
+          "estado": "em execução",
           "depende_de": [
             "TODO-26"
           ],
-          "origem": "USER"
+          "origem": "USER",
+          "resultado": "aguarda o Gate 2 do usuário; PR #84 mergeado (2a1631d), laboratório 49e9d01"
         },
         {
           "id": "TODO-28",
@@ -539,15 +540,16 @@
       "janela": "assistida",
       "depende_de": [],
       "worktrees": [],
-      "atualizado_em": "2026-10-04",
+      "atualizado_em": "2026-10-05",
       "tarefas": [
         {
           "id": "UI-01",
           "titulo": "Revisar telas novas contra os padrões do app (coluna Orquestrador nas Preferências e outras)",
           "nivel": "T1",
-          "estado": "proposta",
+          "estado": "em execução",
           "depende_de": [],
-          "origem": "USER"
+          "origem": "USER",
+          "resultado": "aguarda o Gate 2 do usuário; PR #86 mergeado (9f935ae): 23 de 24 itens, o 23 pulado de propósito"
         },
         {
           "id": "UI-02",

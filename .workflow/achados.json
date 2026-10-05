@@ -84,6 +84,33 @@
       "origem": "TODO-29",
       "detalhe": "Seletor de origem, List source, Current, grupos In progress/Finished e card da noite em Pendentes saíram; a entrada Changed do #79 diz isso. Reconciliar as entradas intermediárias deste ciclo antes do release.",
       "estado": "novo"
+    },
+    {
+      "id": "ACH-0010",
+      "data": "2026-10-05",
+      "tipo": "risco",
+      "titulo": "AGY headless (-p) nega a permissão command e não produz saída",
+      "origem": "UI-01",
+      "detalhe": "05/10: agy -p com --mode plan e Opus 5.5 high saiu 0 sem saída: 'a tool required the command permission that headless mode cannot prompt for, so it was auto-denied'. Saídas: allow-rule em permissions.allow do settings.json do AGY (decisão do dono, references/tooling.md) ou --dangerously-skip-permissions (proibido). Auditoria do UI-01 feita por subagente Claude.",
+      "estado": "novo"
+    },
+    {
+      "id": "ACH-0011",
+      "data": "2026-10-05",
+      "tipo": "divida",
+      "titulo": "pt-BR mistura sidebar (cerca de 160 textos) e barra lateral",
+      "origem": "UI-01",
+      "detalhe": "Só os textos do Todo passaram para 'barra lateral' no #86; padronizar o resto é decisão do dono.",
+      "estado": "novo"
+    },
+    {
+      "id": "ACH-0012",
+      "data": "2026-10-05",
+      "tipo": "divida",
+      "titulo": ".action definido duas vezes em OrchestratorPane.module.css",
+      "origem": "UI-01",
+      "detalhe": "Botão de ícone do cabeçalho (~130) e ação do detalhe (~870): o segundo sobrescreve borda, padding e raio do primeiro. Anterior ao #86.",
+      "estado": "novo"
     }
   ]
 }

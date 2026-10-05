@@ -18,28 +18,31 @@ import type { TodoItem } from '../../lib/types'
 const TODOS_KEY = 'todos'
 const STORAGE_PATH_KEY = 'storagePath'
 const ACTIVE_CAMPAIGNS_KEY = 'activeCampaigns'
-const LIST_SOURCE_KEY = 'listSource'
+const TAB_KEY = 'tab'
 const NIGHT_SETTINGS_KEY = 'nightSettings'
 const NIGHT_RUN_KEY = 'nightRun'
 const SECTION_ORDER_KEY = 'sectionOrder'
 const ADD_FIELD_HIDDEN_KEY = 'addFieldHidden'
 
-/** Where the list opens: the active campaign when the project has a registry, or the personal list. */
-export type ListSource = 'campaign' | 'mine'
+/** The Todo panel's tabs: campaign tasks, the night, and your own list. */
+export const TODO_TABS = ['tasks', 'night', 'personal'] as const
+export type TodoTab = (typeof TODO_TABS)[number]
 
-/**
- * The Todo tab's top-level sections in their default order; `list` is the active campaign's
- * section, or your own list's sections.
- */
-const TODO_SECTIONS = ['pending', 'list', 'campaigns', 'findings', 'night'] as const
+/** The Tasks tab's sections in their default order. */
+const TODO_SECTIONS = ['pending', 'active', 'findings', 'campaigns', 'completed'] as const
 type TodoSection = (typeof TODO_SECTIONS)[number]
 
 const isTodoSection = (id: string): id is TodoSection =>
   (TODO_SECTIONS as readonly string[]).includes(id)
 
-/** The sections in `saved` order; a missing one takes its default index, an unknown one goes. */
+/**
+ * The sections in `saved` order; a missing one takes its default index, an unknown one goes. An
+ * order saved before the tabs had `list` where Active is, and the night card, now in its own tab.
+ */
 export function orderedSections(saved: readonly string[] | undefined): TodoSection[] {
-  const order = [...new Set(saved)].filter(isTodoSection)
+  const order = [...new Set(saved?.map((id) => (id === 'list' ? 'active' : id)))].filter(
+    isTodoSection,
+  )
   TODO_SECTIONS.forEach((id, index) => {
     if (!order.includes(id)) order.splice(index, 0, id)
   })
@@ -86,7 +89,8 @@ type TodosState = {
   storagePath: string
   /** The last active campaign of each project, by project id. */
   activeCampaigns: Record<string, string>
-  listSource: ListSource
+  /** The tab last shown, in any project. */
+  tab: TodoTab
   /** Modo noite, by project id; a project without an entry has it off. */
   nightSettings: Record<string, NightSettings>
   nightRun: NightRun
@@ -109,7 +113,7 @@ type TodosState = {
   resetTodosToDefault: () => void
   setStoragePath: (path: string) => void
   rememberCampaign: (projectId: string, campaignId: string) => void
-  setListSource: (source: ListSource) => void
+  setTab: (tab: TodoTab) => void
   /** Saves a project's Modo noite; an ended night is reconsidered with the new settings. */
   setNightSettings: (projectId: string, settings: NightSettings) => void
   /** Sets the run state and resolves once it is saved; rejects when the save fails. */
@@ -135,7 +139,7 @@ export const useTodosStore = create<TodosState>((set, get) => {
     todos: [],
     storagePath: '',
     activeCampaigns: {},
-    listSource: 'campaign',
+    tab: 'tasks',
     nightSettings: {},
     nightRun: EMPTY_NIGHT_RUN,
     sectionOrder: {},
@@ -237,9 +241,9 @@ export const useTodosStore = create<TodosState>((set, get) => {
       set({ activeCampaigns })
     },
 
-    setListSource: (listSource) => {
-      void storage?.set(LIST_SOURCE_KEY, listSource)
-      set({ listSource })
+    setTab: (tab) => {
+      void storage?.set(TAB_KEY, tab)
+      set({ tab })
     },
 
     setNightSettings: (projectId, settings) => {
@@ -366,13 +370,13 @@ export async function hydrateTodos(
   const activeCampaigns =
     typeof saved === 'object' && saved !== null ? (saved as Record<string, string>) : {}
 
-  const listSource: ListSource = record[LIST_SOURCE_KEY] === 'mine' ? 'mine' : 'campaign'
+  const tab = TODO_TABS.find((item) => item === record[TAB_KEY]) ?? 'tasks'
 
   useTodosStore.setState({
     todos,
     storagePath,
     activeCampaigns,
-    listSource,
+    tab,
     nightSettings: readNightSettings(record[NIGHT_SETTINGS_KEY]),
     nightRun: readNightRun(record[NIGHT_RUN_KEY]),
     sectionOrder: readSectionOrder(record[SECTION_ORDER_KEY]),
@@ -392,7 +396,7 @@ export function resetTodosStoreForTests(): void {
     todos: [],
     storagePath: '',
     activeCampaigns: {},
-    listSource: 'campaign',
+    tab: 'tasks',
     nightSettings: {},
     nightRun: EMPTY_NIGHT_RUN,
     sectionOrder: {},

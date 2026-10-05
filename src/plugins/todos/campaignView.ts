@@ -9,6 +9,7 @@ import {
   activeCampaign,
   addCampaignTask,
   type Campaign,
+  campaignBlock,
   campaignCwd,
   type CampaignRegistry,
   type CampaignTab,
@@ -31,7 +32,7 @@ import {
   type TaskWorkers,
   workflowPath,
 } from '../../lib/campaigns'
-import { type MessageKey, type TFunction, useT } from '../../lib/i18n'
+import { getLocale, type MessageKey, type TFunction, translate, useT } from '../../lib/i18n'
 import { createOrchestratedTerminal } from '../../lib/orchestrationOnTerminal'
 import {
   campaignRegistryWrite,
@@ -280,7 +281,9 @@ const findHandoff = (campaign: Campaign, registry: Registry): Promise<string | n
  * `resumeFrom` when given), as a planner grouped with an orchestration board, and returns its
  * terminal id. A tab opened by hand, or for another campaign, is never reused even in the same
  * checkout: it would not get this campaign's prompt. A `nightTask` (the night scheduler) always
- * gets a fresh plain tab, with the night prompt for that task.
+ * gets a fresh plain tab, with the night prompt for that task. Without a tab of its own, the user's
+ * campaign is refused, with a toast and null, while it waits on a campaign with a tab open or such
+ * a campaign waits on it.
  */
 export async function openCampaign(
   projectId: string,
@@ -294,13 +297,37 @@ export async function openCampaign(
   if (!cwd || !useProjectsStore.getState().projects.some((item) => item.id === projectId)) {
     return null
   }
+  const hasTab = (id: string) => campaignTabs(projectId, id).length > 0
+  /** Toasts and returns true when the campaign may not be opened beside one with a tab open. */
+  const refused = () => {
+    if (nightTask || hasTab(campaign.id)) return false
+    for (const other of registry.campaigns) {
+      const block = other.id !== campaign.id && hasTab(other.id) && campaignBlock(campaign, other)
+      if (!block) continue
+      const locale = getLocale()
+      const ids = block.ids.join(', ')
+      useUiStore.getState().pushToast({
+        title: translate(locale, 'todo.campaigns.blockedTitle', { id: campaign.id }),
+        body: translate(locale, 'todo.campaigns.blockedBody', {
+          waiting: block.waiting,
+          // A wait on the campaign itself names it once.
+          on: ids === block.on ? block.on : `${block.on} (${ids})`,
+        }),
+      })
+      return true
+    }
+    return false
+  }
+  if (refused()) return null
   const running = (tab: SubTab) =>
     !nightTask && tab.type === agent && tab.campaignId === campaign.id
   let terminalId = activateTab(projectId, running)
   if (!terminalId) {
     const handoff = await findHandoff(campaign, registry)
-    // Checked again: the tab may have been opened while the handoff was looked up.
+    // Checked again: the tab, or one of a campaign it may not run beside, may have been opened
+    // while the handoff was looked up.
     terminalId = activateTab(projectId, running)
+    if (!terminalId && refused()) return null
     if (!terminalId) {
       // createTerminal, not createAgentTerminal: the tab belongs in the campaign's checkout, which
       // the project's automatic worktree isolation would replace with a new one.
@@ -487,6 +514,26 @@ export function campaignLiveStatus(
     live.set(campaign.id, running > 0 || anyTabWorking(own, byPtyId) ? 'working' : 'stopped')
   }
   return live
+}
+
+// Stable fallback, so the selector below returns the same value while nothing changes.
+const NO_TERMINALS: Terminal[] = []
+
+/** `campaignLiveStatus` over the project's terminals. */
+export function useCampaignLive(
+  projectId: string | null,
+  campaigns: readonly Campaign[],
+  workers: ReadonlyMap<string, TaskWorkers>,
+): ReadonlyMap<string, CampaignLive> {
+  const terminals = useProjectsStore(
+    (state) =>
+      state.projects.find((project) => project.id === projectId)?.terminals ?? NO_TERMINALS,
+  )
+  // Read as a string, so output on a pty (recorded every 250 ms) does not re-render the caller.
+  const key = useTerminalsStore((state) =>
+    JSON.stringify([...campaignLiveStatus(campaigns, terminals, state.byPtyId, workers)]),
+  )
+  return useMemo(() => new Map<string, CampaignLive>(JSON.parse(key)), [key])
 }
 
 export type TaskJob = Pick<

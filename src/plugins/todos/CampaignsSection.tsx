@@ -1,5 +1,5 @@
 import { Play } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { type ReactNode, useState } from 'react'
 
 import {
   type Campaign,
@@ -10,25 +10,24 @@ import {
   type TaskState,
   type TaskWorkers,
 } from '../../lib/campaigns'
-import { intlLocale, type MessageKey, type TFunction, useT } from '../../lib/i18n'
+import { intlLocale, type MessageKey, useT } from '../../lib/i18n'
 import { type GitCheckouts } from '../../lib/tauri'
-import { AGENT_TYPE_LABELS, type Terminal } from '../../lib/types'
+import { AGENT_TYPE_LABELS } from '../../lib/types'
 import { useProjectsStore } from '../../stores/projectsStore'
-import { useTerminalsStore } from '../../stores/terminalsStore'
 import styles from './CampaignsSection.module.css'
 import {
   AGENTS,
   type CampaignAgent,
   type CampaignLive,
-  campaignLiveStatus,
   type CampaignView,
   continueCampaign,
   openCampaign,
   STATE_KEYS,
   TASK_LANES,
+  useCampaignLive,
   workersLabel,
 } from './campaignView'
-import { WINDOW_KEYS } from './labels'
+import { situationLabel, WINDOW_KEYS } from './labels'
 import { useMenuFocus } from './menuFocus'
 import { SectionToggle } from './SectionToggle'
 import sidebarStyles from './TodoSidebar.module.css'
@@ -52,32 +51,13 @@ const SITUATION_LANES: Record<CampaignSituation['kind'], string> = {
   done: 'finished',
 }
 
-function situationLabel(t: TFunction, situation: CampaignSituation): string {
-  switch (situation.kind) {
-    case 'done':
-      return t('todo.campaigns.done')
-    case 'waits':
-      return t('todo.campaigns.waits', { ids: situation.waits.join(', ') })
-    case 'running':
-      return t('todo.campaigns.running', { count: situation.ready })
-    case 'ready':
-      return t('todo.campaigns.ready', { count: situation.ready })
-    case 'blocked':
-      return t('todo.campaigns.blocked')
-  }
-}
-
-/**
- * In progress: one of its tasks is done or in progress, a tab is open for it, or a worker is live
- * on one of its tasks. Not started: anything else not finished. Finished: done, even when live.
- */
-const GROUPS = ['inProgress', 'notStarted', 'finished'] as const
+/** Started: one of its tasks is done or in progress. Not started: none is. */
+const GROUPS = ['started', 'notStarted'] as const
 type Group = (typeof GROUPS)[number]
 
 const GROUP_KEYS: Record<Group, MessageKey> = {
-  inProgress: 'todo.campaigns.groupInProgress',
+  started: 'todo.campaigns.groupStarted',
   notStarted: 'todo.campaigns.groupNotStarted',
-  finished: 'todo.campaigns.groupFinished',
 }
 
 const STARTED: ReadonlySet<TaskState> = new Set(['concluída', 'em execução'])
@@ -87,47 +67,42 @@ const LIVE_KEYS: Record<CampaignLive, MessageKey> = {
   stopped: 'todo.campaigns.liveStopped',
 }
 
-// Stable fallbacks, so the selectors below return the same value while nothing changes.
+// Stable fallbacks, so the live status below is not recomputed while nothing changes.
 const NO_WORKERS: ReadonlyMap<string, TaskWorkers> = new Map()
-const NO_TERMINALS: Terminal[] = []
+const NO_TASKS: ReadonlySet<string> = new Set()
 
-/** The campaigns map below the list; choosing a campaign makes it the list's source. */
+/**
+ * The campaigns map, collapsed at first: the campaigns neither live (those are Active) nor
+ * finished. With `finished`, the Completed section instead: the finished ones, live or not.
+ */
 export function CampaignsSection({
   view: { projectId, registry, activeId },
   workers = NO_WORKERS,
-  onSelect,
+  pending = NO_TASKS,
+  finished = false,
 }: {
   view: CampaignView
   /** Live orchestrator workers per task; the active campaign shows its own. */
   workers?: ReadonlyMap<string, TaskWorkers>
-  onSelect: (campaignId: string) => void
+  /** The tasks Pending lists, left out of the rows' details. */
+  pending?: ReadonlySet<string>
+  finished?: boolean
 }) {
   const t = useT()
   const [collapsed, setCollapsed] = useState(true)
-  const [closed, setClosed] = useState<ReadonlySet<Group>>(() => new Set(['finished']))
-  const terminals = useProjectsStore(
-    (state) =>
-      state.projects.find((project) => project.id === projectId)?.terminals ?? NO_TERMINALS,
-  )
-  // Read as a string, so output on a pty (recorded every 250 ms) does not re-render the map.
-  const liveKey = useTerminalsStore((state) =>
-    JSON.stringify([
-      ...campaignLiveStatus(registry?.campaigns ?? [], terminals, state.byPtyId, workers),
-    ]),
-  )
-  const live = useMemo(() => new Map<string, CampaignLive>(JSON.parse(liveKey)), [liveKey])
+  const [closed, setClosed] = useState<ReadonlySet<Group>>(() => new Set())
+  const live = useCampaignLive(projectId, registry?.campaigns ?? [], workers)
 
   if (!registry || !projectId) return null
+  const done = (campaign: Campaign) => campaign.situation.kind === 'done'
   // Stable sort: the active campaign first in its group, the rest in priority order.
-  const campaigns = [...registry.campaigns].sort(
-    (a, b) => Number(b.id === activeId) - Number(a.id === activeId),
-  )
+  const campaigns = registry.campaigns
+    .filter((campaign) => (finished ? done(campaign) : !done(campaign) && !live.has(campaign.id)))
+    .sort((a, b) => Number(b.id === activeId) - Number(a.id === activeId))
+  if (finished && campaigns.length === 0) return null
+  const invalid = !finished && registry.errors.length > 0
   const groupOf = (campaign: Campaign): Group =>
-    campaign.situation.kind === 'done'
-      ? 'finished'
-      : live.has(campaign.id) || campaign.tasks.some((task) => STARTED.has(task.state))
-        ? 'inProgress'
-        : 'notStarted'
+    campaign.tasks.some((task) => STARTED.has(task.state)) ? 'started' : 'notStarted'
   const toggleGroup = (group: Group) =>
     setClosed((current) => {
       const next = new Set(current)
@@ -140,6 +115,7 @@ export function CampaignsSection({
       key={campaign.id}
       campaign={campaign}
       checkouts={registry.checkouts}
+      pending={pending}
       active={campaign.id === activeId}
       live={status}
       workers={
@@ -153,7 +129,6 @@ export function CampaignsSection({
             )
           : null
       }
-      onSelect={() => onSelect(campaign.id)}
       onOpen={(agent) => openCampaign(projectId, campaign, agent, registry)}
       onContinue={() => continueCampaign(projectId, campaign)}
     />
@@ -162,12 +137,12 @@ export function CampaignsSection({
   return (
     <section className={sidebarStyles.section}>
       <SectionToggle
-        name={t('todo.campaigns.title')}
-        count={registry.errors.length > 0 ? '!' : registry.campaigns.length}
+        name={t(finished ? 'todo.campaigns.completed' : 'todo.campaigns.title')}
+        count={invalid ? '!' : campaigns.length}
         open={!collapsed}
         onToggle={() => setCollapsed((current) => !current)}
       />
-      {collapsed ? null : registry.errors.length > 0 ? (
+      {collapsed ? null : invalid ? (
         <div className={styles.invalid} role="alert">
           <p className={styles.invalidTitle}>{t('todo.campaigns.invalid')}</p>
           <ul className={styles.invalidList}>
@@ -177,6 +152,10 @@ export function CampaignsSection({
               </li>
             ))}
           </ul>
+        </div>
+      ) : finished ? (
+        <div className={sidebarStyles.list}>
+          {campaigns.map((campaign) => row(campaign, live.get(campaign.id)))}
         </div>
       ) : (
         <div className={styles.groups}>
@@ -211,42 +190,30 @@ export function CampaignsSection({
 function CampaignRow({
   campaign,
   checkouts,
+  pending,
   active,
   live,
   workers,
-  onSelect,
   onOpen,
   onContinue,
 }: {
   campaign: Campaign
   checkouts: GitCheckouts
+  pending: ReadonlySet<string>
   active: boolean
   /** Its live state, when a tab or worker is live for it; the dot then follows it. */
   live?: CampaignLive
   /** Its live workers, as "2 running · 1 queued"; null when none or not the active campaign. */
   workers: string | null
-  onSelect: () => void
   onOpen: (agent: CampaignAgent) => unknown
   /** Focuses the campaign's open tab; false when it has none. */
   onContinue: () => boolean
 }) {
   const t = useT()
-  const locale = useProjectsStore((state) => state.preferences.language)
   const [expanded, setExpanded] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const { trigger, onKeyDown, choose } = useMenuFocus(menuOpen, () => setMenuOpen(false))
-  const activity = campaignActivity(campaign, checkouts)
-  const worktree = activity.worktree
-    ? `${activity.worktree}${activity.extra > 0 ? ` (+${activity.extra})` : ''}`
-    : '—'
-  const updated =
-    activity.updatedAt === null
-      ? null
-      : new Intl.DateTimeFormat(intlLocale(locale), {
-          day: '2-digit',
-          month: '2-digit',
-          ...(activity.fromGit ? { hour: '2-digit', minute: '2-digit' } : {}),
-        }).format(activity.updatedAt)
+  const inPending = campaign.tasks.filter((task) => pending.has(task.id)).length
 
   return (
     <div
@@ -261,10 +228,7 @@ function CampaignRow({
       <button
         type="button"
         className={styles.toggle}
-        onClick={() => {
-          setExpanded((current) => !current)
-          onSelect()
-        }}
+        onClick={() => setExpanded((current) => !current)}
         aria-expanded={expanded}
         title={campaign.title || campaign.id}
       >
@@ -315,40 +279,77 @@ function CampaignRow({
       ) : null}
       {expanded ? (
         <div className={styles.details}>
-          <span className={styles.meta}>
-            <span>{t(WINDOW_KEYS[campaign.window])}</span>
-            <span className={styles.worktree} title={worktree}>
-              {worktree}
-            </span>
-            {updated ? <span>{t('todo.campaigns.updated', { when: updated })}</span> : null}
-          </span>
+          <CampaignFacts campaign={campaign} checkouts={checkouts} />
           <ul className={styles.tasks}>
-            {campaign.tasks.map((task) => (
-              <li key={task.id} className={styles.task}>
-                <span className={styles.chip} data-lane={TASK_LANES[task.state]}>
-                  {t(STATE_KEYS[task.state])}
-                </span>
-                <span className={styles.taskBody}>
-                  <span className={styles.taskTitle} title={task.title}>
-                    <span className={styles.id}>{task.id}</span> {task.title}
+            {campaign.tasks
+              .filter((task) => !pending.has(task.id))
+              .map((task) => (
+                <li key={task.id} className={styles.task}>
+                  <span className={styles.chip} data-lane={TASK_LANES[task.state]}>
+                    {t(STATE_KEYS[task.state])}
                   </span>
-                  <span className={styles.meta}>
-                    {task.level ? <span>{task.level}</span> : null}
-                    {task.window !== campaign.window ? (
-                      <span>{t(WINDOW_KEYS[task.window])}</span>
-                    ) : null}
-                    {task.state !== 'concluída' && task.unmet.length > 0 ? (
-                      <span className={styles.situation} data-unmet>
-                        {t('todo.campaigns.waits', { ids: task.unmet.join(', ') })}
-                      </span>
-                    ) : null}
+                  <span className={styles.taskBody}>
+                    <span className={styles.taskTitle} title={task.title}>
+                      <span className={styles.id}>{task.id}</span> {task.title}
+                    </span>
+                    <span className={styles.meta}>
+                      {task.level ? <span>{task.level}</span> : null}
+                      {task.window !== campaign.window ? (
+                        <span>{t(WINDOW_KEYS[task.window])}</span>
+                      ) : null}
+                      {task.state !== 'concluída' && task.unmet.length > 0 ? (
+                        <span className={styles.situation} data-unmet>
+                          {t('todo.campaigns.waits', { ids: task.unmet.join(', ') })}
+                        </span>
+                      ) : null}
+                    </span>
                   </span>
-                </span>
-              </li>
-            ))}
+                </li>
+              ))}
           </ul>
+          {inPending > 0 ? (
+            <span className={styles.meta}>
+              {t('todo.campaigns.inPending', { count: inPending })}
+            </span>
+          ) : null}
         </div>
       ) : null}
     </div>
+  )
+}
+
+/** A campaign's window, worktree and last update, then `children`, as its row's details show them. */
+export function CampaignFacts({
+  campaign,
+  checkouts,
+  children,
+}: {
+  campaign: Campaign
+  checkouts: GitCheckouts
+  children?: ReactNode
+}) {
+  const t = useT()
+  const locale = useProjectsStore((state) => state.preferences.language)
+  const activity = campaignActivity(campaign, checkouts)
+  const worktree = activity.worktree
+    ? `${activity.worktree}${activity.extra > 0 ? ` (+${activity.extra})` : ''}`
+    : '—'
+  const updated =
+    activity.updatedAt === null
+      ? null
+      : new Intl.DateTimeFormat(intlLocale(locale), {
+          day: '2-digit',
+          month: '2-digit',
+          ...(activity.fromGit ? { hour: '2-digit', minute: '2-digit' } : {}),
+        }).format(activity.updatedAt)
+  return (
+    <span className={styles.meta}>
+      <span>{t(WINDOW_KEYS[campaign.window])}</span>
+      <span className={styles.worktree} title={worktree}>
+        {worktree}
+      </span>
+      {updated ? <span>{t('todo.campaigns.updated', { when: updated })}</span> : null}
+      {children}
+    </span>
   )
 }

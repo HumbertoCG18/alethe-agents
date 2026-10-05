@@ -64,6 +64,14 @@
   margin: 8px 2px 7px;
 }
 
+/* One segment per active campaign, as wide as its task count. */
+.progressSegments {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  gap: 2px;
+}
+
 .progressTrack {
   flex: 1;
   height: 4px;
@@ -106,6 +114,13 @@
 .filterButton:hover {
   color: var(--fg);
   background: var(--panel-hover);
+}
+
+/* The Night tab's dot, while a night runs. */
+.tabDot {
+  display: inline-block;
+  margin-left: 5px;
+  vertical-align: middle;
 }
 
 .filterButtonActive {
@@ -220,22 +235,8 @@
   background: var(--bg-sunken);
 }
 
-/* The list source picker reads as the heading itself, with the pickers' caret. */
-.sourcePicker {
-  position: relative;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-}
-
-.sourcePicker .projectPickerButton {
-  padding-left: 0;
-  color: inherit;
-}
-
 .projectInputWrap::after,
-.projectLink::after,
-.sourcePicker::after {
+.projectLink::after {
   content: '⌄';
   position: absolute;
   right: 6px;
@@ -625,11 +626,6 @@
   gap: 1px;
 }
 
-/* The active campaign's controls, between its add field and its rows. */
-.campaignControls {
-  margin-bottom: 4px;
-}
-
 .controlRow {
   display: flex;
   flex-wrap: wrap;
@@ -675,8 +671,8 @@
   cursor: default;
 }
 
-/* The active campaign's add field, under its tabs inside its section. */
-.section > .addForm {
+/* An active campaign's add field, inside its subsection. */
+.list > .addForm {
   padding: 6px 0 4px;
 }
 

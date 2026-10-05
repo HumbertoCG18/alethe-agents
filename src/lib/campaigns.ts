@@ -520,6 +520,31 @@ export function activeCampaign(
   return campaigns.some((campaign) => campaign.id === remembered) ? remembered : null
 }
 
+export type CampaignBlock = { waiting: string; on: string; ids: string[] }
+
+/**
+ * Why two campaigns cannot be active at once: one waits on the other, or on one of its tasks,
+ * through its own or an open task's unfinished `depende_de` (direct ones only, as `waits` reads
+ * them). `ids` are what it waits on, unique and sorted; `a` waiting is checked first. Null when
+ * neither waits on the other.
+ */
+export function campaignBlock(a: Campaign, b: Campaign): CampaignBlock | null {
+  const waitsOn = (campaign: Campaign) => [
+    ...campaign.situation.waits,
+    ...campaign.tasks.filter((task) => task.state !== DONE).flatMap((task) => task.unmet),
+  ]
+  const owns = (campaign: Campaign, id: string) =>
+    id === campaign.id || campaign.tasks.some((task) => task.id === id)
+  for (const [waiting, on] of [
+    [a, b],
+    [b, a],
+  ]) {
+    const ids = [...new Set(waitsOn(waiting).filter((id) => owns(on, id)))].sort()
+    if (ids.length > 0) return { waiting: waiting.id, on: on.id, ids }
+  }
+  return null
+}
+
 /** `atualizado_em` is a calendar date; read it as local midnight, like Python's fromisoformat. */
 function localDate(value: string): number | null {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)

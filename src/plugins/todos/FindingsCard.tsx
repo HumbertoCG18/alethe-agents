@@ -1,21 +1,12 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 
-import { type Finding, type FindingType, parseFindings, workflowPath } from '../../lib/campaigns'
-import { intlLocale, type MessageKey, useT } from '../../lib/i18n'
-import { listenFileChanged, readTextFile } from '../../lib/tauri'
+import { type Finding, type FindingType } from '../../lib/campaigns'
+import { intlLocale, useT } from '../../lib/i18n'
 import { useProjectsStore } from '../../stores/projectsStore'
 import styles from './CampaignsSection.module.css'
-import type { Registry } from './campaignView'
+import { TYPE_KEYS } from './labels'
 import { SectionToggle } from './SectionToggle'
 import sidebarStyles from './TodoSidebar.module.css'
-import { createWatchSet } from './watchSet'
-
-const TYPE_KEYS: Record<FindingType, MessageKey> = {
-  bug: 'todo.findings.bug',
-  risco: 'todo.findings.risk',
-  ideia: 'todo.findings.idea',
-  divida: 'todo.findings.debt',
-}
 
 // Agents write the file: more rows than this are only counted.
 const MAX_ROWS = 200
@@ -29,58 +20,12 @@ const TYPE_LANES: Record<FindingType, string> = {
 }
 
 /**
- * The new findings in `<main>/.workflow/achados.json`. The file is watched; while it is absent
- * so is its folder, whose events name the file once it is written. Coming back to the window
- * re-reads it too, which also retries a watch that failed.
- */
-function useFindings(main: string | null): Finding[] {
-  const [state, setState] = useState<{ main: string; findings: Finding[] } | null>(null)
-
-  useEffect(() => {
-    if (!main) return
-    const file = workflowPath(main, 'achados.json')
-    const folder = workflowPath(main)
-    let cancelled = false
-    let latest = 0
-    const watches = createWatchSet()
-    const reload = async () => {
-      const request = ++latest
-      watches.watch(file)
-      const source = await readTextFile(file).catch(() => null)
-      if (cancelled || request !== latest) return
-      if (source === null) watches.watch(folder)
-      else watches.unwatch(folder)
-      setState({ main, findings: source === null ? [] : parseFindings(source) })
-    }
-    void reload()
-    const unlisten = listenFileChanged((path) => {
-      if (path === file || path === folder) void reload()
-    })
-    const retry = () => {
-      if (document.visibilityState !== 'hidden') void reload()
-    }
-    window.addEventListener('focus', retry)
-    document.addEventListener('visibilitychange', retry)
-    return () => {
-      cancelled = true
-      window.removeEventListener('focus', retry)
-      document.removeEventListener('visibilitychange', retry)
-      watches.clear()
-      void unlisten.then((stop) => stop()).catch(() => {})
-    }
-  }, [main])
-
-  return state && state.main === main ? state.findings : []
-}
-
-/**
  * What agents noticed outside their task; read-only, collapsed, hidden when there is nothing new.
  * The file is written by agents, so everything is shown as text and the detail only as a tooltip.
  */
-export function FindingsCard({ registry }: { registry: Registry | null }) {
+export function FindingsCard({ findings }: { findings: Finding[] }) {
   const t = useT()
   const locale = useProjectsStore((state) => state.preferences.language)
-  const findings = useFindings(registry?.main ?? null)
   const [open, setOpen] = useState(false)
 
   if (findings.length === 0) return null

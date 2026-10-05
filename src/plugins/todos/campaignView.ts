@@ -486,23 +486,64 @@ export function campaignLiveStatus(
   return live
 }
 
-type TaskJob = Pick<OrchestratorJob, 'task' | 'status' | 'cwd'>
+export type TaskJob = Pick<
+  OrchestratorJob,
+  'id' | 'task' | 'status' | 'cwd' | 'agent' | 'model'
+> & {
+  /** Whole minutes it has run (or ran); null before it starts. */
+  minutes: number | null
+}
 
 /**
  * The orchestrator jobs that name a registry task, from the same snapshot and event the board
- * reads. Only that projection is kept, so a worker streaming its reply does not re-render the tab.
+ * reads. Only that projection is kept, so a worker streaming its reply does not re-render the tab;
+ * its elapsed time counts whole minutes. A worker can stay silent for minutes, so while one is live
+ * a single clock adds the time since the snapshot each minute: the tab re-renders once a minute at
+ * most, and only when a count changes.
  */
-function useTaskJobs(): TaskJob[] {
+export function useTaskJobs(): TaskJob[] {
   const [key, setKey] = useState('[]')
   useEffect(() => {
     let cancelled = false
     let unlisten: (() => void) | undefined
+    let clock: number | undefined
+    // The latest snapshot's jobs, with their seconds as reported, and when it arrived.
+    let latest: { at: number; jobs: Array<Omit<TaskJob, 'minutes'> & { seconds: number | null }> } =
+      { at: 0, jobs: [] }
+    const publish = () => {
+      const since = (Date.now() - latest.at) / 1000
+      const jobs = latest.jobs.map(({ seconds, ...job }) => ({
+        ...job,
+        minutes:
+          seconds == null
+            ? null
+            : Math.floor((seconds + (LIVE_JOBS.has(job.status) ? since : 0)) / 60),
+      }))
+      setKey(JSON.stringify(jobs))
+    }
     const apply = (snapshot: OrchestratorSnapshot) => {
       if (cancelled) return
-      const jobs = snapshot.jobs
-        .filter((job) => job.task)
-        .map(({ task, status, cwd }) => ({ task, status, cwd }))
-      setKey(JSON.stringify(jobs))
+      latest = {
+        at: Date.now(),
+        jobs: snapshot.jobs
+          .filter((job) => job.task)
+          .map(({ id, task, status, cwd, agent, model, seconds }) => ({
+            id,
+            task,
+            status,
+            cwd,
+            agent,
+            model,
+            seconds,
+          })),
+      }
+      publish()
+      const live = latest.jobs.some((job) => LIVE_JOBS.has(job.status))
+      if (live && clock === undefined) clock = window.setInterval(publish, 60_000)
+      else if (!live && clock !== undefined) {
+        window.clearInterval(clock)
+        clock = undefined
+      }
     }
     orchestratorJobs().then(apply, () => {})
     listenOrchestratorJobs(apply).then(
@@ -515,14 +556,17 @@ function useTaskJobs(): TaskJob[] {
     return () => {
       cancelled = true
       unlisten?.()
+      window.clearInterval(clock)
     }
   }, [])
   return useMemo(() => JSON.parse(key) as TaskJob[], [key])
 }
 
-/** Live orchestrator workers per task of the registry's repository. */
-export function useTaskWorkers(registry: Registry | null): ReadonlyMap<string, TaskWorkers> {
-  const jobs = useTaskJobs()
+/** Live orchestrator workers per task of the registry's repository, from `useTaskJobs`. */
+export function useTaskWorkers(
+  registry: Registry | null,
+  jobs: readonly TaskJob[],
+): ReadonlyMap<string, TaskWorkers> {
   const checkouts = registry?.checkouts
   return useMemo(
     () => (checkouts ? liveTaskWorkers(jobs, checkouts) : new Map()),

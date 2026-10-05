@@ -205,6 +205,12 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 - **Hide the add field of a campaign list.** A button on the Active section's header hides or
   shows the "Add a task to …" field, remembered per project. While it is hidden, Ctrl+N still shows
   it, focused, for one task.
+- **Task details in the Todo tab.** A chevron beside the box of a campaign task, in the Active list
+  and among the tasks waiting for your Gate 2, expands it in place, read-only: its level and
+  window, then its result, evidence (with **Open** when it names a path), the prerequisites it
+  still waits for, its orchestration workers by state with agent, model and minutes, its entries
+  in the latest night diary, and the findings it raised. Rows with nothing to show are left out;
+  the box still marks the task done.
 
 ### Changed
 

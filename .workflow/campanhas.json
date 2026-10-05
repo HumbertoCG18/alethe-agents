@@ -240,6 +240,16 @@
           "origem": "USER",
           "evidencia": "PR #72 integrado na dev; 2 revisões Codex (5+3 MAJOR corrigidos); vitest 997",
           "resultado": "aguarda o Gate 2 do usuário"
+        },
+        {
+          "id": "TODO-24",
+          "titulo": "Continuar campanha retoma pela primeira tarefa pendente quando nada está pronto",
+          "nivel": "T1",
+          "estado": "em execução",
+          "depende_de": [],
+          "origem": "USER",
+          "evidencia": "PR #73 integrado na dev; revisão Codex (2 MINOR, 1 corrigido + defeito do Ctrl+N achado pelo lint); vitest 1003",
+          "resultado": "aguarda o Gate 2 do usuário"
         }
       ]
     },

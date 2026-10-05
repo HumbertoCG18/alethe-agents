@@ -4,11 +4,11 @@
  */
 import { useEffect, useMemo, useReducer, useRef, useState } from 'react'
 
-import { armAgentPrompt } from '../../lib/activityTracker'
 import {
   activeCampaign,
   addCampaignTask,
   type Campaign,
+  campaignActivity,
   campaignBlock,
   campaignCwd,
   type CampaignRegistry,
@@ -32,7 +32,14 @@ import {
   type TaskWorkers,
   workflowPath,
 } from '../../lib/campaigns'
-import { getLocale, type MessageKey, type TFunction, translate, useT } from '../../lib/i18n'
+import {
+  getLocale,
+  intlLocale,
+  type MessageKey,
+  type TFunction,
+  translate,
+  useT,
+} from '../../lib/i18n'
 import { createOrchestratedTerminal } from '../../lib/orchestrationOnTerminal'
 import {
   campaignRegistryWrite,
@@ -56,6 +63,7 @@ import type { PtyStatus, SubTab, Terminal } from '../../lib/types'
 import { selectActiveProject, useProjectsStore } from '../../stores/projectsStore'
 import { anyTabWorking, type PtyRuntime, useTerminalsStore } from '../../stores/terminalsStore'
 import { useUiStore } from '../../stores/uiStore'
+import { WINDOW_KEYS } from './labels'
 import { useTodosStore } from './store'
 import { createWatchSet } from './watchSet'
 
@@ -319,8 +327,10 @@ export async function openCampaign(
     return false
   }
   if (refused()) return null
+  // Continue (`resumeFrom`) takes a tab of any agent, as it does before calling this; Open wants
+  // the agent chosen.
   const running = (tab: SubTab) =>
-    !nightTask && tab.type === agent && tab.campaignId === campaign.id
+    !nightTask && (resumeFrom !== undefined || tab.type === agent) && tab.campaignId === campaign.id
   let terminalId = activateTab(projectId, running)
   if (!terminalId) {
     const handoff = await findHandoff(campaign, registry)
@@ -375,50 +385,17 @@ function campaignTabs(projectId: string, campaignId: string) {
 const tabWorking = (tab: SubTab) => anyTabWorking([tab], useTerminalsStore.getState().byPtyId)
 
 /**
- * Types `text` into a running agent, then Enter on its own, as a typed initial input is sent.
- * Enter is held back from an agent that started working meanwhile, so it cannot reach that turn:
- * false then. A submitted prompt makes the agent count as working, as the user's own Enter does.
- */
-async function submit(ptyId: string, text: string): Promise<boolean> {
-  await writePty(ptyId, text)
-  await new Promise((resolve) => window.setTimeout(resolve, 150))
-  if (useTerminalsStore.getState().byPtyId[ptyId]?.status === 'working') return false
-  await writePty(ptyId, '\r')
-  armAgentPrompt(ptyId, text)
-  return true
-}
-
-/**
- * Continue campaign: asks its agent to resume from `task`. The campaign's tab is focused, as by
- * Continue, and gets the prompt typed and submitted unless its agent is working; a tab whose pty
- * is not running (a disabled terminal enabled again) gets it as its initial input. Without a tab,
- * a Claude Code one is opened with its board and the prompt. Resolves false when the prompt was
- * left typed in the input, without Enter.
+ * Continue campaign, offered to a campaign without a tab: opens Claude Code with its board and the
+ * prompt to resume from `task`. A tab opened for it meanwhile is focused instead, as by Go to tab.
  */
 export async function resumeCampaign(
   projectId: string,
   campaign: Campaign,
   registry: Registry,
   task: CampaignTask,
-): Promise<boolean> {
-  // Looked up first: a tab without a pty must get its input before it renders and spawns one.
-  const prompt = resumePrompt(campaign, registry.path, await findHandoff(campaign, registry), task)
-  if (!continueCampaign(projectId, campaign)) {
-    await openCampaign(projectId, campaign, 'claude', registry, undefined, task)
-    return true
-  }
-  const focused = useUiStore.getState().activeTerminal?.terminalId
-  const found = campaignTabs(projectId, campaign.id).find(
-    ({ terminal, tab }) => terminal.id === focused && terminal.activeTabId === tab.id,
-  )
-  if (!found) return true
-  const { terminal, tab } = found
-  if (!tab.ptyId) {
-    useProjectsStore.getState().setSubTabInitialInput(projectId, terminal.id, tab.id, prompt)
-  } else if (!tabWorking(tab)) {
-    return submit(tab.ptyId, prompt)
-  }
-  return true
+): Promise<void> {
+  if (continueCampaign(projectId, campaign)) return
+  await openCampaign(projectId, campaign, 'claude', registry, undefined, task)
 }
 
 /**
@@ -932,5 +909,30 @@ export function useCampaignEdits(view: CampaignView) {
         notify(t('todo.campaignWrite.requeued', { id: taskId }))
       }
     },
+  }
+}
+
+/**
+ * A campaign's window, worktree (with how many more it lists) and last update, as its map row and
+ * its Active header read them.
+ */
+export function useCampaignFacts(campaign: Campaign, checkouts: GitCheckouts) {
+  const t = useT()
+  const locale = useProjectsStore((state) => state.preferences.language)
+  const activity = campaignActivity(campaign, checkouts)
+  const updated =
+    activity.updatedAt === null
+      ? null
+      : new Intl.DateTimeFormat(intlLocale(locale), {
+          day: '2-digit',
+          month: '2-digit',
+          ...(activity.fromGit ? { hour: '2-digit', minute: '2-digit' } : {}),
+        }).format(activity.updatedAt)
+  return {
+    window: t(WINDOW_KEYS[campaign.window]),
+    worktree: activity.worktree
+      ? `${activity.worktree}${activity.extra > 0 ? ` (+${activity.extra})` : ''}`
+      : '—',
+    updated: updated === null ? null : t('todo.campaigns.updated', { when: updated }),
   }
 }

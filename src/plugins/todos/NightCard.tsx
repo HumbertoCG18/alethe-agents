@@ -11,7 +11,13 @@ import { type MessageKey, useT } from '../../lib/i18n'
 import { nightDate, type StopReason } from '../../lib/nightScheduler'
 import { useProjectsStore } from '../../stores/projectsStore'
 import styles from './CampaignsSection.module.css'
-import { type CampaignEdits, nightUndecided, type Registry } from './campaignView'
+import {
+  type CampaignEdits,
+  nightUndecided,
+  type Registry,
+  STATE_KEYS,
+  TASK_LANES,
+} from './campaignView'
 import { nightDay, RESULT_KEYS } from './labels'
 import { SectionToggle } from './SectionToggle'
 import { useTodosStore } from './store'
@@ -175,15 +181,23 @@ export function NightEntryRow({
     fallback,
   })
   const label = night ? <span className={styles.chip}>{night}</span> : null
+  // Once decided, an entry that waited on you reads as its task does now; one whose task left the
+  // registry reads as stopped, the night's neutral end.
+  const decided = entry.result === 'aguarda-voce' && !nightUndecided(entry, registry.campaigns)
+  const reading = !decided
+    ? { lane: RESULT_LANES[entry.result], name: t(RESULT_KEYS[entry.result]) }
+    : state
+      ? { lane: TASK_LANES[state], name: t(STATE_KEYS[state]) }
+      : { lane: RESULT_LANES.parou, name: t(RESULT_KEYS.parou) }
 
   return (
     <li
       className={styles.nightEntry}
-      data-lane={RESULT_LANES[entry.result]}
-      title={[entry.time, t(RESULT_KEYS[entry.result])].filter(Boolean).join(' · ')}
+      data-lane={reading.lane}
+      title={[entry.time, reading.name].filter(Boolean).join(' · ')}
       onKeyDown={onKeyDown}
     >
-      <span className={styles.dot} role="img" aria-label={t(RESULT_KEYS[entry.result])} />
+      <span className={styles.dot} role="img" aria-label={reading.name} />
       {campaign ? (
         <button type="button" className={styles.nightToggle} {...toggle}>
           <span className={styles.id}>{entry.task}</span>{' '}

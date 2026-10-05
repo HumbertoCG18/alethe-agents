@@ -2,8 +2,6 @@ import {
   Check,
   ChevronDown,
   ExternalLink,
-  Eye,
-  EyeOff,
   FolderKanban,
   GripVertical,
   ListTodo,
@@ -45,7 +43,7 @@ import { TODO_TITLE_MAX_LENGTH } from '../../lib/todos'
 import type { Terminal, TodoItem } from '../../lib/types'
 import { selectActiveProject, useProjectsStore } from '../../stores/projectsStore'
 import { useUiStore } from '../../stores/uiStore'
-import { CampaignFacts, CampaignsSection } from './CampaignsSection'
+import { CampaignsSection } from './CampaignsSection'
 import campaignStyles from './CampaignsSection.module.css'
 import {
   type CampaignCancel,
@@ -60,6 +58,7 @@ import {
   STATE_KEYS,
   TASK_LANES,
   useCampaignEdits,
+  useCampaignFacts,
   useCampaignLive,
   useCampaignView,
   useNightDiary,
@@ -219,6 +218,7 @@ export function TodoSidebar() {
   )
   const addInputRef = useRef<HTMLInputElement>(null)
   const tabsId = useId()
+  const locale = useProjectsStore((state) => state.preferences.language)
   const tab = useTodosStore((state) => state.tab)
   const setTab = useTodosStore((state) => state.setTab)
   const view = useCampaignView()
@@ -236,12 +236,9 @@ export function TodoSidebar() {
     view.projectId ? state.sectionOrder[view.projectId] : undefined,
   )
   const setSectionOrder = useTodosStore((state) => state.setSectionOrder)
-  const addFieldHidden = useTodosStore((state) =>
-    view.projectId ? state.addFieldHidden[view.projectId] === true : false,
-  )
-  const setAddFieldHidden = useTodosStore((state) => state.setAddFieldHidden)
-  // Ctrl+N shows a hidden add field for one task: until it is added, or left empty. It belongs to
-  // the campaign and the project it was shown in, so switching projects does not carry it over.
+  // A campaign's add field shows, for one task, once + or Ctrl+N asks for it: until the task is
+  // added, or the field left empty. It belongs to the campaign and the project it was shown in, so
+  // switching projects does not carry it over.
   const [addFieldShownFor, setAddFieldShownFor] = useState<{
     projectId: string
     campaignId: string
@@ -285,27 +282,46 @@ export function TodoSidebar() {
   const completed = todos.filter((todo) => todo.completed)
   const total = (key: 'done' | 'total') =>
     campaigns.reduce((sum, campaign) => sum + campaign[key], 0)
-  // Personal counts your own list; Tasks and Night the active campaigns, else the whole registry.
+  // The latest night's tasks, and those of them done in the registry now.
+  const nightTasks = [...new Set(diary?.entries.map((entry) => entry.task))]
+  const doneNow = new Set(
+    campaigns.flatMap((campaign) =>
+      campaign.tasks.filter((task) => task.state === 'concluída').map((task) => task.id),
+    ),
+  )
+  // Personal counts your own list; Night the latest night; Overview the active campaigns, else the
+  // whole registry.
   const parts: ProgressPart[] | null =
     tab === 'personal'
       ? [{ name: null, done: completed.length, total: todos.length, more: false }]
-      : activeCampaigns.length > 0
-        ? activeCampaigns.map((campaign) => ({
-            name: campaign.id,
-            done: campaign.done,
-            total: campaign.total,
-            more: !campaign.decomposed,
-          }))
-        : view.registry
+      : tab === 'night'
+        ? diary
           ? [
               {
-                name: t('todo.progressAll'),
-                done: total('done'),
-                total: total('total'),
-                more: campaigns.some((campaign) => !campaign.decomposed),
+                name: t('todo.night.title', { date: nightDay(diary.date, locale) }),
+                done: nightTasks.filter((id) => doneNow.has(id)).length,
+                total: nightTasks.length,
+                more: false,
               },
             ]
           : null
+        : activeCampaigns.length > 0
+          ? activeCampaigns.map((campaign) => ({
+              name: campaign.id,
+              done: campaign.done,
+              total: campaign.total,
+              more: !campaign.decomposed,
+            }))
+          : view.registry
+            ? [
+                {
+                  name: t('todo.progressAll'),
+                  done: total('done'),
+                  total: total('total'),
+                  more: campaigns.some((campaign) => !campaign.decomposed),
+                },
+              ]
+            : null
   const activeProjectSections = projects
     .map((project) => ({
       key: `project:${project.id}`,
@@ -326,21 +342,26 @@ export function TodoSidebar() {
   // the add field of the focused campaign when it is active, else of the first active one;
   // anywhere else, to your own list's composer.
   const newTask = useRef(() => {})
+  /** Shows a campaign's add field, for one task, and focuses it. */
+  const revealAddField = (campaignId: string) => {
+    if (!view.projectId) return
+    setAddFieldShownFor({ projectId: view.projectId, campaignId })
+    // Its field sits in its subsection, inside Active: either may be collapsed.
+    setCollapsedSections((current) => {
+      const next = new Set(current)
+      next.delete(ACTIVE_SECTION)
+      next.delete(campaignKey(campaignId))
+      return next
+    })
+    window.requestAnimationFrame(() => addInputs.current.get(campaignId)?.focus())
+  }
   newTask.current = () => {
     const target =
       tab === 'tasks'
         ? (activeCampaigns.find((campaign) => campaign.id === view.activeId) ?? activeCampaigns[0])
         : undefined
     if (target && view.projectId) {
-      setAddFieldShownFor({ projectId: view.projectId, campaignId: target.id })
-      // Its field sits in its subsection, inside Active: either may be collapsed.
-      setCollapsedSections((current) => {
-        const next = new Set(current)
-        next.delete(ACTIVE_SECTION)
-        next.delete(campaignKey(target.id))
-        return next
-      })
-      window.requestAnimationFrame(() => addInputs.current.get(target.id)?.focus())
+      revealAddField(target.id)
       return
     }
     setTab('personal')
@@ -796,12 +817,8 @@ export function TodoSidebar() {
                   collapsed={collapsedSections}
                   onToggle={toggleSection}
                   addField={{
-                    hidden: addFieldHidden,
                     shown: addFieldShown,
-                    toggleHidden: () => {
-                      if (view.projectId) setAddFieldHidden(view.projectId, !addFieldHidden)
-                      setAddFieldShownFor(null)
-                    },
+                    reveal: revealAddField,
                     leave: () => setAddFieldShownFor(null),
                     inputs: addInputs.current,
                     draft: (campaignId) => drafts[draftKey(campaignId)] ?? '',
@@ -1065,11 +1082,10 @@ function PendingSection({
 }
 
 type AddField = {
-  hidden: boolean
-  /** The campaign whose hidden field Ctrl+N shows, if any. */
+  /** The campaign whose field + or Ctrl+N shows, if any. */
   shown: string | null
-  toggleHidden: () => void
-  /** Hides again a field Ctrl+N showed. */
+  reveal: (campaignId: string) => void
+  /** Hides the field again. */
   leave: () => void
   /** Each campaign's input, for Ctrl+N to focus. */
   inputs: Map<string, HTMLInputElement>
@@ -1078,10 +1094,11 @@ type AddField = {
 }
 
 /**
- * The live campaigns not finished, each in its own subsection: its details, its controls, its add
- * field, its open tasks but those Pending lists, and its done ones collapsed at its end. A campaign
- * has Continue while it is not running (the same rule as the Campaigns map's dot), else Pause and
- * Cancel.
+ * The live campaigns not finished, each in its own subsection: its controls, its add field once
+ * asked for, its open tasks but those Pending lists, each with its step, and its done ones
+ * collapsed at its end. A campaign with a tab open goes to it, and pauses while its agent works (the
+ * same rule as the Campaigns map's dot); one live through its workers alone continues in a new tab.
+ * Either can be cancelled.
  */
 function ActiveSection({
   campaigns,
@@ -1131,11 +1148,7 @@ function ActiveSection({
     if (!task) return
     const { id } = item
     try {
-      if (await resumeCampaign(projectId, item, registry, task)) return
-      pushToast({
-        title: t('todo.campaignControls.continue'),
-        body: t('todo.campaignControls.leftInInput', { id }),
-      })
+      await resumeCampaign(projectId, item, registry, task)
     } catch (error) {
       pushToast({
         title: t('todo.campaignControls.continue'),
@@ -1178,59 +1191,62 @@ function ActiveSection({
   const controls = (item: Campaign, index: number) => {
     const task = resumeTask(item)
     const describedBy = `${hint}${index}`
+    const hasTab = withTab.includes(item.id)
+    // Short labels keep the row on one line; the name and tooltip say the whole action.
+    const named = (key: MessageKey) => ({ 'aria-label': t(key), title: t(key) })
     return (
       <div className={styles.controlRow}>
-        {withTab.includes(item.id) ? (
+        {hasTab ? (
           <button
             type="button"
             className={styles.controlButton}
             onClick={() => continueCampaign(projectId, item)}
+            {...named('todo.campaignControls.goToTab')}
           >
             <SquareTerminal size={11} aria-hidden />
             {t('todo.campaignControls.goToTab')}
           </button>
-        ) : null}
-        {live.get(item.id) === 'working' ? (
-          <>
-            <button
-              type="button"
-              className={styles.controlButton}
-              data-tone="pause"
-              onClick={once(() => pauseCampaign(projectId, item.id))}
-              disabled={disabled}
-            >
-              <Pause size={11} aria-hidden />
-              {t('todo.campaignControls.pause')}
-            </button>
-            <button
-              type="button"
-              className={styles.controlButton}
-              data-tone="cancel"
-              onClick={once(() => cancel(item))}
-              disabled={disabled}
-            >
-              <Square size={11} aria-hidden />
-              {t('todo.campaignControls.cancel')}
-            </button>
-          </>
         ) : (
-          <>
-            <button
-              type="button"
-              className={styles.controlButton}
-              onClick={once(() => resume(item))}
-              disabled={disabled || !task}
-              aria-describedby={task ? undefined : describedBy}
-            >
-              <Play size={11} aria-hidden />
-              {t('todo.campaignControls.continue')}
-            </button>
-            {task ? null : (
-              <span id={describedBy} className={campaignStyles.meta}>
-                {t('todo.campaignControls.allDone')}
-              </span>
-            )}
-          </>
+          <button
+            type="button"
+            className={styles.controlButton}
+            onClick={once(() => resume(item))}
+            disabled={disabled || !task}
+            aria-describedby={task ? undefined : describedBy}
+            {...named('todo.campaignControls.continue')}
+          >
+            <Play size={11} aria-hidden />
+            {t('todo.campaignControls.continueShort')}
+          </button>
+        )}
+        {hasTab && live.get(item.id) === 'working' ? (
+          <button
+            type="button"
+            className={styles.controlButton}
+            data-tone="pause"
+            onClick={once(() => pauseCampaign(projectId, item.id))}
+            disabled={disabled}
+            {...named('todo.campaignControls.pause')}
+          >
+            <Pause size={11} aria-hidden />
+            {t('todo.campaignControls.pauseShort')}
+          </button>
+        ) : null}
+        <button
+          type="button"
+          className={styles.controlButton}
+          data-tone="cancel"
+          onClick={once(() => cancel(item))}
+          disabled={disabled}
+          {...named('todo.campaignControls.cancel')}
+        >
+          <Square size={11} aria-hidden />
+          {t('todo.campaignControls.cancelShort')}
+        </button>
+        {hasTab || task ? null : (
+          <span id={describedBy} className={campaignStyles.meta}>
+            {t('todo.campaignControls.allDone')}
+          </span>
         )}
       </div>
     )
@@ -1244,17 +1260,7 @@ function ActiveSection({
         count={campaigns.length}
         open={open}
         onToggle={() => onToggle(ACTIVE_SECTION)}
-      >
-        <button
-          type="button"
-          className={styles.sectionAdd}
-          onClick={addField.toggleHidden}
-          title={t(addField.hidden ? 'todo.addFieldShow' : 'todo.addFieldHide')}
-          aria-label={t(addField.hidden ? 'todo.addFieldShow' : 'todo.addFieldHide')}
-        >
-          {addField.hidden ? <Eye size={13} /> : <EyeOff size={13} />}
-        </button>
-      </SectionToggle>
+      />
       {!open ? null : campaigns.length === 0 ? (
         <p className={styles.sectionEmpty}>{t('todo.activeEmpty')}</p>
       ) : (
@@ -1271,8 +1277,9 @@ function ActiveSection({
               open={!collapsed.has(campaignKey(campaign.id))}
               onToggle={() => onToggle(campaignKey(campaign.id))}
               controls={controls(campaign, index)}
+              onAdd={() => addField.reveal(campaign.id)}
               field={
-                addField.hidden && addField.shown !== campaign.id ? null : (
+                addField.shown !== campaign.id ? null : (
                   <CampaignAddField
                     campaign={campaign}
                     edits={edits}
@@ -1294,7 +1301,10 @@ function ActiveSection({
   )
 }
 
-/** An active campaign's subsection, headed by its id, title and progress. */
+/**
+ * An active campaign's subsection, headed by its id, title, progress and live workers, its facts in
+ * the header's tooltip and its + beside it.
+ */
 function ActiveCampaign({
   campaign,
   registry,
@@ -1305,6 +1315,7 @@ function ActiveCampaign({
   open,
   onToggle,
   controls,
+  onAdd,
   field,
 }: {
   campaign: Campaign
@@ -1316,10 +1327,12 @@ function ActiveCampaign({
   open: boolean
   onToggle: () => void
   controls: ReactNode
+  /** Shows its add field. */
+  onAdd: () => void
   field: ReactNode
 }) {
   const t = useT()
-  const [details, setDetails] = useState(false)
+  const facts = useCampaignFacts(campaign, registry.checkouts)
   const [doneOpen, setDoneOpen] = useState(false)
   const openTasks = campaignTaskView(campaign.tasks, 'active').filter(
     (task) => !pending.has(task.id),
@@ -1333,9 +1346,17 @@ function ActiveCampaign({
       workers,
     ),
   )
-  const row = (task: CampaignTask) => (
-    <CampaignTaskRow key={task.id} task={task} edits={edits} workers={workers} sources={sources} />
+  const row = (task: CampaignTask, step = false) => (
+    <CampaignTaskRow
+      key={task.id}
+      task={task}
+      edits={edits}
+      workers={workers}
+      sources={sources}
+      step={step}
+    />
   )
+  const add = t('todo.campaignAddPlaceholder', { id: campaign.id })
   return (
     <div role="group" aria-label={campaign.id} className={`${styles.list} ${campaignStyles.group}`}>
       <SectionToggle
@@ -1344,30 +1365,27 @@ function ActiveCampaign({
         open={open}
         onToggle={onToggle}
         variant="sub"
-      />
+        title={[facts.window, facts.worktree, facts.updated, situationLabel(t, campaign.situation)]
+          .filter(Boolean)
+          .join(' · ')}
+        extra={liveWorkers ? <span className={campaignStyles.workers}>{liveWorkers}</span> : null}
+      >
+        <button
+          type="button"
+          className={styles.sectionAdd}
+          onClick={onAdd}
+          title={add}
+          aria-label={add}
+        >
+          <Plus size={13} />
+        </button>
+      </SectionToggle>
       {open ? (
         <>
-          <SectionToggle
-            name={t('todo.activeDetails')}
-            count={null}
-            open={details}
-            onToggle={() => setDetails((current) => !current)}
-            variant="sub"
-          />
-          {details ? (
-            <div className={campaignStyles.details}>
-              <CampaignFacts campaign={campaign} checkouts={registry.checkouts}>
-                <span className={campaignStyles.situation}>
-                  {situationLabel(t, campaign.situation)}
-                </span>
-                {liveWorkers ? <span className={campaignStyles.workers}>{liveWorkers}</span> : null}
-              </CampaignFacts>
-            </div>
-          ) : null}
           {controls}
           {field}
           {openTasks.length > 0 ? (
-            openTasks.map(row)
+            openTasks.map((task) => row(task, true))
           ) : (
             <p className={styles.filterEmpty}>{t('todo.campaignEmpty')}</p>
           )}
@@ -1385,7 +1403,7 @@ function ActiveCampaign({
                 onToggle={() => setDoneOpen((current) => !current)}
                 variant="sub"
               />
-              {doneOpen ? doneTasks.map(row) : null}
+              {doneOpen ? doneTasks.map((task) => row(task)) : null}
             </>
           ) : null}
         </>
@@ -1457,7 +1475,7 @@ function CampaignAddField({
   )
 }
 
-/** A task waiting for your Gate 2: its row opens a night entry's actions for it. */ /** A task waiting for your Gate 2: its row opens a night entry's actions for it. */
+/** A task waiting for your Gate 2: its row opens a night entry's actions for it. */
 function Gate2Row({
   task,
   campaign,
@@ -1508,6 +1526,7 @@ function CampaignTaskRow({
   workers,
   sources,
   actions,
+  step = false,
 }: {
   task: CampaignTask
   /** Shown in place of its state, where the list mixes campaigns. */
@@ -1518,6 +1537,8 @@ function CampaignTaskRow({
   sources: DetailSources | null
   /** Its id and title open these. */
   actions?: TaskActions
+  /** Shows its result, the step it is at, under its title while it is open. */
+  step?: boolean
 }) {
   const t = useT()
   const [expanded, setExpanded] = useState(false)
@@ -1585,6 +1606,14 @@ function CampaignTaskRow({
           {t(STATE_KEYS[task.state])}
         </span>
       )}
+      {step && !done && task.result ? (
+        <span
+          className={`${styles.detailMeta} ${styles.todoTitleText} ${styles.stepLine}`}
+          title={task.result}
+        >
+          {task.result}
+        </span>
+      ) : null}
       {actions?.menu}
       {expanded && sources ? <TaskDetail id={detailId} task={task} sources={sources} /> : null}
     </div>

@@ -43,6 +43,7 @@ export function SectionToggle({
   children,
   variant,
   toggleRef,
+  title,
 }: {
   name: ReactNode
   count: ReactNode
@@ -53,6 +54,8 @@ export function SectionToggle({
   children?: ReactNode
   variant?: 'sub'
   toggleRef?: Ref<HTMLButtonElement>
+  /** The toggle's tooltip. */
+  title?: string
 }) {
   const t = useT()
   const handle = useContext(SectionHandleContext)
@@ -73,6 +76,7 @@ export function SectionToggle({
         type="button"
         className={styles.sectionToggle}
         onClick={onToggle}
+        title={title}
         aria-expanded={open}
         aria-keyshortcuts={drag ? 'Alt+ArrowUp Alt+ArrowDown' : undefined}
       >

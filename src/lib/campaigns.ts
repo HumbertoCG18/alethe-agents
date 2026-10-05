@@ -476,6 +476,20 @@ export const inCheckouts = (path: string, checkouts: GitCheckouts) =>
 export type CampaignTab = { campaignId?: string; cwd: string }
 
 /**
+ * The title of a tab opened for a campaign: the campaign's id, then its chat title when it has one,
+ * else the name it was given by hand (one other than its agent type). Null for any other tab, which
+ * keeps its own title.
+ */
+export function campaignTabTitle(
+  tab: (Pick<CampaignTab, 'campaignId'> & { name?: string; type?: string }) | undefined,
+  chatTitle: string | null,
+): string | null {
+  if (!tab?.campaignId) return null
+  const title = chatTitle ?? (tab.name && tab.name !== tab.type ? tab.name : null)
+  return title ? `${tab.campaignId} · ${title}` : tab.campaignId
+}
+
+/**
  * The campaign a tab works on: the one it was opened for, else one whose worktrees list the
  * checkout holding its cwd, resolved through git's list (so the main checkout counts only for
  * campaigns that list it). Among several, `prefer` wins when it is one of them.

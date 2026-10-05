@@ -22,7 +22,6 @@ const TAB_KEY = 'tab'
 const NIGHT_SETTINGS_KEY = 'nightSettings'
 const NIGHT_RUN_KEY = 'nightRun'
 const SECTION_ORDER_KEY = 'sectionOrder'
-const ADD_FIELD_HIDDEN_KEY = 'addFieldHidden'
 
 /** The Todo panel's tabs: campaign tasks, the night, and your own list. */
 export const TODO_TABS = ['tasks', 'night', 'personal'] as const
@@ -96,8 +95,6 @@ type TodosState = {
   nightRun: NightRun
   /** The Todo sections' order by project id; a project without one has the default order. */
   sectionOrder: Record<string, string[]>
-  /** The projects whose campaign list hides its add field, by id; the others show it. */
-  addFieldHidden: Record<string, true>
   hydrated: boolean
   createTodo: (title: string, tags?: string[], projectId?: string) => TodoItem | null
   createTodoFromPullRequest: (
@@ -120,7 +117,6 @@ type TodosState = {
   setNightRun: (run: NightRun) => Promise<void>
   /** Saves a project's section order; null puts the default back. */
   setSectionOrder: (projectId: string, order: string[] | null) => void
-  setAddFieldHidden: (projectId: string, hidden: boolean) => void
 }
 
 let storage: PluginStorage | null = null
@@ -143,7 +139,6 @@ export const useTodosStore = create<TodosState>((set, get) => {
     nightSettings: {},
     nightRun: EMPTY_NIGHT_RUN,
     sectionOrder: {},
-    addFieldHidden: {},
     hydrated: false,
 
     createTodo: (rawTitle, rawTags = [], projectId) => {
@@ -273,15 +268,6 @@ export const useTodosStore = create<TodosState>((set, get) => {
       void storage?.set(SECTION_ORDER_KEY, sectionOrder)
       set({ sectionOrder })
     },
-
-    setAddFieldHidden: (projectId, hidden) => {
-      const { [projectId]: _previous, ...others } = get().addFieldHidden
-      const addFieldHidden: Record<string, true> = hidden
-        ? { ...others, [projectId]: true }
-        : others
-      void storage?.set(ADD_FIELD_HIDDEN_KEY, addFieldHidden)
-      set({ addFieldHidden })
-    },
   }
 })
 
@@ -337,16 +323,6 @@ function readSectionOrder(value: unknown): Record<string, string[]> {
   )
 }
 
-/** The projects stored as hiding the add field; anything else, or older data, reads as shown. */
-function readAddFieldHidden(value: unknown): Record<string, true> {
-  if (!isRecord(value)) return {}
-  return Object.fromEntries(
-    Object.entries(value)
-      .filter(([, hidden]) => hidden === true)
-      .map(([projectId]) => [projectId, true as const]),
-  )
-}
-
 /**
  * Loads the plugin's own record, falling back to whatever the pre-plugin core
  * had stored. The legacy values are copied, never cleared: if this plugin is
@@ -380,7 +356,6 @@ export async function hydrateTodos(
     nightSettings: readNightSettings(record[NIGHT_SETTINGS_KEY]),
     nightRun: readNightRun(record[NIGHT_RUN_KEY]),
     sectionOrder: readSectionOrder(record[SECTION_ORDER_KEY]),
-    addFieldHidden: readAddFieldHidden(record[ADD_FIELD_HIDDEN_KEY]),
     hydrated: true,
   })
 
@@ -400,7 +375,6 @@ export function resetTodosStoreForTests(): void {
     nightSettings: {},
     nightRun: EMPTY_NIGHT_RUN,
     sectionOrder: {},
-    addFieldHidden: {},
     hydrated: false,
   })
 }

@@ -1,19 +1,17 @@
 import { Play } from 'lucide-react'
-import { type ReactNode, useState } from 'react'
+import { useState } from 'react'
 
 import {
   type Campaign,
-  campaignActivity,
   type CampaignSituation,
   campaignWorkers,
   type RegistryError,
   type TaskState,
   type TaskWorkers,
 } from '../../lib/campaigns'
-import { intlLocale, type MessageKey, useT } from '../../lib/i18n'
+import { type MessageKey, useT } from '../../lib/i18n'
 import { type GitCheckouts } from '../../lib/tauri'
 import { AGENT_TYPE_LABELS } from '../../lib/types'
-import { useProjectsStore } from '../../stores/projectsStore'
 import styles from './CampaignsSection.module.css'
 import {
   AGENTS,
@@ -24,6 +22,7 @@ import {
   openCampaign,
   STATE_KEYS,
   TASK_LANES,
+  useCampaignFacts,
   useCampaignLive,
   workersLabel,
 } from './campaignView'
@@ -318,38 +317,16 @@ function CampaignRow({
   )
 }
 
-/** A campaign's window, worktree and last update, then `children`, as its row's details show them. */
-export function CampaignFacts({
-  campaign,
-  checkouts,
-  children,
-}: {
-  campaign: Campaign
-  checkouts: GitCheckouts
-  children?: ReactNode
-}) {
-  const t = useT()
-  const locale = useProjectsStore((state) => state.preferences.language)
-  const activity = campaignActivity(campaign, checkouts)
-  const worktree = activity.worktree
-    ? `${activity.worktree}${activity.extra > 0 ? ` (+${activity.extra})` : ''}`
-    : '—'
-  const updated =
-    activity.updatedAt === null
-      ? null
-      : new Intl.DateTimeFormat(intlLocale(locale), {
-          day: '2-digit',
-          month: '2-digit',
-          ...(activity.fromGit ? { hour: '2-digit', minute: '2-digit' } : {}),
-        }).format(activity.updatedAt)
+/** A campaign's window, worktree and last update, as its row's details show them. */
+function CampaignFacts({ campaign, checkouts }: { campaign: Campaign; checkouts: GitCheckouts }) {
+  const facts = useCampaignFacts(campaign, checkouts)
   return (
     <span className={styles.meta}>
-      <span>{t(WINDOW_KEYS[campaign.window])}</span>
-      <span className={styles.worktree} title={worktree}>
-        {worktree}
+      <span>{facts.window}</span>
+      <span className={styles.worktree} title={facts.worktree}>
+        {facts.worktree}
       </span>
-      {updated ? <span>{t('todo.campaigns.updated', { when: updated })}</span> : null}
-      {children}
+      {facts.updated ? <span>{facts.updated}</span> : null}
     </span>
   )
 }

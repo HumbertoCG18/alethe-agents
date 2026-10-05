@@ -48,6 +48,7 @@ import { useUiStore } from '../../stores/uiStore'
 import { CampaignsSection } from './CampaignsSection'
 import campaignStyles from './CampaignsSection.module.css'
 import {
+  type AgentTail,
   type CampaignCancel,
   type CampaignEdits,
   type CampaignLive,
@@ -59,6 +60,7 @@ import {
   resumeCampaign,
   STATE_KEYS,
   TASK_LANES,
+  useAgentTails,
   useCampaignEdits,
   useCampaignFacts,
   useCampaignLive,
@@ -274,6 +276,15 @@ export function TodoSidebar() {
     (campaign) => live.has(campaign.id) && campaign.situation.kind !== 'done',
   )
   const waiting = view.registry ? waitingOnYou(view.registry, diary) : null
+  // What each active campaign's agent last said, and the questions they wait on.
+  const tails = useAgentTails(
+    view.projectId,
+    activeCampaigns.map((campaign) => campaign.id),
+  )
+  const questions = activeCampaigns.flatMap((campaign) => {
+    const text = tails.get(campaign.id)?.question
+    return text ? [{ campaign, text }] : []
+  })
   // What Pending lists, left out wherever else a campaign's tasks are listed.
   const pending: ReadonlySet<string> = new Set([
     ...(waiting?.night.map((entry) => entry.task) ?? []),
@@ -801,6 +812,7 @@ export function TodoSidebar() {
                   workers={workers}
                   sources={sources}
                   away={tasksTab}
+                  questions={questions}
                 />
               ),
             },
@@ -814,6 +826,7 @@ export function TodoSidebar() {
                   workers={workers}
                   sources={sources}
                   pending={pending}
+                  tails={tails}
                   once={once}
                   busy={busy}
                   collapsed={collapsedSections}
@@ -999,6 +1012,7 @@ function PendingSection({
   workers,
   sources,
   away,
+  questions,
 }: {
   registry: Registry
   diary: NightDiary | null
@@ -1009,6 +1023,8 @@ function PendingSection({
   sources: DetailSources | null
   /** Where the focus goes once the last decision took Pending away. */
   away: RefObject<HTMLButtonElement>
+  /** The questions campaigns' agents wait on: answered in their terminals. */
+  questions: Array<{ campaign: Campaign; text: string }>
 }) {
   const t = useT()
   const locale = useProjectsStore((state) => state.preferences.language)
@@ -1016,7 +1032,7 @@ function PendingSection({
   const [gate2Open, setGate2Open] = useState(true)
   const toggle = useRef<HTMLButtonElement>(null)
   const gate2Toggle = useRef<HTMLButtonElement>(null)
-  const count = night.length + gate2.length
+  const count = questions.length + night.length + gate2.length
   if (count === 0) return null
   return (
     <section className={styles.section}>
@@ -1030,6 +1046,30 @@ function PendingSection({
       />
       {open ? (
         <div className={campaignStyles.groups}>
+          {questions.length > 0 ? (
+            <ul className={campaignStyles.tasks} aria-label={t('todo.pending.questions')}>
+              {questions.map(({ campaign, text }) => (
+                <li key={campaign.id} className={campaignStyles.nightEntry} data-lane="queued">
+                  <span
+                    className={campaignStyles.dot}
+                    role="img"
+                    aria-label={t('todo.night.resultWaiting')}
+                  />
+                  <span className={campaignStyles.id}>{campaign.id}</span>
+                  <span className={campaignStyles.taskTitle} title={text}>
+                    {text}
+                  </span>
+                  <button
+                    type="button"
+                    className={`${controlStyles.btn} ${controlStyles.btnSm}`}
+                    onClick={() => continueCampaign(registry.projectId, campaign)}
+                  >
+                    {t('todo.campaignControls.goToTab')}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
           {diary && night.length > 0 ? (
             <ul className={campaignStyles.tasks}>
               {night.map((entry, index) => (
@@ -1110,6 +1150,7 @@ function ActiveSection({
   workers,
   sources,
   pending,
+  tails,
   once,
   busy,
   collapsed,
@@ -1124,6 +1165,8 @@ function ActiveSection({
   sources: DetailSources | null
   /** The tasks Pending lists, left out here. */
   pending: ReadonlySet<string>
+  /** What each campaign's agent last said. */
+  tails: ReadonlyMap<string, AgentTail>
   /** Runs a control unless another one is running. */
   once: (action: () => Promise<void>) => () => void
   /** A control is running: the controls are disabled. */
@@ -1279,6 +1322,7 @@ function ActiveSection({
               open={!collapsed.has(campaignKey(campaign.id))}
               onToggle={() => onToggle(campaignKey(campaign.id))}
               controls={controls(campaign, index)}
+              agentMessage={tails.get(campaign.id)?.message ?? null}
               onAdd={() => addField.reveal(campaign.id)}
               field={
                 addField.shown !== campaign.id ? null : (
@@ -1317,6 +1361,7 @@ function ActiveCampaign({
   open,
   onToggle,
   controls,
+  agentMessage,
   onAdd,
   field,
 }: {
@@ -1329,6 +1374,8 @@ function ActiveCampaign({
   open: boolean
   onToggle: () => void
   controls: ReactNode
+  /** The last answer of its agent's tab, when it has one. */
+  agentMessage: string | null
   /** Shows its add field. */
   onAdd: () => void
   field: ReactNode
@@ -1385,6 +1432,11 @@ function ActiveCampaign({
       {open ? (
         <>
           {controls}
+          {agentMessage ? (
+            <span className={`${styles.detailMeta} ${styles.todoTitleText}`} title={agentMessage}>
+              {t('todo.agentLabel')} {agentMessage}
+            </span>
+          ) : null}
           {field}
           {openTasks.length > 0 ? (
             openTasks.map((task) => row(task, true))

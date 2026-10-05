@@ -650,7 +650,9 @@
           "titulo": "Chat e Terminal alternáveis nas abas de agente do desktop, portando o chat do Controle Remoto",
           "nivel": "T2",
           "estado": "proposta",
-          "depende_de": [],
+          "depende_de": [
+            "CHAT-03"
+          ],
           "origem": "USER"
         },
         {
@@ -662,6 +664,41 @@
             "CHAT-01"
           ],
           "origem": "USER"
+        },
+        {
+          "id": "CHAT-03",
+          "titulo": "Camada de sessão compartilhada: um leitor incremental de transcript para Todo, Controle Remoto, títulos e workers",
+          "nivel": "T2",
+          "estado": "em execução",
+          "depende_de": [],
+          "origem": "USER",
+          "resultado": "aguarda o Gate 2 do usuário; PR #90 mergeado (40f2045)",
+          "passos": [
+            {
+              "texto": "Leitor Rust incremental por sessão (posição no arquivo, eventos normalizados, revisão)",
+              "feito": true
+            },
+            {
+              "texto": "Evento Tauri e comandos de assinatura; Controle Remoto lê do cache",
+              "feito": true
+            },
+            {
+              "texto": "Store único no frontend; TODO-31 migrado sem mudança visível",
+              "feito": true
+            },
+            {
+              "texto": "Títulos das abas lidos da camada",
+              "feito": true
+            },
+            {
+              "texto": "Tipo de evento comum e adaptador dos workers do orquestrador",
+              "feito": true
+            },
+            {
+              "texto": "Testes, revisão e CHANGELOG",
+              "feito": true
+            }
+          ]
         }
       ]
     }

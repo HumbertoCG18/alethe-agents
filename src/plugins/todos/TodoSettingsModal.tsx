@@ -1,5 +1,5 @@
 import { Folder, RotateCcw } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
 
 import controls from '../../components/modals/controls.module.css'
 import { Modal } from '../../components/modals/Modal'
@@ -34,6 +34,7 @@ export function TodoSettingsModal() {
   const t = useT()
   const open = useUiStore((state) => state.openModal === TODO_SETTINGS_MODAL_ID)
   const closeModal = useUiStore((state) => state.closeModal)
+  const pushToast = useUiStore((state) => state.pushToast)
   const savedPath = useTodosStore((state) => state.storagePath)
   const setStoragePath = useTodosStore((state) => state.setStoragePath)
   const resetTodosToDefault = useTodosStore((state) => state.resetTodosToDefault)
@@ -54,6 +55,7 @@ export function TodoSettingsModal() {
     projectId ? state.sectionOrder[projectId] !== undefined : false,
   )
   const setSectionOrder = useTodosStore((state) => state.setSectionOrder)
+  const fieldId = useId()
   const [night, setNight] = useState<NightSettings>(DEFAULT_NIGHT_SETTINGS)
   const [path, setPath] = useState('')
   const [saving, setSaving] = useState(false)
@@ -104,7 +106,10 @@ export function TodoSettingsModal() {
       })
       closeModal()
     } catch (error) {
-      window.alert(t('todo.templateError', { message: String(error) }))
+      pushToast({
+        title: t('todo.settingsTitle'),
+        body: t('todo.templateError', { message: String(error) }),
+      })
     } finally {
       setSaving(false)
     }
@@ -153,7 +158,7 @@ export function TodoSettingsModal() {
             <>
               <div className={controls.cwdRow}>
                 <label className={styles.nightField}>
-                  <span className={controls.hint}>{t('todo.nightMode.start')}</span>
+                  <span className={controls.label}>{t('todo.nightMode.start')}</span>
                   <input
                     type="time"
                     className={controls.input}
@@ -162,7 +167,7 @@ export function TodoSettingsModal() {
                   />
                 </label>
                 <label className={styles.nightField}>
-                  <span className={controls.hint}>{t('todo.nightMode.end')}</span>
+                  <span className={controls.label}>{t('todo.nightMode.end')}</span>
                   <input
                     type="time"
                     className={controls.input}
@@ -173,7 +178,7 @@ export function TodoSettingsModal() {
               </div>
               <div className={controls.cwdRow}>
                 <label className={styles.nightField}>
-                  <span className={controls.hint}>{t('todo.nightMode.maxMinutes')}</span>
+                  <span className={controls.label}>{t('todo.nightMode.maxMinutes')}</span>
                   <input
                     type="number"
                     min={1}
@@ -186,7 +191,7 @@ export function TodoSettingsModal() {
                   />
                 </label>
                 <label className={styles.nightField}>
-                  <span className={controls.hint}>{t('todo.nightMode.maxTasks')}</span>
+                  <span className={controls.label}>{t('todo.nightMode.maxTasks')}</span>
                   <input
                     type="number"
                     min={1}
@@ -220,9 +225,12 @@ export function TodoSettingsModal() {
         </div>
       ) : null}
       <div className={controls.field}>
-        <label className={controls.label}>{t('todo.pathLabel')}</label>
+        <label className={controls.label} htmlFor={`${fieldId}-path`}>
+          {t('todo.pathLabel')}
+        </label>
         <div className={controls.cwdRow}>
           <input
+            id={`${fieldId}-path`}
             className={controls.input}
             value={path}
             onChange={(event) => setPath(event.target.value)}
@@ -250,8 +258,11 @@ export function TodoSettingsModal() {
         <span className={controls.hint}>{t('todo.pathHint')}</span>
       </div>
       <div className={controls.field}>
-        <label className={controls.label}>{t('pomodoro.settingsWorkMinutes')}</label>
+        <label className={controls.label} htmlFor={`${fieldId}-work`}>
+          {t('pomodoro.settingsWorkMinutes')}
+        </label>
         <input
+          id={`${fieldId}-work`}
           type="number"
           min={1}
           max={120}
@@ -261,8 +272,11 @@ export function TodoSettingsModal() {
         />
       </div>
       <div className={controls.field}>
-        <label className={controls.label}>{t('pomodoro.settingsShortBreakMinutes')}</label>
+        <label className={controls.label} htmlFor={`${fieldId}-short`}>
+          {t('pomodoro.settingsShortBreakMinutes')}
+        </label>
         <input
+          id={`${fieldId}-short`}
           type="number"
           min={1}
           max={120}
@@ -272,8 +286,11 @@ export function TodoSettingsModal() {
         />
       </div>
       <div className={controls.field}>
-        <label className={controls.label}>{t('pomodoro.settingsLongBreakMinutes')}</label>
+        <label className={controls.label} htmlFor={`${fieldId}-long`}>
+          {t('pomodoro.settingsLongBreakMinutes')}
+        </label>
         <input
+          id={`${fieldId}-long`}
           type="number"
           min={1}
           max={120}
@@ -283,7 +300,7 @@ export function TodoSettingsModal() {
         />
       </div>
       <div className={controls.field}>
-        <label className={controls.label}>{t('todo.defaultLabel')}</label>
+        <span className={controls.label}>{t('todo.defaultLabel')}</span>
         <button type="button" className={controls.btn} onClick={resetDefault}>
           {t('todo.resetDefault')}
         </button>

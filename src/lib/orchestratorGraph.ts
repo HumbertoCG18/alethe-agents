@@ -9,7 +9,6 @@ export const LEVEL_GAP = 56
 export const CANVAS_PADDING = 40
 export const DEFAULT_NODE_HEIGHT = 76
 export const ELBOW_RADIUS = 8
-export const DOT_SPACING = 22
 export const MIN_SCALE = 0.35
 export const MAX_SCALE = 1.6
 

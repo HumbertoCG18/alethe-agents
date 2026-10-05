@@ -19,6 +19,7 @@ import {
 import { type ReactNode, type RefObject, useEffect, useId, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 
+import controlStyles from '../../components/modals/controls.module.css'
 import { DotmCircular2 } from '../../components/ui/dotm-circular-2'
 import {
   type GsdSyncSession,
@@ -1195,12 +1196,13 @@ function ActiveSection({
     const hasTab = withTab.includes(item.id)
     // Short labels keep the row on one line; the name and tooltip say the whole action.
     const named = (key: MessageKey) => ({ 'aria-label': t(key), title: t(key) })
+    const button = `${controlStyles.btn} ${controlStyles.btnSm} ${styles.controlButton}`
     return (
       <div className={styles.controlRow}>
         {hasTab ? (
           <button
             type="button"
-            className={styles.controlButton}
+            className={button}
             onClick={() => continueCampaign(projectId, item)}
             {...named('todo.campaignControls.goToTab')}
           >
@@ -1210,7 +1212,7 @@ function ActiveSection({
         ) : (
           <button
             type="button"
-            className={styles.controlButton}
+            className={button}
             onClick={once(() => resume(item))}
             disabled={disabled || !task}
             aria-describedby={task ? undefined : describedBy}
@@ -1223,7 +1225,7 @@ function ActiveSection({
         {hasTab && live.get(item.id) === 'working' ? (
           <button
             type="button"
-            className={styles.controlButton}
+            className={button}
             data-tone="pause"
             onClick={once(() => pauseCampaign(projectId, item.id))}
             disabled={disabled}
@@ -1235,8 +1237,7 @@ function ActiveSection({
         ) : null}
         <button
           type="button"
-          className={styles.controlButton}
-          data-tone="cancel"
+          className={`${button} ${controlStyles.btnSmDanger}`}
           onClick={once(() => cancel(item))}
           disabled={disabled}
           {...named('todo.campaignControls.cancel')}

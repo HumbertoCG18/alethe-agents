@@ -91,6 +91,7 @@ vi.mock('../../lib/tauri', async (importOriginal) => ({
     return content
   }),
   writePty: vi.fn(async () => {}),
+  ensureTodoTemplate: vi.fn(async () => {}),
   // The backend finishes a cancelled worker at once: the next snapshot shows it cancelled.
   orchestratorCancel: vi.fn(async (jobId: string) => {
     orchestrator.jobs = orchestrator.jobs.map((job) =>
@@ -102,6 +103,7 @@ vi.mock('../../lib/tauri', async (importOriginal) => ({
 
 import {
   campaignRegistryWrite,
+  ensureTodoTemplate,
   findRelativePath,
   listDirectory,
   openInFileExplorer,
@@ -3588,5 +3590,49 @@ describe('Task steps', () => {
     )
     unmount()
     expect(useCampaignStepsStore.getState().byProject).toEqual({})
+  })
+})
+
+describe('Todo settings and edits', () => {
+  beforeEach(() => useUiStore.setState({ toasts: [], notifications: [] }))
+  afterEach(() => act(() => useUiStore.getState().closeModal()))
+
+  it('names each settings field by its label', () => {
+    useUiStore.setState({ openModal: TODO_SETTINGS_MODAL_ID })
+    render(<TodoSettingsModal />)
+    expect(screen.getByLabelText('Folder for your personal todos')).toHaveAttribute(
+      'placeholder',
+      'Default app data folder',
+    )
+    for (const label of ['Focus (minutes)', 'Short break (minutes)', 'Long break (minutes)']) {
+      expect(screen.getByLabelText(label)).toHaveAttribute('type', 'number')
+    }
+    // A section caption, not the name of its button.
+    expect(screen.getByRole('button', { name: 'Reset to Alethe default Todo' })).toBeInTheDocument()
+  })
+
+  it('says in a toast why a folder could not be used, and stays open', async () => {
+    vi.mocked(ensureTodoTemplate).mockRejectedValueOnce('access denied')
+    useUiStore.setState({ openModal: TODO_SETTINGS_MODAL_ID })
+    render(<TodoSettingsModal />)
+    fireEvent.change(screen.getByLabelText('Folder for your personal todos'), {
+      target: { value: 'D:\\todos' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() =>
+      expect(lastToast()).toMatchObject({
+        title: 'Todo List settings',
+        body: 'Could not create the Todo template: access denied',
+      }),
+    )
+    expect(useUiStore.getState().openModal).toBe(TODO_SETTINGS_MODAL_ID)
+  })
+
+  it('names the field that renames a personal todo', () => {
+    useTodosStore.setState({ tab: 'personal' })
+    useTodosStore.getState().createTodo('Write the doc')
+    render(<TodoSidebar />)
+    fireEvent.click(screen.getByRole('button', { name: 'Edit task' }))
+    expect(screen.getByRole('textbox', { name: 'Edit task' })).toHaveValue('Write the doc')
   })
 })

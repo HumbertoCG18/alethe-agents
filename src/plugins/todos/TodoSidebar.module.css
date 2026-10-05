@@ -286,7 +286,7 @@
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
   background: var(--bg-elevated);
-  box-shadow: 0 12px 30px color-mix(in srgb, var(--bg) 60%, transparent);
+  box-shadow: var(--shadow-lg);
 }
 .projectOption {
   min-width: 0;
@@ -634,41 +634,17 @@
   padding: 2px 0 4px;
 }
 
+/* On the shared small button (controls.btn + btnSm), kept whole on the row's one line. */
 .controlButton {
-  height: 22px;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 0 8px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  color: var(--fg-muted);
-  background: var(--bg-sunken);
-  font-size: 11px;
-  cursor: pointer;
+  flex: none;
+  white-space: nowrap;
 }
 
-.controlButton:not([data-tone]):hover:not(:disabled),
-.controlButton:not([data-tone]):focus-visible {
-  color: var(--fg);
-  border-color: var(--border-strong);
-}
-
+/* The shared buttons have no waiting tone: Pause keeps the board's. */
 .controlButton[data-tone='pause'] {
   color: var(--status-waiting);
   border-color: var(--status-waiting);
   background: var(--status-waiting-soft);
-}
-
-.controlButton[data-tone='cancel'] {
-  color: var(--status-offline);
-  border-color: var(--status-offline);
-  background: var(--status-offline-soft);
-}
-
-.controlButton:disabled {
-  opacity: 0.5;
-  cursor: default;
 }
 
 /* An open task's step, its registry result, on one line under its title. */
@@ -709,7 +685,7 @@
   opacity: 0.32;
   border-color: var(--accent);
   transform: rotate(0.7deg) scale(0.985);
-  box-shadow: 0 6px 18px color-mix(in srgb, var(--bg) 70%, transparent);
+  box-shadow: var(--shadow-md);
 }
 
 .todoRowDropTarget {

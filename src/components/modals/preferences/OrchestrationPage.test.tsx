@@ -158,6 +158,26 @@ describe('OrchestrationPage', () => {
     expect(orchestration().maxConcurrent).toBe(5)
   })
 
+  // UI-01: no stepper button sits inside a label, so clicking the label text steps nothing.
+  it('does not step the concurrency when its label is clicked', () => {
+    render(<OrchestrationPage />)
+    const before = orchestration().maxConcurrent
+
+    fireEvent.click(screen.getByText('Workers at the same time'))
+
+    expect(orchestration().maxConcurrent).toBe(before)
+    expect(screen.getByRole('group', { name: 'Workers at the same time' })).toBeTruthy()
+  })
+
+  // UI-01: a header cut short on a narrow window keeps its full text as a tooltip.
+  it('keeps the full text of each roles header as its title', () => {
+    withRoles([reviewer])
+    render(<OrchestrationPage />)
+
+    expect(screen.getByTitle('Read-only')).toHaveTextContent('Read-only')
+    expect(screen.getByTitle('Budget (s)')).toHaveTextContent('Budget (s)')
+  })
+
   // Codex plugins a worker starts without (#266).
   it('saves the Codex plugins workers start without, one id per line or comma', () => {
     render(<OrchestrationPage />)

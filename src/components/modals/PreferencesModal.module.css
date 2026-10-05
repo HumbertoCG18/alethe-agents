@@ -990,7 +990,7 @@
 }
 
 .cliPathWarning {
-  color: var(--danger);
+  color: var(--status-offline);
 }
 
 .cliPathActions {

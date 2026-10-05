@@ -24,15 +24,18 @@
 
 .pluginList textarea {
   min-height: 72px;
+  padding: 8px 10px;
   resize: vertical;
   font-family: var(--font-mono);
 }
 
+/* Scrolls sideways on a window too narrow for every column, instead of crushing them. */
 .roles {
   display: flex;
   flex-direction: column;
   gap: 8px;
   margin-bottom: 12px;
+  overflow-x: auto;
 }
 
 .roleHeader,
@@ -43,11 +46,14 @@
     minmax(96px, 1fr) 40px 88px minmax(104px, 1fr) 28px;
   gap: 8px;
   align-items: center;
+  /* The column minimums plus the gaps: below that width the table scrolls. */
+  min-width: min-content;
 }
 
-.roleHeader {
-  font-size: 11px;
-  color: var(--fg-faint);
+.roleHeader > span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .role {
@@ -59,53 +65,20 @@
 .error {
   margin: 0;
   font-size: 11px;
-  color: var(--danger);
+  color: var(--status-offline);
 }
 
-.switch {
-  position: relative;
-  width: 32px;
-  height: 18px;
-  padding: 0;
-  border: 1px solid var(--border-strong);
-  border-radius: 999px;
-  background: var(--bg-elevated);
-  cursor: pointer;
-  transition:
-    background var(--anim-fast) ease,
-    border-color var(--anim-fast) ease;
+/* Clean visual style: the stepper and the inputs take the shared control height, level with the
+   Dropdowns in the same rows. */
+:global([data-visual-style='clean']) .stepper {
+  grid-template-columns: var(--clean-control-height) 1fr var(--clean-control-height);
 }
 
-.switch::after {
-  content: '';
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  background: var(--fg-faint);
-  transition:
-    transform var(--anim-fast) ease,
-    background var(--anim-fast) ease;
+:global([data-visual-style='clean']) .stepper > button {
+  width: var(--clean-control-height);
 }
 
-.switch[aria-checked='true'] {
-  background: var(--accent-soft);
-  border-color: var(--accent-border);
-}
-
-.switch[aria-checked='true']::after {
-  transform: translateX(14px);
-  background: var(--accent);
-}
-
-.switch:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-
-.switch:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 2px;
+:global([data-visual-style='clean']) :is(.stepper > *, .limits input, .roleRow > input) {
+  height: var(--clean-control-height);
+  min-height: var(--clean-control-height);
 }

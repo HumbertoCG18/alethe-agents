@@ -1,5 +1,5 @@
 import { Minus, Plus, Trash2 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
 
 import { agentLabel } from '../../../lib/agentProviders'
 import { useT } from '../../../lib/i18n'
@@ -22,6 +22,17 @@ import { SettingsSection } from './primitives'
 
 const AGENTS: OrchestrationRole['agent'][] = ['codex', 'claude']
 const ORCHESTRATORS: NonNullable<OrchestrationRole['orchestrator']>[] = ['claude', 'codex']
+// One per column of the roles table, but the last one, which holds the remove button.
+const ROLE_HEADERS = [
+  'prefs.orchestrationRoleName',
+  'prefs.orchestrationOrchestrator',
+  'prefs.orchestrationAgent',
+  'prefs.orchestrationModel',
+  'prefs.orchestrationEffort',
+  'prefs.orchestrationReadOnly',
+  'prefs.orchestrationBudget',
+  'prefs.orchestrationFallback',
+] as const
 
 function nextRoleName(roles: OrchestrationRole[]): string {
   const taken = new Set(roles.map((role) => role.name))
@@ -142,6 +153,7 @@ export function OrchestrationPage() {
   }
 
   const concurrency = settings.maxConcurrent
+  const concurrencyLabel = useId()
 
   return (
     <>
@@ -151,8 +163,11 @@ export function OrchestrationPage() {
         description={t('prefs.orchestrationLimitsDesc')}
       >
         <div className={styles.limits}>
-          <label className={controls.field}>
-            <span className={controls.label}>{t('prefs.orchestrationConcurrency')}</span>
+          {/* A group, not a label: a label hands its clicks to the first stepper button. */}
+          <div className={controls.field} role="group" aria-labelledby={concurrencyLabel}>
+            <span id={concurrencyLabel} className={controls.label}>
+              {t('prefs.orchestrationConcurrency')}
+            </span>
             <div className={styles.stepper}>
               <button
                 type="button"
@@ -174,7 +189,7 @@ export function OrchestrationPage() {
                 <Plus size={15} />
               </button>
             </div>
-          </label>
+          </div>
           <label className={controls.field}>
             <span className={controls.label}>{t('prefs.orchestrationDefaultTimeout')}</span>
             <input
@@ -220,7 +235,7 @@ export function OrchestrationPage() {
           <button
             type="button"
             role="switch"
-            className={styles.switch}
+            className={controls.switch}
             aria-checked={closeBoard}
             aria-label={t('prefs.orchestrationCloseBoard')}
             onClick={() => setPreferences({ closeOrchestrationBoardWithTerminal: !closeBoard })}
@@ -246,15 +261,12 @@ export function OrchestrationPage() {
           <p className={controls.hint}>{t('prefs.orchestrationRolesEmpty')}</p>
         ) : (
           <div className={styles.roles}>
-            <div className={styles.roleHeader} aria-hidden>
-              <span>{t('prefs.orchestrationRoleName')}</span>
-              <span>{t('prefs.orchestrationOrchestrator')}</span>
-              <span>{t('prefs.orchestrationAgent')}</span>
-              <span>{t('prefs.orchestrationModel')}</span>
-              <span>{t('prefs.orchestrationEffort')}</span>
-              <span>{t('prefs.orchestrationReadOnly')}</span>
-              <span>{t('prefs.orchestrationBudget')}</span>
-              <span>{t('prefs.orchestrationFallback')}</span>
+            <div className={`${styles.roleHeader} ${controls.label}`} aria-hidden>
+              {ROLE_HEADERS.map((key) => (
+                <span key={key} title={t(key)}>
+                  {t(key)}
+                </span>
+              ))}
               <span />
             </div>
             {settings.roles.map((role, index) => {
@@ -342,7 +354,7 @@ export function OrchestrationPage() {
                     <button
                       type="button"
                       role="switch"
-                      className={styles.switch}
+                      className={controls.switch}
                       aria-checked={role.readOnly}
                       aria-label={t('prefs.orchestrationReadOnlyFor', { name: label })}
                       disabled={!codex}

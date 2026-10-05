@@ -4,6 +4,7 @@
  */
 import { useState } from 'react'
 
+import controls from '../../components/modals/controls.module.css'
 import { isMarkdownFilePath } from '../../components/XTermView/terminalLinks'
 import { type Campaign, campaignCwd, evidenceIsPath, inCheckouts } from '../../lib/campaigns'
 import { type TFunction, useT } from '../../lib/i18n'
@@ -127,7 +128,7 @@ export function useTaskActions({
       key={key}
       type="button"
       role="menuitem"
-      className={styles.menuItem}
+      className={`${controls.btn} ${controls.btnSm} ${styles.menuItem}`}
       onClick={onClick}
       disabled={disabled}
     >

@@ -468,7 +468,7 @@
 }
 
 .readmeTabClose:hover {
-  color: var(--danger);
+  color: var(--status-offline);
 }
 
 .readmeTab:hover,

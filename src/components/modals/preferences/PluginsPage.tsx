@@ -206,7 +206,7 @@ export function PluginsPage() {
                           role="switch"
                           aria-checked={entry.enabled}
                           aria-label={t('prefs.pluginsToggleLabel', { name: manifest.name })}
-                          className={styles.switch}
+                          className={controls.switch}
                           onClick={() => handleToggle(entry, !entry.enabled)}
                         />
                       </div>

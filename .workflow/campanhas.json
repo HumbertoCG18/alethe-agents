@@ -323,6 +323,35 @@
           ],
           "origem": "USER",
           "resultado": "aguarda o Gate 2 do usuário; PR #88 mergeado (b2bc3a4)"
+        },
+        {
+          "id": "TODO-32",
+          "titulo": "Erro de leitura do registro visível, com motivo e Tentar de novo (não confundir com sem registro)",
+          "nivel": "T1",
+          "estado": "em execução",
+          "depende_de": [],
+          "origem": "USER",
+          "resultado": "aguarda o Gate 2 do usuário; PR #95 mergeado (dcd537a)"
+        },
+        {
+          "id": "TODO-33",
+          "titulo": "Projeto ancorado no repositório principal, com seletor de worktree e marca de defasada; Markdown segue a escolha",
+          "nivel": "T2",
+          "estado": "em execução",
+          "depende_de": [],
+          "origem": "USER",
+          "resultado": "implementação em worktree"
+        },
+        {
+          "id": "TODO-34",
+          "titulo": "Guia Pessoal: lista única com o projeto como etiqueta, sem filtros, concluídas recolhidas",
+          "nivel": "T1",
+          "estado": "em execução",
+          "depende_de": [
+            "TODO-32"
+          ],
+          "origem": "USER",
+          "resultado": "aguarda o Gate 2 do usuário; PR #95 mergeado (dcd537a)"
         }
       ]
     },
@@ -633,6 +662,16 @@
           "origem": "USER",
           "evidencia": "PR #77 integrado na dev; revisões Codex com achados corrigidos; testes verdes",
           "resultado": "aguarda o Gate 2 do usuário"
+        },
+        {
+          "id": "UI-09",
+          "titulo": "Seção Barra Lateral nas Preferências: mostrar/esconder e ordenar os ícones das duas barras",
+          "nivel": "T2",
+          "estado": "pronta",
+          "depende_de": [
+            "TODO-33"
+          ],
+          "origem": "USER"
         }
       ]
     },

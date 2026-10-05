@@ -739,6 +739,69 @@
   color: var(--accent);
 }
 
+/* A campaign task's detail disclosure, in the drag handle's column. */
+.detailToggle {
+  width: 13px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-sm);
+  color: var(--fg-faint);
+  opacity: 0;
+  transition:
+    color 140ms ease,
+    opacity 140ms ease;
+}
+
+.todoRow:hover .detailToggle,
+.todoRow:focus-within .detailToggle,
+.detailToggle[aria-expanded='true'] {
+  opacity: 1;
+}
+
+.detailToggle:hover {
+  color: var(--fg);
+}
+
+/* Its level and window, wrapped: the registry accepts a level of any length. */
+.detailMeta {
+  min-width: 0;
+  color: var(--fg-faint);
+  font-size: 10px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+/* Its read-only detail: labels beside values, agent-written text wrapped as written. */
+.taskDetail {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 2px 8px;
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.taskDetail dt {
+  color: var(--fg-faint);
+}
+
+.taskDetail dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--fg-muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.taskDetail dd > button {
+  margin-left: 6px;
+}
+
+.detailLine {
+  display: block;
+}
+
 .checkButton {
   width: 17px;
   height: 17px;

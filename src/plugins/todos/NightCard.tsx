@@ -7,11 +7,12 @@ import {
   type NightEntry,
   type NightResult,
 } from '../../lib/campaigns'
-import { intlLocale, type MessageKey, useT } from '../../lib/i18n'
+import { type MessageKey, useT } from '../../lib/i18n'
 import { nightDate, type StopReason } from '../../lib/nightScheduler'
 import { useProjectsStore } from '../../stores/projectsStore'
 import styles from './CampaignsSection.module.css'
 import { type CampaignEdits, nightUndecided, type Registry } from './campaignView'
+import { nightDay, RESULT_KEYS } from './labels'
 import { SectionToggle } from './SectionToggle'
 import { useTodosStore } from './store'
 import { openEvidence, taskCampaign, useTaskActions } from './taskActions'
@@ -22,13 +23,6 @@ const COUNT_KEYS: Record<NightResult, MessageKey> = {
   'aguarda-voce': 'todo.night.countWaiting',
   falhou: 'todo.night.countFailed',
   parou: 'todo.night.countStopped',
-}
-
-const RESULT_KEYS: Record<NightResult, MessageKey> = {
-  ok: 'todo.night.resultOk',
-  'aguarda-voce': 'todo.night.resultWaiting',
-  falhou: 'todo.night.resultFailed',
-  parou: 'todo.night.resultStopped',
 }
 
 // Orchestration board lanes, so a result dot reads as the board's.
@@ -118,12 +112,7 @@ export function NightCard({
   const own = useRef<HTMLButtonElement>(null)
   const toggle = toggleRef ?? own
 
-  const [year, month, day] = diary.date.split('-').map(Number)
-  const date = new Intl.DateTimeFormat(intlLocale(locale), {
-    day: '2-digit',
-    month: '2-digit',
-  }).format(new Date(year, month - 1, day))
-  const name = t('todo.night.title', { date })
+  const name = t('todo.night.title', { date: nightDay(diary.date, locale) })
   const Box = nested ? 'div' : 'section'
 
   return (

@@ -1,5 +1,6 @@
 import {
   Check,
+  ChevronDown,
   ExternalLink,
   Eye,
   EyeOff,
@@ -58,6 +59,7 @@ import {
   useCampaignEdits,
   useCampaignView,
   useNightDiary,
+  useTaskJobs,
   useTaskWorkers,
   workersLabel,
 } from './campaignView'
@@ -67,7 +69,9 @@ import { NightCard, NightStatus } from './NightCard'
 import { SectionToggle, SortableSections } from './SectionToggle'
 import { orderedSections, useTodosStore } from './store'
 import { type TaskActions, useTaskActions } from './taskActions'
+import { type DetailSources, TaskDetail } from './TaskDetail'
 import styles from './TodoSidebar.module.css'
+import { useFindings } from './useFindings'
 
 /** The key of the active campaign's section among the collapsed ones. */
 const CAMPAIGN_SECTION = 'campaign'
@@ -204,8 +208,12 @@ export function TodoSidebar() {
   const addInputRef = useRef<HTMLInputElement>(null)
   const view = useCampaignView()
   const edits = useCampaignEdits(view)
-  const workers = useTaskWorkers(view.registry)
+  const jobs = useTaskJobs()
+  const workers = useTaskWorkers(view.registry, jobs)
   const diary = useNightDiary(view.registry?.main ?? null)
+  const findings = useFindings(view.registry?.main ?? null)
+  // What a task row's detail reads, only once it is expanded.
+  const sources = view.registry ? { registry: view.registry, jobs, diary, findings } : null
   // The night card's header, wherever the card is: Pending focuses it after moving it away.
   const nightToggle = useRef<HTMLButtonElement>(null)
   const listSource = useTodosStore((state) => state.listSource)
@@ -711,6 +719,7 @@ export function TodoSidebar() {
                 filter={filter}
                 edits={edits}
                 workers={workers}
+                sources={sources}
               />
             </>
           )}
@@ -812,6 +821,7 @@ export function TodoSidebar() {
                   diary={diary}
                   edits={edits}
                   workers={workers}
+                  sources={sources}
                   nightToggle={nightToggle}
                 />
               ),
@@ -821,7 +831,7 @@ export function TodoSidebar() {
             campaigns: {
               node: <CampaignsSection view={view} workers={workers} onSelect={pickSource} />,
             },
-            findings: { node: <FindingsCard registry={view.registry} /> },
+            findings: { node: <FindingsCard findings={findings} /> },
             // A night with nothing left waiting on you is read after the map.
             night: {
               node:
@@ -852,12 +862,14 @@ function PendingSection({
   diary,
   edits,
   workers,
+  sources,
   nightToggle,
 }: {
   registry: Registry | null
   diary: NightDiary | null
   edits: CampaignEdits
   workers: ReadonlyMap<string, TaskWorkers>
+  sources: DetailSources | null
   nightToggle: RefObject<HTMLButtonElement>
 }) {
   const t = useT()
@@ -929,6 +941,7 @@ function PendingSection({
                       registry={registry}
                       edits={edits}
                       workers={workers}
+                      sources={sources}
                       // A decided task leaves the group: the focus goes to its header, or to
                       // Pending once the group went too.
                       fallback={() => gate2Toggle.current ?? toggle.current}
@@ -1106,11 +1119,13 @@ function CampaignTaskRows({
   filter,
   edits,
   workers,
+  sources,
 }: {
   campaign: Campaign
   filter: 'all' | 'active' | 'completed'
   edits: CampaignEdits
   workers: ReadonlyMap<string, TaskWorkers>
+  sources: DetailSources | null
 }) {
   const t = useT()
   const tasks = campaignTaskView(campaign.tasks, filter)
@@ -1118,7 +1133,13 @@ function CampaignTaskRows({
   return (
     <div className={styles.list}>
       {tasks.map((task) => (
-        <CampaignTaskRow key={task.id} task={task} edits={edits} workers={workers} />
+        <CampaignTaskRow
+          key={task.id}
+          task={task}
+          edits={edits}
+          workers={workers}
+          sources={sources}
+        />
       ))}
     </div>
   )
@@ -1131,6 +1152,7 @@ function Gate2Row({
   registry,
   edits,
   workers,
+  sources,
   fallback,
 }: {
   task: CampaignTask
@@ -1138,6 +1160,7 @@ function Gate2Row({
   registry: Registry
   edits: CampaignEdits
   workers: ReadonlyMap<string, TaskWorkers>
+  sources: DetailSources | null
   fallback: () => HTMLElement | null
 }) {
   const actions = useTaskActions({
@@ -1156,17 +1179,22 @@ function Gate2Row({
       campaignId={campaign.id}
       edits={edits}
       workers={workers}
+      sources={sources}
       actions={actions}
     />
   )
 }
 
-/** A registry task as a Todo row: its box checks it done, with an undo. */
+/**
+ * A registry task as a Todo row: its box checks it done, with an undo, and its chevron shows its
+ * read-only detail under it.
+ */
 function CampaignTaskRow({
   task,
   campaignId,
   edits,
   workers,
+  sources,
   actions,
 }: {
   task: CampaignTask
@@ -1174,10 +1202,15 @@ function CampaignTaskRow({
   campaignId?: string
   edits: CampaignEdits
   workers: ReadonlyMap<string, TaskWorkers>
+  /** What its detail reads; without them it has no detail. */
+  sources: DetailSources | null
   /** Its id and title open these. */
   actions?: TaskActions
 }) {
   const t = useT()
+  const [expanded, setExpanded] = useState(false)
+  const detailId = useId()
+  const detailLabel = t('todo.taskDetail.toggle', { id: task.id })
   const done = task.state === 'concluída'
   const undoable = done && edits.undoable(task.id)
   // A task done elsewhere has no state here to go back to.
@@ -1196,7 +1229,24 @@ function CampaignTaskRow({
       className={`${styles.todoRow} ${done ? styles.todoRowCompleted : ''}`}
       onKeyDown={actions?.onKeyDown}
     >
-      <span aria-hidden />
+      {sources ? (
+        <button
+          type="button"
+          className={styles.detailToggle}
+          onClick={() => setExpanded((current) => !current)}
+          aria-expanded={expanded}
+          aria-controls={expanded ? detailId : undefined}
+          aria-label={detailLabel}
+          title={detailLabel}
+        >
+          <ChevronDown
+            size={12}
+            className={`${styles.sectionChevron} ${expanded ? '' : styles.sectionChevronClosed}`}
+          />
+        </button>
+      ) : (
+        <span aria-hidden />
+      )}
       <button
         type="button"
         className={styles.checkButton}
@@ -1224,6 +1274,7 @@ function CampaignTaskRow({
         </span>
       )}
       {actions?.menu}
+      {expanded && sources ? <TaskDetail id={detailId} task={task} sources={sources} /> : null}
     </div>
   )
 }

@@ -114,7 +114,7 @@ import {
 } from '../../lib/tauri'
 import { cleanupPtys } from '../../lib/terminalLifecycle'
 import { CampaignsSection } from './CampaignsSection'
-import { campaignLiveStatus, useCampaignView, useTaskWorkers } from './campaignView'
+import { campaignLiveStatus, useCampaignView, useTaskJobs, useTaskWorkers } from './campaignView'
 import { TODO_SETTINGS_MODAL_ID } from './manifest'
 import { resetTodosStoreForTests, useTodosStore } from './store'
 import { TodoSettingsModal } from './TodoSettingsModal'
@@ -126,7 +126,11 @@ const REGISTRY = 'C:\\repo\\.workflow\\campanhas.json'
 function Section() {
   const view = useCampaignView()
   return (
-    <CampaignsSection view={view} workers={useTaskWorkers(view.registry)} onSelect={() => {}} />
+    <CampaignsSection
+      view={view}
+      workers={useTaskWorkers(view.registry, useTaskJobs())}
+      onSelect={() => {}}
+    />
   )
 }
 
@@ -770,7 +774,7 @@ describe('Todo list source', () => {
     fireEvent.click(within(row('OITO-03')).getByRole('button', { name: 'Reopen task' }))
     await waitFor(() => expect(task('OITO-03')).toEqual(original('OITO-03')))
     // A task done elsewhere has no previous state here to restore.
-    expect(within(row('OITO-01')).getByRole('button')).toBeDisabled()
+    expect(within(row('OITO-01')).getByRole('button', { name: 'Done' })).toBeDisabled()
   })
 
   it('undo puts the state back but keeps a result written since the check', async () => {
@@ -2437,6 +2441,283 @@ describe('Todo sections', () => {
     expect(screen.getByRole('tablist', { name: 'Task filters' }).closest('section')).toBeNull()
     expect(screen.getByPlaceholderText('Add a task…').closest('section')).toBeNull()
     expect(screen.getByText('Personal one')).toBeInTheDocument()
+  })
+})
+
+describe('Task detail', () => {
+  const NIGHTS = 'C:\\repo\\.workflow\\local\\noites'
+  const FINDINGS = 'C:\\repo\\.workflow\\achados.json'
+  const projectId = () => useProjectsStore.getState().projects[0].id
+  const row = (id: string) => document.querySelector(`[data-task="${id}"]`) as HTMLElement
+  const toggle = (id: string) => within(row(id)).getByRole('button', { name: `Details of ${id}` })
+  const detail = (id: string) => screen.queryByRole('group', { name: `Details of ${id}` })
+  /** Each row of a detail as [label, its lines], or [label, its text] when it has no lines. */
+  const rows = (id: string) =>
+    within(detail(id)!)
+      .queryAllByRole('term')
+      .map((term) => {
+        const value = term.nextElementSibling as HTMLElement
+        const lines = [...value.querySelectorAll('[data-line]')].map((line) => line.textContent)
+        return [term.textContent, lines.length > 0 ? lines : value.textContent]
+      })
+
+  /** OITO active, OITO-02 with something for every row of its detail; OITO waits for `waits`. */
+  function seed(waits = ['BASE', 'ABERTA']) {
+    const data = structuredClone(exemplo)
+    Object.assign(data.campanhas[1], { depende_de: waits })
+    Object.assign(data.campanhas[1].tarefas[1], {
+      resultado: 'Parcial: falta o teste\nsegunda linha',
+      evidencia: 'docs/oito-02.md',
+      depende_de: ['NOTURNA-02'],
+    })
+    fs.files.set(REGISTRY, JSON.stringify(data))
+    fs.found.set('docs/oito-02.md', 'C:\\repo\\docs\\oito-02.md')
+    const job = (
+      id: string,
+      task: string,
+      status: string,
+      cwd: string,
+      agent: string,
+      model: string | null,
+      seconds: number | null,
+    ) => ({ id, task, status, cwd, agent, model, seconds })
+    orchestrator.jobs = [
+      job('j1', 'OITO-02', 'running', 'C:\\repo-feature', 'claude', 'sonnet', 190),
+      job('j2', 'OITO-02', 'queued', 'C:\\repo', 'codex', null, null),
+      job('j3', 'OITO-02', 'blocked', 'C:\\repo', 'codex', 'gpt-5', 30),
+      job('j4', 'OITO-02', 'done', 'C:\\repo', 'claude', null, 600),
+      job('j5', 'OITO-02', 'failed', 'C:\\repo', 'claude', null, 60),
+      // Another repository's task with the same id, and another task: neither is listed.
+      job('j6', 'OITO-02', 'running', 'C:\\other', 'opencode', null, 5),
+      job('j7', 'OITO-03', 'running', 'C:\\repo', 'codex', 'other-task', 5),
+    ] as typeof orchestrator.jobs
+    const entry = (tarefa: string, resultado: string) => ({
+      tarefa,
+      resultado,
+      resumo: `${tarefa} resumo`,
+      evidencia: '',
+      hora: '03:41',
+    })
+    fs.files.set(
+      `${NIGHTS}\\2026-10-03.json`,
+      JSON.stringify({
+        data: '2026-10-03',
+        entradas: [entry('OITO-02', 'falhou'), entry('OITO-03', 'ok')],
+      }),
+    )
+    const finding = (id: string, origem: string, estado = 'novo') => ({
+      id,
+      data: '2026-10-03',
+      tipo: 'bug',
+      titulo: `${id} title`,
+      origem,
+      estado,
+    })
+    fs.files.set(
+      FINDINGS,
+      JSON.stringify({
+        achados: [
+          finding('A-1', 'OITO-02'),
+          finding('A-2', 'OITO-03'),
+          finding('A-3', 'OITO-02', 'triado'),
+        ],
+      }),
+    )
+    useTodosStore.setState({ activeCampaigns: { [projectId()]: 'OITO' } })
+  }
+
+  beforeEach(() => useUiStore.setState({ toasts: [], notifications: [], linkViewerUrl: null }))
+
+  it('expands a task row into its result, evidence, waits, workers, night and findings', async () => {
+    seed()
+    render(<TodoSidebar />)
+    await waitFor(() => expect(row('OITO-02')).toHaveTextContent('2 running'))
+    await screen.findByRole('button', { name: /^Findings 2/ })
+    await screen.findByRole('button', { name: /^Night of/ })
+    expect(toggle('OITO-02')).toHaveAttribute('aria-expanded', 'false')
+    expect(detail('OITO-02')).toBeNull()
+
+    fireEvent.click(toggle('OITO-02'))
+    expect(toggle('OITO-02')).toHaveAttribute('aria-expanded', 'true')
+    expect(toggle('OITO-02')).toHaveAttribute('aria-controls', detail('OITO-02')!.id)
+    expect(within(detail('OITO-02')!).getByText('T2 · Assisted')).toBeInTheDocument()
+    expect(rows('OITO-02')).toEqual([
+      ['Result', 'Parcial: falta o teste\nsegunda linha'],
+      ['Evidence', 'docs/oito-02.mdOpen'],
+      ['Waiting for', 'ABERTA, NOTURNA-02'],
+      [
+        'Workers',
+        [
+          'waiting on you: codex gpt-5 0 min',
+          'running: claude sonnet 3 min',
+          'queued: codex',
+          'failed: claude 1 min',
+          'finished: claude 10 min',
+        ],
+      ],
+      ['Night', ['10/03 · failed · OITO-02 resumo']],
+      ['Findings', ['A-1 · bug · A-1 title']],
+    ])
+    // Only the row's own task is expanded.
+    expect(detail('OITO-03')).toBeNull()
+  })
+
+  it('leaves out the rows a task has nothing for', async () => {
+    seed(['BASE'])
+    render(<TodoSidebar />)
+    await screen.findByRole('button', { name: /^Findings 2/ })
+    await screen.findByRole('button', { name: /^Night of/ })
+    await waitFor(() => expect(row('OITO-03')).toHaveTextContent('1 running'))
+    fireEvent.click(toggle('OITO-05'))
+    expect(within(detail('OITO-05')!).getByText('T1 · Assisted')).toBeInTheDocument()
+    expect(rows('OITO-05')).toEqual([])
+
+    fireEvent.click(toggle('OITO-03'))
+    expect(rows('OITO-03')).toEqual([
+      ['Workers', ['running: codex other-task 0 min']],
+      ['Night', ['10/03 · ok · OITO-03 resumo']],
+      ['Findings', ['A-2 · bug · A-2 title']],
+    ])
+  })
+
+  it('opens the evidence through the shared opener, looked up at the click', async () => {
+    seed()
+    render(<TodoSidebar />)
+    await waitFor(() => expect(row('OITO-02')).not.toBeNull())
+    fireEvent.click(toggle('OITO-02'))
+    const open = within(detail('OITO-02')!).getByRole('button', { name: 'Open docs/oito-02.md' })
+    expect(findRelativePath).not.toHaveBeenCalledWith('C:\\repo', 'docs/oito-02.md')
+
+    fireEvent.click(open)
+    await waitFor(() =>
+      expect(useUiStore.getState().linkViewerUrl).toBe('C:\\repo\\docs\\oito-02.md'),
+    )
+    expect(findRelativePath).toHaveBeenCalledWith('C:\\repo', 'docs/oito-02.md')
+
+    // Evidence that is not a path is shown as text, with nothing to open.
+    await editRegistry((data) => {
+      Object.assign(data.campanhas[1].tarefas[1], { evidencia: 'checked by hand' })
+    })
+    expect(rows('OITO-02')[1]).toEqual(['Evidence', 'checked by hand'])
+    expect(within(detail('OITO-02')!).queryByRole('button')).toBeNull()
+  })
+
+  it('keeps the checkbox concluding the task, and toggles from the keyboard', async () => {
+    seed()
+    render(<TodoSidebar />)
+    await waitFor(() => expect(row('OITO-03')).not.toBeNull())
+    const chevron = toggle('OITO-03')
+    // A native button: in the tab order, Enter and Space press it.
+    expect(chevron.tagName).toBe('BUTTON')
+    expect(chevron).not.toHaveAttribute('tabindex')
+    chevron.focus()
+    expect(chevron).toHaveFocus()
+    fireEvent.click(chevron)
+    expect(detail('OITO-03')).not.toBeNull()
+    expect(chevron).toHaveFocus()
+    fireEvent.click(chevron)
+    expect(detail('OITO-03')).toBeNull()
+    expect(chevron).toHaveAttribute('aria-expanded', 'false')
+
+    fireEvent.click(chevron)
+    fireEvent.click(within(row('OITO-03')).getByRole('button', { name: 'Mark complete' }))
+    await waitFor(() => expect(task('OITO-03')?.estado).toBe('concluída'))
+  })
+
+  it('expands a task waiting for your Gate 2 too, its title still opening its actions', async () => {
+    seed()
+    const data = JSON.parse(fs.files.get(REGISTRY)!) as typeof exemplo
+    Object.assign(data.campanhas[5].tarefas[0], {
+      resultado: 'aguarda o Gate 2 do usuário: revisar',
+    })
+    fs.files.set(REGISTRY, JSON.stringify(data))
+    render(<TodoSidebar />)
+    const gate2 = await screen.findByRole('group', { name: 'Waiting for your Gate 2' })
+
+    fireEvent.click(within(gate2).getByRole('button', { name: 'Details of PARADA-01' }))
+    expect(within(detail('PARADA-01')!).getByText('T1 · Any time')).toBeInTheDocument()
+    expect(rows('PARADA-01')).toEqual([['Result', 'aguarda o Gate 2 do usuário: revisar']])
+    expect(screen.queryByRole('menu')).toBeNull()
+
+    fireEvent.click(within(gate2).getByRole('button', { name: /^PARADA-01 / }))
+    expect(screen.getByRole('menu', { name: 'Actions for PARADA-01' })).toBeInTheDocument()
+  })
+
+  it('wraps a long level in the meta line, keeping the window after it', async () => {
+    seed()
+    const level = `T2 ${'nível muito comprido '.repeat(12).trim()}`
+    const data = JSON.parse(fs.files.get(REGISTRY)!) as typeof exemplo
+    Object.assign(data.campanhas[1].tarefas[1], { nivel: level })
+    fs.files.set(REGISTRY, JSON.stringify(data))
+    render(<TodoSidebar />)
+    await waitFor(() => expect(row('OITO-02')).not.toBeNull())
+    fireEvent.click(toggle('OITO-02'))
+
+    const meta = within(detail('OITO-02')!).getByText(`${level} · Assisted`)
+    // Its own wrapping line, not the one-line `.meta` that clips what overflows.
+    expect(meta.className).toMatch(/detailMeta/)
+    expect(meta.className).not.toMatch(/(^|\s)_meta_/)
+    const css = readFileSync(resolve('src/plugins/todos/TodoSidebar.module.css'), 'utf8')
+    const rule = /\.detailMeta \{([^}]*)\}/.exec(css)?.[1]
+    expect(rule).toContain('overflow-wrap: anywhere')
+    expect(rule).not.toMatch(/nowrap|overflow: hidden/)
+  })
+
+  it('advances worker minutes by one clock while a job is live, and stops it after', async () => {
+    /** The projected jobs, as `id:minutes`. */
+    function Jobs() {
+      return (
+        <p>
+          {useTaskJobs()
+            .map((job) => `${job.id}:${job.minutes}`)
+            .join(' ')}
+        </p>
+      )
+    }
+    const job = (id: string, status: string, seconds: number | null) =>
+      ({
+        id,
+        task: 'OITO-02',
+        status,
+        cwd: 'C:\\repo',
+        agent: 'claude',
+        model: null,
+        seconds,
+      }) as (typeof orchestrator.jobs)[number]
+    vi.useFakeTimers()
+    try {
+      orchestrator.jobs = [
+        job('j1', 'running', 30),
+        job('j2', 'done', 600),
+        job('j3', 'queued', null),
+      ]
+      const { container, unmount } = render(<Jobs />)
+      await act(async () => {})
+      expect(container).toHaveTextContent('j1:0 j2:10 j3:null')
+      expect(vi.getTimerCount()).toBe(1)
+
+      // A silent worker: no event for five minutes, its minutes still go on; a settled one stays.
+      await act(async () => vi.advanceTimersByTime(5 * 60_000))
+      expect(container).toHaveTextContent('j1:5 j2:10 j3:null')
+
+      // A new snapshot counts from its own seconds, on the same single clock.
+      act(() => orchestrator.emit?.({ jobs: [job('j1', 'running', 400)] }))
+      expect(container).toHaveTextContent('j1:6')
+      expect(vi.getTimerCount()).toBe(1)
+
+      // Nothing live: the clock stops, and the minutes stay as reported.
+      act(() => orchestrator.emit?.({ jobs: [job('j1', 'done', 420)] }))
+      expect(vi.getTimerCount()).toBe(0)
+      await act(async () => vi.advanceTimersByTime(5 * 60_000))
+      expect(container).toHaveTextContent('j1:7')
+
+      act(() => orchestrator.emit?.({ jobs: [job('j4', 'blocked', 0)] }))
+      expect(vi.getTimerCount()).toBe(1)
+      unmount()
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 

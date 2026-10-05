@@ -5,7 +5,6 @@ import {
   type Campaign,
   campaignActivity,
   type CampaignSituation,
-  type CampaignWindow,
   campaignWorkers,
   type RegistryError,
   type TaskState,
@@ -29,15 +28,10 @@ import {
   TASK_LANES,
   workersLabel,
 } from './campaignView'
+import { WINDOW_KEYS } from './labels'
 import { useMenuFocus } from './menuFocus'
 import { SectionToggle } from './SectionToggle'
 import sidebarStyles from './TodoSidebar.module.css'
-
-const WINDOW_KEYS: Record<CampaignWindow, MessageKey> = {
-  assistida: 'todo.campaigns.windowAssisted',
-  noite: 'todo.campaigns.windowNight',
-  qualquer: 'todo.campaigns.windowAny',
-}
 
 const ERROR_KEYS: Record<RegistryError['kind'], MessageKey> = {
   malformed: 'todo.campaigns.errorMalformed',

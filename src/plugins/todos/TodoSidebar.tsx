@@ -45,7 +45,7 @@ import { TODO_TITLE_MAX_LENGTH } from '../../lib/todos'
 import type { Terminal, TodoItem } from '../../lib/types'
 import { selectActiveProject, useProjectsStore } from '../../stores/projectsStore'
 import { useUiStore } from '../../stores/uiStore'
-import { CampaignsSection } from './CampaignsSection'
+import { CampaignDependencies, CampaignsSection } from './CampaignsSection'
 import campaignStyles from './CampaignsSection.module.css'
 import {
   type AgentTail,
@@ -57,6 +57,7 @@ import {
   nightUndecided,
   pauseCampaign,
   type Registry,
+  requestCampaignSession,
   resumeCampaign,
   STATE_KEYS,
   TASK_LANES,
@@ -291,8 +292,6 @@ export function TodoSidebar() {
 
   const active = todos.filter((todo) => !todo.completed)
   const completed = todos.filter((todo) => todo.completed)
-  const total = (key: 'done' | 'total') =>
-    campaigns.reduce((sum, campaign) => sum + campaign[key], 0)
   // The latest night's tasks, and those of them done in the registry now.
   const nightTasks = [...new Set(diary?.entries.map((entry) => entry.task))]
   const doneNow = new Set(
@@ -300,8 +299,7 @@ export function TodoSidebar() {
       campaign.tasks.filter((task) => task.state === 'concluída').map((task) => task.id),
     ),
   )
-  // Personal counts your own list; Night the latest night; Overview the active campaigns, else the
-  // whole registry.
+  // Personal and Night keep their totals; Overview follows the selected running campaign.
   const parts: ProgressPart[] | null =
     tab === 'personal'
       ? [{ name: null, done: completed.length, total: todos.length, more: false }]
@@ -316,23 +314,19 @@ export function TodoSidebar() {
               },
             ]
           : null
-        : activeCampaigns.length > 0
-          ? activeCampaigns.map((campaign) => ({
+        : campaigns
+            .filter(
+              (campaign) =>
+                campaign.id === view.activeId &&
+                live.get(campaign.id) === 'working' &&
+                campaign.situation.kind !== 'done',
+            )
+            .map((campaign) => ({
               name: campaign.id,
               done: campaign.done,
               total: campaign.total,
               more: !campaign.decomposed,
             }))
-          : view.registry
-            ? [
-                {
-                  name: t('todo.progressAll'),
-                  done: total('done'),
-                  total: total('total'),
-                  more: campaigns.some((campaign) => !campaign.decomposed),
-                },
-              ]
-            : null
 
   // The Ctrl+N listener is installed once: it runs the latest render's handler. On Tasks it goes to
   // the add field of the focused campaign when it is active, else of the first active one;
@@ -804,7 +798,7 @@ export function TodoSidebar() {
             <Settings size={14} />
           </button>
         </div>
-        {parts ? <ProgressBar parts={parts} /> : null}
+        {parts?.length ? <ProgressBar parts={parts} /> : null}
         <div className={styles.filters} role="tablist" aria-label={t('todo.tabs.label')}>
           {TODO_TABS.map((item) => (
             <button
@@ -978,7 +972,10 @@ function PendingSection({
                   <button
                     type="button"
                     className={`${controlStyles.btn} ${controlStyles.btnSm}`}
-                    onClick={() => continueCampaign(registry.projectId, campaign)}
+                    onClick={() =>
+                      continueCampaign(registry.projectId, campaign) ||
+                      requestCampaignSession(registry.projectId, campaign, registry)
+                    }
                   >
                     {t('todo.campaignControls.goToTab')}
                   </button>
@@ -1162,7 +1159,9 @@ function ActiveSection({
           <button
             type="button"
             className={button}
-            onClick={() => continueCampaign(projectId, item)}
+            onClick={() =>
+              continueCampaign(projectId, item) || requestCampaignSession(projectId, item, registry)
+            }
             {...named('todo.campaignControls.goToTab')}
           >
             <SquareTerminal size={11} aria-hidden />
@@ -1333,7 +1332,14 @@ function ActiveCampaign({
         title={[facts.window, facts.worktree, facts.updated, situationLabel(t, campaign.situation)]
           .filter(Boolean)
           .join(' · ')}
-        extra={liveWorkers ? <span className={campaignStyles.workers}>{liveWorkers}</span> : null}
+        extra={
+          <>
+            {useTodosStore.getState().activeCampaigns[registry.projectId] === campaign.id ? (
+              <span className={campaignStyles.chip}>{t('todo.campaigns.lastActive')}</span>
+            ) : null}
+            {liveWorkers ? <span className={campaignStyles.workers}>{liveWorkers}</span> : null}
+          </>
+        }
       >
         <button
           type="button"
@@ -1348,6 +1354,12 @@ function ActiveCampaign({
       {open ? (
         <>
           {controls}
+          <CampaignDependencies
+            campaign={campaign}
+            campaigns={registry.campaigns}
+            edits={edits}
+            source={registry.text}
+          />
           {agentMessage ? (
             <span className={`${styles.detailMeta} ${styles.todoTitleText}`} title={agentMessage}>
               {t('todo.agentLabel')} {agentMessage}

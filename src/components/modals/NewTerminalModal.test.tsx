@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ensureProjectAnchored } from '../../lib/projectCheckout'
@@ -105,4 +105,48 @@ describe('new terminal modal', () => {
 
     await waitFor(() => expect(createdIn()).toEqual(['D:\\elsewhere']))
   })
+})
+
+describe('campaign session context', () => {
+  it('offers the campaign folder and creates only through its confirmation callback', async () => {
+    const onCreate = vi.fn(async () => true)
+    act(() =>
+      useUiStore.getState().openModal_('newTerminal', {
+        projectId,
+        cwd: 'C:\\repo-feature',
+        only: ['claude', 'codex'],
+        onCreate,
+      }),
+    )
+    await waitFor(() => expect(folderField()).toHaveValue('C:\\repo-feature'))
+    expect(onCreate).not.toHaveBeenCalled()
+    fireEvent.click(submitButton())
+    await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1))
+    expect(onCreate.mock.calls[0][0]).toMatchObject({
+      cwd: 'C:\\repo-feature',
+      firstTab: { type: 'claude' },
+    })
+    expect(createAgentTerminal).not.toHaveBeenCalled()
+  })
+})
+
+it('keeps the dialog open during pending confirmation and does not close a newer dialog', async () => {
+  let finish: (ok: boolean) => void = () => {}
+  const onCreate = vi.fn(
+    () =>
+      new Promise<boolean>((resolve) => {
+        finish = resolve
+      }),
+  )
+  act(() =>
+    useUiStore.getState().openModal_('newTerminal', { projectId, cwd: 'C:\\repo', onCreate }),
+  )
+  fireEvent.click(submitButton())
+  await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1))
+  expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled()
+  fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+  expect(useUiStore.getState().openModal).toBe('newTerminal')
+  act(() => useUiStore.getState().openModal_('newProject'))
+  await act(async () => finish(true))
+  expect(useUiStore.getState().openModal).toBe('newProject')
 })

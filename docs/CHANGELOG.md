@@ -10,6 +10,10 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ## [Unreleased]
 
+- Campaigns show the last active selection and open the New session dialog before creating an agent session. Existing sessions can still be focused directly.
+- Overview progress follows only the selected running campaign and hides when none is running.
+- Campaign prerequisites can be edited in the Todo panel; unfinished prerequisites block new or resumed work even without an open prerequisite session. Invalid dependency cycles are rejected.
+
 ### Added
 
 - **Worktree picker, with projects on their main checkout by default.** **Worktrees…** in a

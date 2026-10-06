@@ -118,8 +118,13 @@ describe('workspaceNavigation', () => {
 
     const clean = sanitizeWorkspaceSnapshot(dirty, projects)
     expect(clean.containers).toEqual([])
-    expect(clean.activeProjectId).toBeNull()
+    // The project still exists, so it stays active even without visible panes.
+    expect(clean.activeProjectId).toBe('project-a')
     expect(clean.focusedTerminalId).toBeNull()
+    expect(
+      sanitizeWorkspaceSnapshot({ ...dirty, activeProjectId: 'missing-project' }, projects)
+        .activeProjectId,
+    ).toBeNull()
   })
 
   it('snapshots are deep-cloned and composition labels include item count', () => {

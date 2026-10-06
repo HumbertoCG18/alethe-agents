@@ -44,6 +44,7 @@ import {
   pushWorkspaceHistory,
   replaceCurrentHistorySnapshot,
   sanitizeWorkspaceSnapshot,
+  tabActiveProjectId,
 } from '../lib/workspaceNavigation'
 import { migrate } from './projectsStore.migrations'
 import { createGroupsSlice, createProjectsSlice } from './projectsStore.projectSlices'
@@ -621,7 +622,7 @@ export const useProjectsStore = create<ProjectsState>((set, get) => {
             visitedAt: Date.now(),
           })
     return {
-      activeProjectId: snapshot.activeProjectId,
+      activeProjectId: tabActiveProjectId(tab, snapshot, state.projects),
       preferences: {
         ...state.preferences,
         workspaceFlat: snapshot.workspaceFlat,

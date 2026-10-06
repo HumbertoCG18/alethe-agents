@@ -104,6 +104,7 @@ export function WorkspaceView() {
     setGroupGridLayout,
     setProjectGridLayout,
     activeProject,
+    selectedProjectEmpty,
     recentProjectIds,
     openProjectWorkspace,
     activeGroupTabId,
@@ -126,6 +127,7 @@ export function WorkspaceView() {
       setGroupGridLayout: s.setGroupGridLayout,
       setProjectGridLayout: s.setProjectGridLayout,
       activeProject: selectActiveProject(s) ?? s.projects[0] ?? null,
+      selectedProjectEmpty: selectActiveProject(s)?.terminals.length === 0,
       recentProjectIds: s.workspace.recentProjectIds,
       openProjectWorkspace: s.openProjectWorkspace,
       activeGroupTabId: s.workspace.activeGroupId,
@@ -258,12 +260,14 @@ export function WorkspaceView() {
     requestPaneFocus(focusedTerminalId)
   }, [focusedTerminalId, requestPaneFocus])
 
+  // Fills an empty workspace, but never replaces a selected project that has no terminals yet.
   useEffect(() => {
     if (
       initialWorkspaceEnsured.current ||
       allContainers.length > 0 ||
       activeGroupTabId !== null ||
-      projects.length === 0
+      projects.length === 0 ||
+      selectedProjectEmpty
     )
       return
 
@@ -285,6 +289,7 @@ export function WorkspaceView() {
     projects,
     projectsById,
     recentProjectIds,
+    selectedProjectEmpty,
   ])
 
   useEffect(() => {

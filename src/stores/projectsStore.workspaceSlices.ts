@@ -51,6 +51,7 @@ import {
   MAX_WORKSPACE_TABS,
   replaceCurrentHistorySnapshot,
   sanitizeWorkspaceSnapshot,
+  tabActiveProjectId,
 } from '../lib/workspaceNavigation'
 import type { ProjectsState } from './projectsStore'
 import { collectGroupProjectIds } from './projectsStore.migrations'
@@ -752,7 +753,7 @@ export function createWorkspaceSlice({
         if (!tab) return
         const snapshot = sanitizeWorkspaceSnapshot(target.snapshot, state.projects)
         return {
-          activeProjectId: snapshot.activeProjectId,
+          activeProjectId: tabActiveProjectId(tab, snapshot, state.projects),
           preferences: {
             ...state.preferences,
             workspaceFlat: snapshot.workspaceFlat,

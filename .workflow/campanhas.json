@@ -340,7 +340,7 @@
           "estado": "em execução",
           "depende_de": [],
           "origem": "USER",
-          "resultado": "implementação em worktree"
+          "resultado": "aguarda o Gate 2 do usuário; PR #96 mergeado (c12bdb0), 4 revisões"
         },
         {
           "id": "TODO-34",
@@ -667,11 +667,12 @@
           "id": "UI-09",
           "titulo": "Seção Barra Lateral nas Preferências: mostrar/esconder e ordenar os ícones das duas barras",
           "nivel": "T2",
-          "estado": "pronta",
+          "estado": "em execução",
           "depende_de": [
             "TODO-33"
           ],
-          "origem": "USER"
+          "origem": "USER",
+          "resultado": "aguarda o Gate 2 do usuário; PR #96 mergeado (c12bdb0)"
         }
       ]
     },
@@ -738,6 +739,49 @@
               "feito": true
             }
           ]
+        }
+      ]
+    },
+    {
+      "id": "REMOTO",
+      "titulo": "Controle Remoto como estação de trabalho no outro PC da rede",
+      "prioridade": 8,
+      "janela": "assistida",
+      "depende_de": [],
+      "worktrees": [],
+      "atualizado_em": "2026-10-05",
+      "tarefas": [
+        {
+          "id": "REMOTO-01",
+          "titulo": "Layout de desktop no cliente web: lista de terminais ao lado do chat, Enter envia",
+          "nivel": "T2",
+          "estado": "pronta",
+          "depende_de": [],
+          "origem": "USER"
+        },
+        {
+          "id": "REMOTO-02",
+          "titulo": "Avisos de conclusão e de pergunta no navegador: notificação do sistema quando seguro, senão som, contador na aba e toast",
+          "nivel": "T2",
+          "estado": "pronta",
+          "depende_de": [],
+          "origem": "USER"
+        },
+        {
+          "id": "REMOTO-03",
+          "titulo": "Pendentes no navegador: Gate 2 e perguntas dos agentes num painel",
+          "nivel": "T2",
+          "estado": "pronta",
+          "depende_de": [],
+          "origem": "USER"
+        },
+        {
+          "id": "REMOTO-04",
+          "titulo": "Compartilhar um projeto inteiro com os dispositivos pareados, em vez de terminal por terminal",
+          "nivel": "T2",
+          "estado": "pronta",
+          "depende_de": [],
+          "origem": "USER"
         }
       ]
     }

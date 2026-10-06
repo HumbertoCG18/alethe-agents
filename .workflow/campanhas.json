@@ -10,7 +10,7 @@
       "janela": "assistida",
       "depende_de": [],
       "worktrees": [],
-      "atualizado_em": "2026-10-05",
+      "atualizado_em": "2026-10-06",
       "tarefas": [
         {
           "id": "TODO-01",
@@ -352,6 +352,15 @@
           ],
           "origem": "USER",
           "resultado": "aguarda o Gate 2 do usuário; PR #95 mergeado (dcd537a)"
+        },
+        {
+          "id": "TODO-35",
+          "titulo": "Projeto ativo nulo com a aba do projeto aberta: Todo em branco (corrigir na origem e reparar ao abrir)",
+          "nivel": "T2",
+          "estado": "em execução",
+          "depende_de": [],
+          "origem": "USER",
+          "resultado": "aguarda o Gate 2 do usuário; PR #98 mergeado (8089f29)"
         }
       ]
     },

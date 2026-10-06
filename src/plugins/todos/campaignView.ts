@@ -10,8 +10,8 @@ import {
   addCampaignTask,
   type Campaign,
   campaignActivity,
-  campaignBlock,
   campaignCwd,
+  campaignPrerequisites,
   type CampaignRegistry,
   campaignStepTitle,
   type CampaignTab,
@@ -29,6 +29,7 @@ import {
   parseNightDiary,
   registryPath,
   resumePrompt,
+  setCampaignDependencies,
   setCampaignTaskState,
   type TaskState,
   type TaskWorkers,
@@ -63,7 +64,7 @@ import {
   writePty,
 } from '../../lib/tauri'
 import { getProjectDefaultCwd } from '../../lib/terminalFactory'
-import type { PtyStatus, SubTab, Terminal } from '../../lib/types'
+import type { PtyStatus, SubTab, Terminal, TerminalCreationPreset } from '../../lib/types'
 import { useCampaignStepsStore } from '../../stores/campaignStepsStore'
 import { selectActiveProject, useProjectsStore } from '../../stores/projectsStore'
 import {
@@ -378,10 +379,16 @@ function findTab(
  * terminal id, or null when none matches. A disabled terminal is enabled again: its tab still
  * counts the campaign as Active.
  */
-function activateTab(projectId: string, matches: (tab: SubTab) => boolean): string | null {
+function activateTab(
+  projectId: string,
+  matches: (tab: SubTab) => boolean,
+  allowDisabled = true,
+): string | null {
   const store = useProjectsStore.getState()
   const found = findTab(
-    store.projects.find((item) => item.id === projectId)?.terminals ?? [],
+    (store.projects.find((item) => item.id === projectId)?.terminals ?? []).filter(
+      (terminal) => allowDisabled || !terminal.disabled,
+    ),
     useUiStore.getState().activeTerminal?.terminalId,
     matches,
   )
@@ -422,6 +429,53 @@ const findHandoff = (campaign: Campaign, registry: Registry): Promise<string | n
  * campaign is refused, with a toast and null, while it waits on a campaign with a tab open or such
  * a campaign waits on it.
  */
+/** A new campaign session always goes through the shared session dialog. */
+export function requestCampaignSession(
+  projectId: string,
+  campaign: Campaign,
+  registry: Registry,
+  resumeFrom?: CampaignTask,
+) {
+  const cwd = campaignCwd(campaign, registry.checkouts)
+  if (!cwd) return
+  useUiStore.getState().openModal_('newTerminal', {
+    projectId,
+    cwd,
+    only: [...AGENTS],
+    onCreate: async (creation: TerminalCreationPreset) => {
+      try {
+        if (!AGENTS.includes(creation.firstTab.type as CampaignAgent)) return false
+        const text = await readTextFile(registry.path)
+        const parsed = parseCampaigns(text)
+        const current = parsed?.campaigns.find((item) => item.id === campaign.id)
+        if (!current || !parsed || parsed.errors.length)
+          throw new Error('Invalid campaign registry')
+        const task = resumeFrom
+          ? current.tasks.find((item) => item.id === resumeFrom.id)
+          : undefined
+        if (resumeFrom && !task) throw new Error('Campaign task no longer exists')
+        const opened = await openCampaign(
+          projectId,
+          current,
+          creation.firstTab.type as CampaignAgent,
+          { ...registry, ...parsed, text },
+          undefined,
+          task,
+          creation,
+        )
+        if (opened) useTodosStore.getState().rememberCampaign(projectId, current.id)
+        return opened !== null
+      } catch (error) {
+        useUiStore.getState().pushToast({
+          title: translate(getLocale(), 'todo.campaignWrite.title'),
+          body: translate(getLocale(), 'todo.campaignWrite.failed', { message: reason(error) }),
+        })
+        return false
+      }
+    },
+  })
+}
+
 export async function openCampaign(
   projectId: string,
   campaign: Campaign,
@@ -429,31 +483,26 @@ export async function openCampaign(
   registry: Registry,
   nightTask?: CampaignTask,
   resumeFrom?: CampaignTask,
+  creation?: TerminalCreationPreset,
 ): Promise<string | null> {
-  const cwd = campaignCwd(campaign, registry.checkouts)
+  const cwd = creation?.cwd ?? campaignCwd(campaign, registry.checkouts)
   if (!cwd || !useProjectsStore.getState().projects.some((item) => item.id === projectId)) {
     return null
   }
-  const hasTab = (id: string) => campaignTabs(projectId, id).length > 0
-  /** Toasts and returns true when the campaign may not be opened beside one with a tab open. */
   const refused = () => {
-    if (nightTask || hasTab(campaign.id)) return false
-    for (const other of registry.campaigns) {
-      const block = other.id !== campaign.id && hasTab(other.id) && campaignBlock(campaign, other)
-      if (!block) continue
-      const locale = getLocale()
-      const ids = block.ids.join(', ')
-      useUiStore.getState().pushToast({
-        title: translate(locale, 'todo.campaigns.blockedTitle', { id: campaign.id }),
-        body: translate(locale, 'todo.campaigns.blockedBody', {
-          waiting: block.waiting,
-          // A wait on the campaign itself names it once.
-          on: ids === block.on ? block.on : `${block.on} (${ids})`,
-        }),
-      })
-      return true
-    }
-    return false
+    if (nightTask) return false
+    const ids = [
+      ...new Set([
+        ...campaignPrerequisites(campaign, registry.campaigns),
+        ...(resumeFrom?.unmet ?? []),
+      ]),
+    ]
+    if (!ids.length) return false
+    useUiStore.getState().pushToast({
+      title: translate(getLocale(), 'todo.campaigns.blockedTitle', { id: campaign.id }),
+      body: translate(getLocale(), 'todo.campaigns.prerequisites', { ids: ids.join(', ') }),
+    })
+    return true
   }
   if (refused()) return null
   // Continue (`resumeFrom`) takes a tab of any agent, as it does before calling this; Open wants
@@ -468,6 +517,19 @@ export async function openCampaign(
     terminalId = activateTab(projectId, running)
     if (!terminalId && refused()) return null
     if (!terminalId) {
+      if (creation) {
+        const text = await readTextFile(registry.path)
+        const parsed = parseCampaigns(text)
+        const current = parsed?.campaigns.find((item) => item.id === campaign.id)
+        if (!current || !parsed || parsed.errors.length)
+          throw new Error('Invalid campaign registry')
+        campaign = current
+        registry = { ...registry, ...parsed, text }
+        resumeFrom = resumeFrom
+          ? current.tasks.find((item) => item.id === resumeFrom?.id)
+          : undefined
+        if (refused()) return null
+      }
       // createTerminal, not createAgentTerminal: the tab belongs in the campaign's checkout, which
       // the project's automatic worktree isolation would replace with a new one.
       const create = () =>
@@ -480,7 +542,9 @@ export async function openCampaign(
             campaignId: campaign.id,
             // Night work runs unattended in Claude's auto mode, never bypassing permissions: a
             // denied tool call becomes part of the task's result.
-            extraArgs: nightTask ? ['--permission-mode', 'auto'] : undefined,
+            extraArgs: nightTask ? ['--permission-mode', 'auto'] : creation?.firstTab.extraArgs,
+            runtimeProfile: creation?.firstTab.runtimeProfile,
+            useRouter9: creation?.firstTab.useRouter9,
             initialInput: nightTask
               ? nightPrompt(campaign, nightTask, registry.path, handoff)
               : resumePrompt(campaign, registry.path, handoff, resumeFrom),
@@ -495,9 +559,9 @@ export async function openCampaign(
   return terminalId
 }
 
-/** Focuses a tab opened for `campaign`, by the same rule as Open; false when there is none. */
+/** Focus an enabled session only; reactivation must go through launch validation. */
 export function continueCampaign(projectId: string, campaign: Campaign): boolean {
-  const terminalId = activateTab(projectId, (tab) => tab.campaignId === campaign.id)
+  const terminalId = activateTab(projectId, (tab) => tab.campaignId === campaign.id, false)
   if (terminalId) focusTerminal(projectId, terminalId, true)
   return terminalId !== null
 }
@@ -524,7 +588,7 @@ export async function resumeCampaign(
   task: CampaignTask,
 ): Promise<void> {
   if (continueCampaign(projectId, campaign)) return
-  await openCampaign(projectId, campaign, 'claude', registry, undefined, task)
+  requestCampaignSession(projectId, campaign, registry, task)
 }
 
 /**
@@ -966,6 +1030,23 @@ export function useCampaignEdits(view: CampaignView) {
       } else if (result.error === 'title') notify(t('todo.campaignWrite.badTitle'))
       else if (result.error === 'missing') notify(t('todo.campaignWrite.conflict'))
       else notify(t('todo.campaignWrite.invalid'))
+      return false
+    },
+
+    dependencies: async (campaign: Campaign, ids: string[], source?: string): Promise<boolean> => {
+      const registry = latest.current.registry
+      if (!registry) return false
+      const result = setCampaignDependencies(
+        source ?? registry.text,
+        campaign.id,
+        ids,
+        isoDay(new Date()),
+      )
+      if (result.ok)
+        return (
+          (await write({ ...registry, text: source ?? registry.text }, result.content)) === true
+        )
+      notify(t('todo.campaignWrite.invalid'))
       return false
     },
 

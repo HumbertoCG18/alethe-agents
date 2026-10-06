@@ -17,7 +17,12 @@ import {
 import { useProjectsStore } from '../../stores/projectsStore'
 import { useUiStore } from '../../stores/uiStore'
 import styles from './CampaignsSection.module.css'
-import { type CampaignEdits, continueCampaign, openCampaign, type Registry } from './campaignView'
+import {
+  type CampaignEdits,
+  continueCampaign,
+  type Registry,
+  requestCampaignSession,
+} from './campaignView'
 import { useMenuFocus } from './menuFocus'
 
 /**
@@ -167,7 +172,7 @@ export function useTaskActions({
             choose(
               () =>
                 continueCampaign(projectId, campaign) ||
-                openCampaign(projectId, campaign, 'claude', registry),
+                requestCampaignSession(projectId, campaign, registry),
             ),
           )}
           {requeue

@@ -727,6 +727,11 @@ export const ptBR: Record<MessageKey, string> = {
   'todo.campaigns.openLabel': 'Abrir campanha {id}',
   'todo.campaigns.continue': 'Continuar',
   'todo.campaigns.continueLabel': 'Continuar campanha {id}',
+  'todo.campaigns.lastActive': 'Última ativa',
+  'todo.campaigns.discardDependencies': 'Descartar alterações',
+  'todo.campaigns.dependencies': 'Depende de',
+  'todo.campaigns.saveDependencies': 'Salvar dependências',
+  'todo.campaigns.prerequisites': 'Bloqueada até concluir: {ids}',
   'todo.campaigns.blockedTitle': 'Campanha {id} não aberta',
   'todo.campaigns.blockedBody':
     '{waiting} aguarda {on}: as duas não podem ficar ativas ao mesmo tempo.',

@@ -143,6 +143,7 @@ import { cleanupPtys } from '../../lib/terminalLifecycle'
 import { CampaignsSection } from './CampaignsSection'
 import {
   campaignLiveStatus,
+  continueCampaign,
   logRegistryProblem,
   openCampaign,
   resumeCampaign,
@@ -180,6 +181,7 @@ beforeEach(() => {
   orchestrator.jobs = []
   orchestrator.emit = null
   resetTodosStoreForTests()
+  useUiStore.getState().closeModal()
   useUiStore.setState({ activeTerminal: null, activeView: 'workspace' })
   useProjectsStore.setState({ ...structuredClone(EMPTY_PROJECTS_FILE), hydrated: false })
   const project = useProjectsStore.getState().createProject({ name: 'App', defaultCwd: 'C:\\repo' })
@@ -206,6 +208,27 @@ const agentTerminals = () =>
   useProjectsStore
     .getState()
     .projects[0].terminals.filter((terminal) => (terminal.kind ?? 'terminal') === 'terminal')
+
+/** Confirm the session dialog through its real campaign callback; modal behavior has its own tests. */
+async function confirmSession(agent: 'claude' | 'codex' = 'claude') {
+  const context = useUiStore.getState().modalContext as {
+    cwd: string
+    onCreate: (creation: {
+      name: string
+      cwd: string
+      firstTab: { type: string; cwd: string }
+    }) => Promise<boolean>
+  }
+  expect(useUiStore.getState().openModal).toBe('newTerminal')
+  await act(async () => {
+    const ok = await context.onCreate({
+      name: agent,
+      cwd: context.cwd,
+      firstTab: { type: agent, cwd: context.cwd },
+    })
+    if (ok) useUiStore.getState().closeModal()
+  })
+}
 
 function openTerminal(cwd: string, type: 'shell' | 'claude' | 'codex', campaignId?: string) {
   const projectId = useProjectsStore.getState().projects[0].id
@@ -331,7 +354,7 @@ describe('CampaignsSection', () => {
     // Continue never takes over a terminal opened by hand: it offers the agents and starts a tab
     // tagged for NOTURNA, even though a Claude tab already runs in its worktree.
     fireEvent.click(screen.getByRole('button', { name: 'Continue campaign NOTURNA' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Claude Code' }))
+    await confirmSession('claude')
     await waitFor(() => expect(agentTerminals()).toHaveLength(3))
     const created = agentTerminals()[2]
     expect(created.tabs[0]).toMatchObject({
@@ -442,7 +465,7 @@ describe('CampaignsSection', () => {
     render(<Section />)
     await expandSection()
     fireEvent.click(screen.getByRole('button', { name: 'Open campaign OITO' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Codex' }))
+    await confirmSession('codex')
     await waitFor(() => expect(agentTerminals()).toHaveLength(1))
 
     const [terminal] = agentTerminals()
@@ -466,7 +489,7 @@ describe('CampaignsSection', () => {
     render(<Section />)
     await expandSection()
     fireEvent.click(screen.getByRole('button', { name: 'Open campaign OITO' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Claude Code' }))
+    await confirmSession('claude')
     await waitFor(() => expect(agentTerminals()).toHaveLength(2))
     const created = agentTerminals()[1]
     expect(created.tabs[0]).toMatchObject({
@@ -481,26 +504,16 @@ describe('CampaignsSection', () => {
     await waitFor(() => expect(screen.queryByText('OITO')).toBeNull())
   })
 
-  it('closes the agent menu on Escape, and gives the focus back to its button', async () => {
+  it('opens the shared session dialog instead of an agent menu and cancellation creates nothing', async () => {
     fs.files.set(REGISTRY, JSON.stringify(exemplo))
     render(<Section />)
     await expandSection()
-    const open = screen.getByRole('button', { name: 'Open campaign DEPOIS' })
-    const focusCodex = () => {
-      fireEvent.click(open)
-      const codex = screen.getByRole('menuitem', { name: 'Codex' })
-      codex.focus()
-      return codex
-    }
-
-    fireEvent.keyDown(focusCodex(), { key: 'Escape' })
+    fireEvent.click(screen.getByRole('button', { name: 'Open campaign ABERTA' }))
+    expect(useUiStore.getState().openModal).toBe('newTerminal')
     expect(screen.queryByRole('menu')).toBeNull()
-    expect(open).toHaveFocus()
-
-    fireEvent.click(focusCodex())
-    expect(screen.queryByRole('menu')).toBeNull()
-    expect(open).toHaveFocus()
-    await waitFor(() => expect(agentTerminals()).toHaveLength(1))
+    expect(agentTerminals()).toHaveLength(0)
+    act(() => useUiStore.getState().closeModal())
+    expect(agentTerminals()).toHaveLength(0)
   })
 
   it('offers Continue only on the active row; a campaign with a tab has no row in the map', async () => {
@@ -537,6 +550,7 @@ describe('CampaignsSection', () => {
     const parada = await screen.findByRole('group', { name: 'PARADA' })
 
     fireEvent.click(within(parada).getByRole('button', { name: 'Go to tab' }))
+    await confirmSession()
     await waitFor(() => expect(agentTerminals()[0].disabled).toBe(false))
     expect(agentTerminals()).toHaveLength(1)
     expect(useUiStore.getState().activeTerminal?.terminalId).toBe(tagged.id)
@@ -556,7 +570,7 @@ describe('CampaignsSection', () => {
     )
 
     fireEvent.click(screen.getByRole('button', { name: 'Continue campaign PARADA' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Codex' }))
+    await confirmSession('codex')
     await waitFor(() => expect(agentTerminals()).toHaveLength(1))
     const [terminal] = agentTerminals()
     expect(terminal.tabs[0]).toMatchObject({ type: 'codex', cwd: 'C:\\repo', campaignId: 'PARADA' })
@@ -572,12 +586,12 @@ describe('CampaignsSection', () => {
     fs.handoff = 'C:\\repo\\docs\\handoff.md'
     render(<Section />)
     await expandSection()
-    const open = () => {
+    const open = async () => {
       fireEvent.click(screen.getByRole('button', { name: 'Open campaign OITO' }))
-      fireEvent.click(screen.getByRole('menuitem', { name: 'Claude Code' }))
+      await confirmSession('claude')
     }
 
-    open()
+    await open()
     await waitFor(() => expect(agentTerminals()).toHaveLength(1))
     const [terminal] = agentTerminals()
     expect(terminal.cwd).toBe('C:\\repo-feature')
@@ -648,95 +662,52 @@ describe('CampaignsSection', () => {
   })
 })
 
-describe('Opening a campaign beside an active one', () => {
+describe('Campaign prerequisites and session confirmation', () => {
   const projectId = () => useProjectsStore.getState().projects[0].id
-  /** The fixture as the Todo tab reads it. */
   const registry = () => {
-    const text = JSON.stringify(exemplo)
+    const data = structuredClone(exemplo)
+    data.campanhas.find((item) => item.id === 'NOTURNA')!.depende_de = ['OITO']
+    const text = JSON.stringify(data)
+    fs.files.set(REGISTRY, text)
     return {
       ...parseCampaigns(text)!,
       projectId: projectId(),
       path: REGISTRY,
+      text,
       main: 'C:\\repo',
       checkouts: {
         main: 'C:\\repo',
         worktrees: [{ path: 'C:\\repo', branch: 'dev', lastCommitMs: null }],
       },
-      text,
     }
   }
-  const named = (id: string) => registry().campaigns.find((campaign) => campaign.id === id)!
-  const BLOCKED = 'NOTURNA waits on OITO (OITO-02): the two cannot be active at once.'
-
-  beforeEach(() => useUiStore.setState({ toasts: [], notifications: [] }))
-
-  it('refuses from the map a campaign waiting on one with an open tab, and opens an unrelated one', async () => {
+  it('blocks an unfinished prerequisite without any open terminal', async () => {
+    const view = registry()
+    const dependent = view.campaigns.find((item) => item.id === 'NOTURNA')!
+    expect(await openCampaign(projectId(), dependent, 'claude', view)).toBeNull()
+    expect(agentTerminals()).toHaveLength(0)
+    expect(lastToast()?.body).toBe('Blocked until completed: OITO')
+    expect(findRelativePath).not.toHaveBeenCalled()
+  })
+  it('allows the prerequisite to start even with a dependent session already open', async () => {
+    const view = registry()
+    openTerminal('C:\\repo', 'claude', 'NOTURNA')
+    const prerequisite = view.campaigns.find((item) => item.id === 'OITO')!
+    expect(await openCampaign(projectId(), prerequisite, 'claude', view)).not.toBeNull()
+    expect(agentTerminals()).toHaveLength(2)
+  })
+  it('rechecks dependencies changed while the session dialog was open', async () => {
     fs.files.set(REGISTRY, JSON.stringify(exemplo))
-    // NOTURNA-01 waits on OITO-02, in progress.
-    openTerminal('C:\\repo', 'claude', 'OITO')
     render(<Section />)
     await expandSection()
-    fireEvent.click(screen.getByRole('button', { name: 'Open campaign NOTURNA' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Claude Code' }))
-    await waitFor(() =>
-      expect(lastToast()).toMatchObject({ title: 'Campaign NOTURNA not opened', body: BLOCKED }),
-    )
-    expect(agentTerminals()).toHaveLength(1)
-
-    fireEvent.click(screen.getByRole('button', { name: 'Open campaign PARADA' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Claude Code' }))
-    await waitFor(() => expect(agentTerminals()).toHaveLength(2))
-    expect(agentTerminals()[1].tabs[0].campaignId).toBe('PARADA')
-    expect(useUiStore.getState().toasts).toHaveLength(1)
-  })
-
-  it('refuses one an open campaign waits on; the night and a campaign already open go through', async () => {
-    openTerminal('C:\\repo', 'claude', 'NOTURNA')
-    expect(await openCampaign(projectId(), named('OITO'), 'claude', registry())).toBeNull()
-    expect(lastToast()).toMatchObject({ title: 'Campaign OITO not opened', body: BLOCKED })
-    expect(agentTerminals()).toHaveLength(1)
-
-    // The night scheduler is never refused.
-    const oito = named('OITO')
-    const night = oito.tasks.find((item) => item.id === 'OITO-08')!
-    const opened = await openCampaign(projectId(), oito, 'claude', registry(), night)
-    expect(agentTerminals()).toHaveLength(2)
-    expect(agentTerminals()[1]).toMatchObject({ id: opened, tabs: [{ campaignId: 'OITO' }] })
-
-    // With a tab of its own, OITO is focused there as before.
-    act(() => useUiStore.setState({ activeTerminal: null }))
-    expect(await openCampaign(projectId(), oito, 'claude', registry())).toBe(opened)
-    expect(useUiStore.getState().activeTerminal?.terminalId).toBe(opened)
-    expect(agentTerminals()).toHaveLength(2)
-    expect(useUiStore.getState().toasts).toHaveLength(1)
-  })
-
-  it('refuses a campaign whose blocker opened while its handoff was looked up', async () => {
-    let release: (path: string | null) => void = () => {}
-    vi.mocked(findRelativePath).mockImplementationOnce(
-      () => new Promise((resolve) => (release = resolve)),
-    )
-    const noturna = { ...named('NOTURNA'), handoff: 'docs/handoff.md' }
-    const opening = openCampaign(projectId(), noturna, 'claude', registry())
-    openTerminal('C:\\repo', 'claude', 'OITO')
-    release(null)
-    expect(await opening).toBeNull()
-    expect(lastToast()).toMatchObject({ title: 'Campaign NOTURNA not opened', body: BLOCKED })
-    expect(agentTerminals()).toHaveLength(1)
-  })
-
-  it('continues on a tab of any agent that opened while its handoff was looked up', async () => {
-    let release: (path: string | null) => void = () => {}
-    vi.mocked(findRelativePath).mockImplementationOnce(
-      () => new Promise((resolve) => (release = resolve)),
-    )
-    const parada = { ...named('PARADA'), handoff: 'docs/handoff.md' }
-    const resuming = resumeCampaign(projectId(), parada, registry(), parada.tasks[0])
-    const codex = openTerminal('C:\\repo', 'codex', 'PARADA')
-    release(null)
-    await resuming
-    expect(agentTerminals()).toHaveLength(1)
-    expect(useUiStore.getState().activeTerminal?.terminalId).toBe(codex.id)
+    fireEvent.click(screen.getByRole('button', { name: 'Open campaign OITO' }))
+    const changed = structuredClone(exemplo)
+    changed.campanhas.find((item) => item.id === 'OITO')!.depende_de = ['PARADA']
+    fs.files.set(REGISTRY, JSON.stringify(changed))
+    await confirmSession()
+    expect(agentTerminals()).toHaveLength(0)
+    expect(lastToast()?.body).toBe('Blocked until completed: PARADA')
+    expect(useUiStore.getState().openModal).toBe('newTerminal')
   })
 })
 
@@ -762,7 +733,7 @@ describe('Active campaigns in the Todo tab', () => {
     render(<TodoSidebar />)
     await waitFor(() => expect(row('OITO-03')).not.toBeNull())
     expect(screen.queryByText('Nothing on your list')).not.toBeInTheDocument()
-    expect(screen.getByRole('progressbar')).toHaveTextContent('1 / 8')
+    expect(screen.queryByRole('progressbar')).toBeNull()
     expect(listed()).toEqual([
       'OITO-02',
       'OITO-03',
@@ -784,7 +755,7 @@ describe('Active campaigns in the Todo tab', () => {
     render(<TodoSidebar />)
     const aberta = await screen.findByRole('group', { name: 'ABERTA' })
     expect(within(aberta).getByRole('button', { name: /^ABERTA ·/ })).toHaveTextContent('1/1+?')
-    expect(screen.getByRole('progressbar')).toHaveTextContent('1 / 1+?')
+    expect(screen.queryByRole('progressbar')).toBeNull()
     expect(within(aberta).getByText('No tasks here.')).toBeInTheDocument()
     fireEvent.click(within(aberta).getByRole('button', { name: '1 done' }))
     expect(listed()).toEqual(['ABERTA-01'])
@@ -1169,6 +1140,7 @@ describe('Campaign controls', () => {
     orchestrator.jobs = [{ id: 'job-q', task: 'OITO-03', status: 'queued', cwd: 'C:\\repo' }]
     await openControls()
     fireEvent.click(button('Continue campaign')!)
+    await confirmSession()
     await waitFor(() => expect(agentTerminals()).toHaveLength(1))
 
     const [terminal] = agentTerminals()
@@ -1199,6 +1171,7 @@ describe('Campaign controls', () => {
     orchestrator.jobs = [{ id: 'job-q', task: 'OITO-05', status: 'queued', cwd: 'C:\\repo' }]
     await openControls()
     fireEvent.click(button('Continue campaign')!)
+    await confirmSession()
     await waitFor(() => expect(agentTerminals()).toHaveLength(1))
     expect(agentTerminals()[0].tabs[0].initialInput).toBe(
       'Retome a campanha OITO pela tarefa OITO-04 («pronta, depende de outra campanha»), ' +
@@ -1211,6 +1184,7 @@ describe('Campaign controls', () => {
     orchestrator.jobs = [{ id: 'job-q', task: 'OITO-03', status: 'queued', cwd: 'C:\\repo' }]
     await openControls()
     fireEvent.click(button('Continue campaign')!)
+    await confirmSession()
     await waitFor(() => expect(button('Go to tab', 'OITO')).toBeEnabled())
     expect(button('Continue campaign')).toBeNull()
     expect(button('Cancel campaign')).toBeEnabled()
@@ -1224,10 +1198,9 @@ describe('Campaign controls', () => {
     await openControls('DEPOIS')
     expect(button('Continue campaign')).toBeEnabled()
     fireEvent.click(button('Continue campaign')!)
-    await waitFor(() => expect(agentTerminals()).toHaveLength(1))
-    expect(agentTerminals()[0].tabs[0].initialInput).toMatch(
-      /^Retome a campanha DEPOIS pela tarefa DEPOIS-01 \(«.*»\), hoje pronta, esperando ABERTA, pelo registro /,
-    )
+    await confirmSession()
+    expect(agentTerminals()).toHaveLength(0)
+    expect(lastToast()?.body).toBe('Blocked until completed: ABERTA')
   })
 
   it('cannot continue a campaign with every task done, and says so', async () => {
@@ -1541,10 +1514,11 @@ describe('Campaign controls', () => {
     agentTab('OITO', 'pty-o', 'waiting')
     await openControls('NOTURNA')
     fireEvent.click(button('Continue campaign', 'NOTURNA')!)
+    await confirmSession()
     await waitFor(() =>
       expect(lastToast()).toMatchObject({
         title: 'Campaign NOTURNA not opened',
-        body: 'NOTURNA waits on OITO (OITO-02): the two cannot be active at once.',
+        body: 'Blocked until completed: OITO-02',
       }),
     )
     await waitFor(() => expect(button('Continue campaign', 'NOTURNA')).toBeEnabled())
@@ -2014,8 +1988,9 @@ describe('Night card', () => {
       await choose('PARADA-01', 'Continue in the terminal')
       expect(useUiStore.getState().activeTerminal?.terminalId).toBe(tagged.id)
 
-      // One without opens Claude Code right away, as a planner next to its own board.
+      // A new session starts only after confirmation, next to its own board.
       await choose('OITO-07', 'Continue in the terminal')
+      await confirmSession()
       expect(screen.queryByRole('menu')).toBeNull()
       await waitFor(() =>
         expect(agentTerminals().find((item) => item.tabs[0].campaignId === 'OITO')).toBeDefined(),
@@ -2537,7 +2512,7 @@ describe('Todo sections', () => {
     expect(section).toContainElement(document.querySelector('[data-task="OITO-02"]') as HTMLElement)
     expect(screen.queryByRole('tablist', { name: 'Task filters' })).toBeNull()
     // The progress bar stays on top.
-    expect(screen.getByRole('progressbar').closest('section')).toBeNull()
+    expect(screen.queryByRole('progressbar')).toBeNull()
 
     fireEvent.click(active)
     expect(document.querySelector('[data-task]')).toBeNull()
@@ -3196,26 +3171,30 @@ describe('Todo tabs', () => {
     expect(within(map).queryByText('PARADA')).toBeNull()
   })
 
-  it('splits the progress bar into one segment per active campaign, with the summed count', async () => {
+  it('shows only the selected running campaign, changes selection and hides when runtime stops', async () => {
     fs.files.set(REGISTRY, JSON.stringify(exemplo))
-    openTerminal('C:\\repo', 'claude', 'OITO')
-    openTerminal('C:\\repo', 'claude', 'PARADA')
+    const id = useProjectsStore.getState().projects[0].id
+    useTodosStore.setState({ activeCampaigns: { [id]: 'OITO' } })
+    orchestrator.jobs = [
+      { id: 'o', task: 'OITO-03', status: 'running', cwd: 'C:\\repo' },
+      { id: 'p', task: 'PARADA-01', status: 'running', cwd: 'C:\\repo' },
+    ]
     render(<TodoSidebar />)
-    await waitFor(() => expect(segments()).toEqual(['OITO · 1/8', 'PARADA · 0/1']))
-    expect(screen.getByRole('progressbar')).toHaveTextContent('1 / 9')
-    expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '1')
-    expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuemax', '9')
+    await waitFor(() => expect(segments()).toEqual(['OITO · 1/8']))
+    expect(screen.getByRole('progressbar')).toHaveTextContent('1 / 8')
+    act(() => useTodosStore.getState().rememberCampaign(id, 'PARADA'))
+    await waitFor(() => expect(segments()).toEqual(['PARADA · 0/1']))
+    act(() => orchestrator.emit?.({ jobs: [] }))
+    await waitFor(() => expect(screen.queryByRole('progressbar')).toBeNull())
   })
 
-  it('covers the whole registry with one segment while no campaign is active', async () => {
+  it('hides Overview progress when only a remembered campaign exists', async () => {
     fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    const id = useProjectsStore.getState().projects[0].id
+    useTodosStore.setState({ activeCampaigns: { [id]: 'OITO' } })
     render(<TodoSidebar />)
     await screen.findByRole('button', { name: /^Campaigns/ })
-    // BASE 2/2, OITO 1/8, ABERTA 1/1 (not decomposed), DEPOIS 0/1, NOTURNA 0/2, PARADA 0/1.
-    expect(segments()).toEqual(['All campaigns · 4/15+?'])
-    expect(screen.getByRole('progressbar')).toHaveTextContent('4 / 15+?')
-    expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '4')
-    expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuemax', '15')
+    expect(screen.queryByRole('progressbar')).toBeNull()
   })
 
   it('lists a Gate 2 task and an undecided night entry only in Pending; the night card is in Night', async () => {
@@ -3278,28 +3257,19 @@ describe('Todo tabs', () => {
     expect(tab(/^Personal/)).toHaveAttribute('aria-selected', 'true')
   })
 
-  it('keeps one campaign control at a time across a switch of tab', async () => {
-    fs.files.set(REGISTRY, JSON.stringify(withOito(exemplo, { handoff: 'docs/handoff.md' })))
+  it('keeps campaign session creation pending until dialog confirmation across a tab switch', async () => {
+    fs.files.set(REGISTRY, JSON.stringify(exemplo))
     orchestrator.jobs = [{ id: 'job-q', task: 'OITO-03', status: 'queued', cwd: 'C:\\repo' }]
-    // The handoff lookup stays pending until released.
-    let release: (path: string | null) => void = () => {}
-    vi.mocked(findRelativePath).mockImplementationOnce(
-      () => new Promise((resolve) => (release = resolve)),
-    )
     render(<TodoSidebar />)
     await waitFor(() => expect(active('OITO')).not.toBeNull())
-    const resume = () => within(active('OITO')!).getByRole('button', { name: 'Continue campaign' })
-    fireEvent.click(resume())
-    await waitFor(() => expect(findRelativePath).toHaveBeenCalledTimes(1))
-
-    // Leaving Overview and coming back while it runs keeps the controls held.
+    fireEvent.click(within(active('OITO')!).getByRole('button', { name: 'Continue campaign' }))
+    expect(useUiStore.getState().openModal).toBe('newTerminal')
+    expect(agentTerminals()).toHaveLength(0)
     fireEvent.click(tab(/^Night/))
     fireEvent.click(tab(/^Overview/))
-    expect(resume()).toBeDisabled()
-    fireEvent.click(resume())
-    expect(findRelativePath).toHaveBeenCalledTimes(1)
-    await act(async () => release(null))
-    await waitFor(() => expect(agentTerminals()).toHaveLength(1))
+    expect(agentTerminals()).toHaveLength(0)
+    await confirmSession()
+    expect(agentTerminals()).toHaveLength(1)
   })
 
   it('goes to an active campaign tab without typing anything into it', async () => {
@@ -3490,7 +3460,7 @@ describe('Active campaign step', () => {
 
     // Overview keeps its campaign segments.
     fireEvent.click(screen.getByRole('tab', { name: /^Overview/ }))
-    expect(bar()!.querySelector('[title]')).toHaveAttribute('title', 'OITO · 1/8')
+    expect(bar()).toBeNull()
   })
 
   it('hides the Night tab bar without a diary', async () => {
@@ -4055,4 +4025,93 @@ describe('Personal list', () => {
       'Second',
     ])
   })
+})
+
+describe('campaign dependency editor', () => {
+  it('writes prerequisites through the existing atomic registry API', async () => {
+    fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    render(<Section />)
+    await expandSection()
+    fireEvent.click(screen.getByText('OITO', { exact: true }).closest('button')!)
+    const editor = screen.getByRole('group', { name: 'Depends on' })
+    fireEvent.click(within(editor).getByRole('checkbox', { name: /^PARADA/ }))
+    fireEvent.click(within(editor).getByRole('button', { name: 'Save dependencies' }))
+    await waitFor(() =>
+      expect(
+        JSON.parse(fs.files.get(REGISTRY)!).campanhas.find(
+          (item: { id: string }) => item.id === 'OITO',
+        ).depende_de,
+      ).toContain('PARADA'),
+    )
+    expect(campaignRegistryWrite).toHaveBeenCalledTimes(1)
+    expect(parseCampaigns(fs.files.get(REGISTRY)!)?.errors).toEqual([])
+  })
+  it('refuses a concurrent edit instead of overwriting it', async () => {
+    fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    render(<Section />)
+    await expandSection()
+    fireEvent.click(screen.getByText('OITO', { exact: true }).closest('button')!)
+    const editor = screen.getByRole('group', { name: 'Depends on' })
+    fireEvent.click(within(editor).getByRole('checkbox', { name: /^PARADA/ }))
+    const changed = withOito(exemplo, { titulo: 'Concurrent update' })
+    fs.files.set(REGISTRY, JSON.stringify(changed))
+    fireEvent.click(within(editor).getByRole('button', { name: 'Save dependencies' }))
+    await waitFor(() => expect(campaignRegistryWrite).toHaveBeenCalledTimes(1))
+    expect(
+      JSON.parse(fs.files.get(REGISTRY)!).campanhas.find(
+        (item: { id: string }) => item.id === 'OITO',
+      ).titulo,
+    ).toBe('Concurrent update')
+  })
+})
+
+it('does not reactivate a disabled dependent session before prerequisite validation', async () => {
+  const data = withOito(exemplo, { depende_de: ['PARADA'] })
+  fs.files.set(REGISTRY, JSON.stringify(data))
+  const terminal = openTerminal('C:\\repo', 'claude', 'OITO')
+  const id = useProjectsStore.getState().projects[0].id
+  useProjectsStore.getState().setTerminalDisabled(id, terminal.id, true)
+  const parsed = parseCampaigns(JSON.stringify(data))!
+  const campaign = parsed.campaigns.find((item) => item.id === 'OITO')!
+  expect(continueCampaign(id, campaign)).toBe(false)
+  const registry = {
+    ...parsed,
+    projectId: id,
+    path: REGISTRY,
+    text: JSON.stringify(data),
+    main: 'C:\\repo',
+    checkouts: {
+      main: 'C:\\repo',
+      worktrees: [{ path: 'C:\\repo', branch: 'dev', lastCommitMs: null }],
+    },
+  }
+  await resumeCampaign(
+    id,
+    campaign,
+    registry,
+    campaign.tasks.find((item) => item.id === 'OITO-02')!,
+  )
+  await confirmSession()
+  expect(agentTerminals()[0].disabled).toBe(true)
+  expect(agentTerminals()).toHaveLength(1)
+  expect(lastToast()?.body).toContain('PARADA')
+})
+
+it('preserves a dependency draft when an unrelated task update reloads the registry', async () => {
+  fs.files.set(REGISTRY, JSON.stringify(exemplo))
+  render(<Section />)
+  await expandSection()
+  fireEvent.click(screen.getByText('OITO', { exact: true }).closest('button')!)
+  const editor = screen.getByRole('group', { name: 'Depends on' })
+  fireEvent.click(within(editor).getByRole('checkbox', { name: /^PARADA/ }))
+  await editRegistry((data) => {
+    data.campanhas.find((item) => item.id === 'OITO')!.tarefas[0].titulo = 'Agent update'
+  })
+  expect(within(editor).getByRole('checkbox', { name: /^PARADA/ })).toBeChecked()
+  fireEvent.click(within(editor).getByRole('button', { name: 'Save dependencies' }))
+  await waitFor(() => expect(campaignRegistryWrite).toHaveBeenCalledTimes(1))
+  expect(
+    JSON.parse(fs.files.get(REGISTRY)!).campanhas.find((item: { id: string }) => item.id === 'OITO')
+      .depende_de,
+  ).not.toContain('PARADA')
 })

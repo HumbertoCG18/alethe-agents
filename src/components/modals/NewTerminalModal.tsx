@@ -22,10 +22,15 @@ import { useT } from '../../lib/i18n'
 import { createOrchestratedTerminal } from '../../lib/orchestrationOnTerminal'
 import { basename, pathSegments } from '../../lib/paths'
 import { formatShortcut } from '../../lib/platform'
+import { anchoredCwd } from '../../lib/projectCheckout'
 import { DEFAULT_GRID_ID } from '../../lib/projectGrids'
 import { router9SupportsAgent } from '../../lib/router9'
-import { isShellAgentType, type AgentRuntimeProfile, type AgentType } from '../../lib/types'
-import { anchoredCwd } from '../../lib/projectCheckout'
+import {
+  type AgentRuntimeProfile,
+  type AgentType,
+  isShellAgentType,
+  type TerminalCreationPreset,
+} from '../../lib/types'
 import { getProjectDefaultCwd, useProjectsStore } from '../../stores/projectsStore'
 import { useUiStore } from '../../stores/uiStore'
 import { AgentIcon } from '../icons/AgentIcons'
@@ -54,6 +59,8 @@ export function NewTerminalModal() {
   const context = useUiStore((s) => s.modalContext) as {
     projectId?: string
     gridId?: string
+    cwd?: string
+    onCreate?: (creation: TerminalCreationPreset) => Promise<boolean>
     // Callers that need a particular kind of terminal narrow the choice rather than opening a
     // second modal that would drift from this one.
     only?: AgentType[]
@@ -90,7 +97,7 @@ export function NewTerminalModal() {
     (agent) => isAgentEnabled(enabled, agent.type) && (!only || only.includes(agent.type)),
   )
   const plannerAgents = visibleAgents.filter((a) => PLANNER_AGENTS.includes(a.type))
-  const canOrchestrate = !isPlannerContext && plannerAgents.length > 0
+  const canOrchestrate = !context?.onCreate && !isPlannerContext && plannerAgents.length > 0
   const orchestrating = canOrchestrate && mode === 'orchestration'
   const modeAgents = orchestrating ? plannerAgents : visibleAgents
   const defaultType =
@@ -98,7 +105,10 @@ export function NewTerminalModal() {
     visibleAgents[0]?.type ??
     'shell'
   const selectedAgent = allAgents.find((agent) => agent.type === type) ?? allAgents[0]
-  const inheritedCwd = useMemo(() => getProjectDefaultCwd(project, projects), [project, projects])
+  const inheritedCwd = useMemo(
+    () => context?.cwd ?? getProjectDefaultCwd(project, projects),
+    [context?.cwd, project, projects],
+  )
   const recentFolders = useMemo(() => {
     const folders = new Map<string, { path: string; lastUsedAt: number }>()
     for (const candidate of projects) {
@@ -199,39 +209,67 @@ export function NewTerminalModal() {
     router9SupportsAgent(type),
   )
 
+  const submitting = useRef(false)
+  const [saving, setSaving] = useState(false)
   const submit = async () => {
-    if (!context?.projectId) return
-    const finalName = selectedAgent.label
-    const finalCwd = await anchoredCwd(context.projectId, {
-      typed: cwd,
-      offered: offeredCwd.current,
-    })
-    const flag = resolveUnrestrictedFlag(type)
-    const extraArgs = unrestricted[type] && flag ? [flag] : undefined
-    const trimmedGoal = goal.trim()
-    const creation = {
-      name: finalName,
-      cwd: finalCwd,
-      firstTab: {
-        type,
+    if (!context?.projectId || submitting.current) return
+    submitting.current = true
+    setSaving(true)
+    try {
+      const finalName = selectedAgent.label
+      const finalCwd = context.onCreate
+        ? cwd.trim()
+        : await anchoredCwd(context.projectId, {
+            typed: cwd,
+            offered: offeredCwd.current,
+          })
+      const flag = resolveUnrestrictedFlag(type)
+      const extraArgs = unrestricted[type] && flag ? [flag] : undefined
+      const trimmedGoal = goal.trim()
+      const creation = {
+        name: finalName,
         cwd: finalCwd,
-        extraArgs,
-        runtimeProfile,
-        useRouter9: routingAvailable && useRouter9,
-        initialInput: orchestrating && trimmedGoal ? trimmedGoal : undefined,
-      },
+        firstTab: {
+          type,
+          cwd: finalCwd,
+          extraArgs,
+          runtimeProfile,
+          useRouter9: routingAvailable && useRouter9,
+          initialInput: orchestrating && trimmedGoal ? trimmedGoal : undefined,
+        },
+      }
+      if (!finalCwd) return
+      if (context.onCreate) {
+        if (!(await context.onCreate(creation))) return
+        if (
+          useUiStore.getState().openModal === 'newTerminal' &&
+          useUiStore.getState().modalContext === context
+        ) {
+          reset()
+          closeModal()
+        }
+        return
+      }
+      setPreferences({ lastTerminalCreation: creation })
+      const { projectId } = context
+      const create = () =>
+        createAgentTerminal(projectId, {
+          ...creation,
+          gridId: selectedGridId === UNGROUPED_GRID ? undefined : selectedGridId,
+        })
+      await (orchestrating ? createOrchestratedTerminal(projectId, finalCwd, create) : create())
+      if (createMore && !orchestrating) return
+      if (
+        useUiStore.getState().openModal === 'newTerminal' &&
+        useUiStore.getState().modalContext === context
+      ) {
+        reset()
+        closeModal()
+      }
+    } finally {
+      submitting.current = false
+      setSaving(false)
     }
-    setPreferences({ lastTerminalCreation: creation })
-    const { projectId } = context
-    const create = () =>
-      createAgentTerminal(projectId, {
-        ...creation,
-        gridId: selectedGridId === UNGROUPED_GRID ? undefined : selectedGridId,
-      })
-    await (orchestrating ? createOrchestratedTerminal(projectId, finalCwd, create) : create())
-    if (createMore && !orchestrating) return
-    reset()
-    closeModal()
   }
 
   const browse = async () => {
@@ -301,6 +339,7 @@ export function NewTerminalModal() {
     <Modal
       open={open}
       onClose={() => {
+        if (submitting.current) return
         reset()
         closeModal()
       }}
@@ -309,7 +348,7 @@ export function NewTerminalModal() {
       width={500}
       footer={
         <>
-          {!orchestrating ? (
+          {!orchestrating && !context?.onCreate ? (
             <button
               type="button"
               className={styles.createMore}
@@ -324,14 +363,21 @@ export function NewTerminalModal() {
             </button>
           ) : null}
           <span className={styles.footerFill} />
-          <button type="button" className={controls.btn} onClick={closeModal}>
+          <button
+            type="button"
+            className={controls.btn}
+            onClick={() => {
+              if (!submitting.current) closeModal()
+            }}
+            disabled={saving}
+          >
             {t('term.cancel')}
           </button>
           <button
             type="button"
             className={`${controls.btn} ${controls.btnPrimary} ${styles.submitButton}`}
             onClick={() => void submit()}
-            disabled={!context?.projectId}
+            disabled={!context?.projectId || saving}
           >
             {orchestrating
               ? t('term.createOrchestration')

@@ -1,5 +1,5 @@
 import { Play } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 import controls from '../../components/modals/controls.module.css'
 import {
@@ -12,23 +12,21 @@ import {
 } from '../../lib/campaigns'
 import { type MessageKey, useT } from '../../lib/i18n'
 import { type GitCheckouts } from '../../lib/tauri'
-import { AGENT_TYPE_LABELS } from '../../lib/types'
 import styles from './CampaignsSection.module.css'
 import {
-  AGENTS,
-  type CampaignAgent,
+  type CampaignEdits,
   type CampaignLive,
   type CampaignView,
   continueCampaign,
-  openCampaign,
+  requestCampaignSession,
   STATE_KEYS,
   TASK_LANES,
+  useCampaignEdits,
   useCampaignFacts,
   useCampaignLive,
   workersLabel,
 } from './campaignView'
 import { situationLabel, WINDOW_KEYS } from './labels'
-import { useMenuFocus } from './menuFocus'
 import { SectionToggle } from './SectionToggle'
 import sidebarStyles from './TodoSidebar.module.css'
 
@@ -76,7 +74,7 @@ const NO_TASKS: ReadonlySet<string> = new Set()
  * finished. With `finished`, the Completed section instead: the finished ones, live or not.
  */
 export function CampaignsSection({
-  view: { projectId, registry, activeId },
+  view,
   workers = NO_WORKERS,
   pending = NO_TASKS,
   finished = false,
@@ -88,6 +86,8 @@ export function CampaignsSection({
   pending?: ReadonlySet<string>
   finished?: boolean
 }) {
+  const { projectId, registry, activeId } = view
+  const edits = useCampaignEdits(view)
   const t = useT()
   const [collapsed, setCollapsed] = useState(true)
   const [closed, setClosed] = useState<ReadonlySet<Group>>(() => new Set())
@@ -129,7 +129,10 @@ export function CampaignsSection({
             )
           : null
       }
-      onOpen={(agent) => openCampaign(projectId, campaign, agent, registry)}
+      onOpen={() => requestCampaignSession(projectId, campaign, registry)}
+      campaigns={registry.campaigns}
+      edits={edits}
+      source={registry.text}
       onContinue={() => continueCampaign(projectId, campaign)}
     />
   )
@@ -196,6 +199,9 @@ function CampaignRow({
   workers,
   onOpen,
   onContinue,
+  campaigns,
+  edits,
+  source,
 }: {
   campaign: Campaign
   checkouts: GitCheckouts
@@ -205,14 +211,15 @@ function CampaignRow({
   live?: CampaignLive
   /** Its live workers, as "2 running · 1 queued"; null when none or not the active campaign. */
   workers: string | null
-  onOpen: (agent: CampaignAgent) => unknown
+  onOpen: () => unknown
+  campaigns: Campaign[]
+  edits: CampaignEdits
+  source: string
   /** Focuses the campaign's open tab; false when it has none. */
   onContinue: () => boolean
 }) {
   const t = useT()
   const [expanded, setExpanded] = useState(false)
-  const [menuOpen, setMenuOpen] = useState(false)
-  const { trigger, onKeyDown, choose } = useMenuFocus(menuOpen, () => setMenuOpen(false))
   const inPending = campaign.tasks.filter((task) => pending.has(task.id)).length
 
   return (
@@ -222,7 +229,6 @@ function CampaignRow({
       data-status={live}
       data-active={active ? 'true' : undefined}
       aria-current={active ? 'true' : undefined}
-      onKeyDown={onKeyDown}
     >
       <span className={styles.dot} aria-hidden />
       <button
@@ -234,6 +240,7 @@ function CampaignRow({
       >
         <span className={styles.line}>
           <span className={styles.id}>{campaign.id}</span>
+          {active ? <span className={styles.chip}>{t('todo.campaigns.lastActive')}</span> : null}
           {campaign.title ? <span className={styles.title}>{campaign.title}</span> : null}
         </span>
         <span className={styles.meta}>
@@ -245,41 +252,29 @@ function CampaignRow({
           {workers ? <span className={styles.workers}>{workers}</span> : null}
         </span>
       </button>
-      {/* The active row continues where its tab is, and offers the agents only when none is open. */}
+      {/* Existing sessions are focused; new ones always use the shared dialog. */}
       <button
-        ref={trigger}
         type="button"
         className={styles.openButton}
         onClick={() => {
-          if (!active || !onContinue()) setMenuOpen((current) => !current)
+          if (!onContinue()) onOpen()
         }}
         aria-label={t(active ? 'todo.campaigns.continueLabel' : 'todo.campaigns.openLabel', {
           id: campaign.id,
         })}
-        aria-expanded={menuOpen}
-        aria-haspopup="menu"
       >
         <Play size={11} />
         <span>{t(active ? 'todo.campaigns.continue' : 'todo.campaigns.open')}</span>
       </button>
-      {menuOpen ? (
-        <div className={styles.menu} role="menu">
-          {AGENTS.map((agent) => (
-            <button
-              key={agent}
-              type="button"
-              role="menuitem"
-              className={`${controls.btn} ${controls.btnSm} ${styles.menuItem}`}
-              onClick={choose(() => onOpen(agent))}
-            >
-              {AGENT_TYPE_LABELS[agent]}
-            </button>
-          ))}
-        </div>
-      ) : null}
       {expanded ? (
         <div className={styles.details}>
           <CampaignFacts campaign={campaign} checkouts={checkouts} />
+          <CampaignDependencies
+            campaign={campaign}
+            campaigns={campaigns}
+            edits={edits}
+            source={source}
+          />
           <ul className={styles.tasks}>
             {campaign.tasks
               .filter((task) => !pending.has(task.id))
@@ -329,5 +324,77 @@ function CampaignFacts({ campaign, checkouts }: { campaign: Campaign; checkouts:
       </span>
       {facts.updated ? <span>{facts.updated}</span> : null}
     </span>
+  )
+}
+
+/** Uses the same graph validation and atomic write as task edits. */
+export function CampaignDependencies({
+  campaign,
+  campaigns,
+  edits,
+  source,
+}: {
+  campaign: Campaign
+  campaigns: Campaign[]
+  edits: CampaignEdits
+  source: string
+}) {
+  const t = useT()
+  const [draft, setDraft] = useState({ ids: campaign.dependsOn, base: source, dirty: false })
+  useEffect(() => {
+    setDraft((current) =>
+      current.dirty ? current : { ids: campaign.dependsOn, base: source, dirty: false },
+    )
+  }, [campaign.dependsOn, source, draft.dirty])
+  const [saving, setSaving] = useState(false)
+  return (
+    <fieldset className={styles.dependencies} disabled={saving || edits.busy}>
+      <legend>{t('todo.campaigns.dependencies')}</legend>
+      {campaigns
+        .filter((item) => item.id !== campaign.id)
+        .map((item) => (
+          <label key={item.id}>
+            <input
+              type="checkbox"
+              checked={draft.ids.includes(item.id)}
+              onChange={(event) => {
+                const checked = event.target.checked
+                setDraft((current) => ({
+                  ...current,
+                  dirty: true,
+                  ids: checked
+                    ? [...current.ids, item.id]
+                    : current.ids.filter((id) => id !== item.id),
+                }))
+              }}
+            />
+            {item.id} · {item.title}
+          </label>
+        ))}
+      <button
+        type="button"
+        className={`${controls.btn} ${controls.btnSm}`}
+        onClick={async () => {
+          setSaving(true)
+          try {
+            if (await edits.dependencies(campaign, draft.ids, draft.base))
+              setDraft((current) => ({ ...current, dirty: false }))
+          } finally {
+            setSaving(false)
+          }
+        }}
+      >
+        {t('todo.campaigns.saveDependencies')}
+      </button>
+      {draft.dirty ? (
+        <button
+          type="button"
+          className={`${controls.btn} ${controls.btnSm}`}
+          onClick={() => setDraft({ ids: campaign.dependsOn, base: source, dirty: false })}
+        >
+          {t('todo.campaigns.discardDependencies')}
+        </button>
+      ) : null}
+    </fieldset>
   )
 }

@@ -420,6 +420,34 @@ export function setCampaignTaskState(
 /** Order of the open states in the list: what is moving first, what waits on a decision last. */
 const OPEN_ORDER: TaskState[] = ['em execução', 'pronta', 'reservada', 'proposta', 'bloqueada']
 
+/** Campaign-wide prerequisites, independent of which terminals are open. */
+export function campaignPrerequisites(
+  campaign: Campaign,
+  campaigns: readonly Campaign[],
+): string[] {
+  return campaign.dependsOn.filter((id) => {
+    const dependency = campaigns.find((item) => item.id === id)
+    return dependency
+      ? dependency.situation.kind !== 'done'
+      : !campaigns.some((item) => item.tasks.some((task) => task.id === id && task.state === DONE))
+  })
+}
+
+/** Preserve the registry and use its existing graph validator before allowing a write. */
+export function setCampaignDependencies(
+  source: string,
+  campaignId: string,
+  dependencies: string[],
+  today: string,
+) {
+  const data = JSON.parse(source) as RawRegistry
+  const campaign = data.campanhas.find((item) => item.id === campaignId)
+  if (!campaign) return { ok: false as const, error: 'missing' as const }
+  campaign.depende_de = [...new Set(dependencies)]
+  campaign.atualizado_em = today
+  return edited(data, {})
+}
+
 /** A campaign's tasks for a list tab: open ones by state then id, done ones by id after them. */
 export function campaignTaskView(
   tasks: readonly CampaignTask[],

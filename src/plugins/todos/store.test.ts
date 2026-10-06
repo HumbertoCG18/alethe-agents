@@ -227,3 +227,14 @@ describe('todo actions', () => {
     expect((snapshot().todos as TodoItem[])[0].title).toBe('Persisted')
   })
 })
+
+it('restores the last campaign per project after a storage round trip', async () => {
+  const { storage, snapshot } = fakeStorage()
+  await hydrateTodos(storage, { todos: [], storagePath: '' })
+  useTodosStore.getState().rememberCampaign('project-a', 'A')
+  useTodosStore.getState().rememberCampaign('project-b', 'B')
+  expect(snapshot().activeCampaigns).toEqual({ 'project-a': 'A', 'project-b': 'B' })
+  resetTodosStoreForTests()
+  await hydrateTodos(storage, { todos: [], storagePath: '' })
+  expect(useTodosStore.getState().activeCampaigns).toEqual({ 'project-a': 'A', 'project-b': 'B' })
+})

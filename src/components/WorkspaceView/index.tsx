@@ -22,6 +22,7 @@ import {
 } from '../../lib/gridLayout'
 import { useT } from '../../lib/i18n'
 import { formatShortcut } from '../../lib/platform'
+import { isProjectFolder } from '../../lib/projectCheckout'
 import type {
   AgentType,
   GridLayout,
@@ -31,7 +32,11 @@ import type {
   WorkspaceContainer,
 } from '../../lib/types'
 import { MAX_WORKSPACE_TABS } from '../../lib/workspaceNavigation'
-import { selectActiveProject, useProjectsStore } from '../../stores/projectsStore'
+import {
+  getProjectDefaultCwd,
+  selectActiveProject,
+  useProjectsStore,
+} from '../../stores/projectsStore'
 import { useUiStore } from '../../stores/uiStore'
 import { GridCellHandles } from '../GridCellHandles'
 import { AgentIcon } from '../icons/AgentIcons'
@@ -879,7 +884,8 @@ function ContainerPanelFragment({
   )
 }
 
-function NoWorkspace({
+/** What the workspace shows with nothing open. Exported for its tests. */
+export function NoWorkspace({
   project,
   group,
   onAddTerminal,
@@ -915,7 +921,7 @@ function NoWorkspace({
 
   useEffect(() => {
     if (!project) return
-    const projectFolder = project.defaultCwd || project.terminals[0]?.cwd || ''
+    const projectFolder = getProjectDefaultCwd(project)
     if (projectFolder) setFolder(projectFolder)
   }, [project])
 
@@ -933,11 +939,7 @@ function NoWorkspace({
     if (!cwd) return
     const normalized = cwd.replace(/[\\/]+$/, '')
     const name = normalized.split(/[\\/]/).filter(Boolean).pop() || normalized
-    const existingProjectFolder = project?.defaultCwd || project?.terminals[0]?.cwd
-    if (
-      project &&
-      existingProjectFolder?.replace(/[\\/]+$/, '').toLowerCase() === normalized.toLowerCase()
-    ) {
+    if (project && isProjectFolder(project, cwd)) {
       const terminal = createTerminal(project.id, {
         name: quickAgent[0].toUpperCase() + quickAgent.slice(1),
         cwd,

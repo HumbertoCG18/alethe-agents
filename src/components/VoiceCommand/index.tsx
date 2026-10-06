@@ -14,7 +14,6 @@ import {
   speechStartCapture,
   speechStopAndTranscribe,
   speechStopCapture,
-  writePty,
 } from '../../lib/tauri'
 import { type AgentType, isShellAgentType } from '../../lib/types'
 import {
@@ -36,6 +35,7 @@ import {
 import { anyTabWorking, useTerminalsStore } from '../../stores/terminalsStore'
 import { useUiStore } from '../../stores/uiStore'
 import { useVoiceHistoryStore } from '../../stores/voiceHistoryStore'
+import { runPlan } from './runPlan'
 import styles from './VoiceCommand.module.css'
 
 const LEVEL_POLL_MS = 60
@@ -100,59 +100,6 @@ function readWorkspace(): VoiceWorkspace {
     focusedProjectId: active?.id ?? null,
     focusedTerminalId: focused?.terminalId ?? null,
   }
-}
-
-function focusTerminal(projectId: string, terminalId: string) {
-  const projects = useProjectsStore.getState()
-  projects.setActiveProjectOnly(projectId)
-  projects.focusWorkspaceTerminal(projectId, terminalId)
-  const ui = useUiStore.getState()
-  ui.setActiveTerminal(projectId, terminalId)
-  ui.requestPaneFocus(terminalId)
-}
-
-async function runPlan(plan: VoicePlan, t: TFunction): Promise<string[]> {
-  const projects = useProjectsStore.getState()
-
-  if (plan.kind === 'focus') {
-    focusTerminal(plan.projectId, plan.terminalId)
-    return [t('voice.action.focused', { terminal: plan.terminalName })]
-  }
-  if (plan.kind === 'kill') {
-    projects.deleteTerminal(plan.projectId, plan.terminalId)
-    return [t('voice.action.stopped', { terminal: plan.terminalName })]
-  }
-  if (plan.kind === 'reuse') {
-    await writePty(plan.ptyId, `${plan.prompt}\r`)
-    focusTerminal(plan.projectId, plan.terminalId)
-    return [t('voice.action.sent', { terminal: plan.terminalName })]
-  }
-  if (plan.kind !== 'spawn') return []
-
-  const project = projects.projects.find((item) => item.id === plan.projectId)
-  if (!project) throw new Error('project vanished before the plan ran')
-  const cwd = getProjectDefaultCwd(project, projects.projects)
-
-  const created = await Promise.all(
-    plan.jobs.map((job, index) => {
-      const label = agentLabel(job.agent)
-      const sameAgent = plan.jobs.filter((item) => item.agent === job.agent).length > 1
-      return projects.createAgentTerminal(plan.projectId, {
-        name: sameAgent ? `${label} ${index + 1}` : label,
-        cwd,
-        firstTab: { type: job.agent, cwd, initialInput: job.prompt || undefined },
-      })
-    }),
-  )
-  const last = created[created.length - 1]
-  if (last) focusTerminal(plan.projectId, last.id)
-
-  return plan.jobs.map((job) => {
-    const agent = agentLabel(job.agent)
-    return job?.prompt
-      ? t('voice.action.openedWith', { agent, project: plan.projectName, prompt: job.prompt })
-      : t('voice.action.opened', { agent, project: plan.projectName })
-  })
 }
 
 function summarize(plan: VoicePlan, t: TFunction): string {

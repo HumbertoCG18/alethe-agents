@@ -331,6 +331,22 @@ pub fn ensure_todo_template(directory: String) -> Result<String, String> {
 #[derive(Default)]
 pub struct FileWatchers(pub Arc<Mutex<HashMap<String, (RecommendedWatcher, usize)>>>);
 
+/// Drops every watch on a path inside `root` (canonical), whoever holds it, so the folder can
+/// leave the disk: on Windows a watched folder blocks the removal of its parent.
+pub(crate) fn release_watchers_under<T>(watchers: &Mutex<HashMap<String, T>>, root: &Path) {
+    let inside = |key: &String| {
+        let path = Path::new(key);
+        [Some(path), path.parent()]
+            .into_iter()
+            .flatten()
+            .find_map(|candidate| candidate.canonicalize().ok())
+            .is_some_and(|found| found.starts_with(root))
+    };
+    if let Ok(mut map) = watchers.lock() {
+        map.retain(|key, _| !inside(key));
+    }
+}
+
 fn normalize(path: &str) -> String {
     path.trim().to_string()
 }

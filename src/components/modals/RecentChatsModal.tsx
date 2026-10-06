@@ -4,7 +4,7 @@ import { intlLocale, type Locale, type TFunction, useT } from '../../lib/i18n'
 import { resumeSessionInPane } from '../../lib/paneResume'
 import { type ClaudeSessionMeta, listClaudeSessions, snapshotCodexSessions } from '../../lib/tauri'
 import { UNRESTRICTED_FLAG } from '../../lib/types'
-import { useProjectsStore } from '../../stores/projectsStore'
+import { getProjectDefaultCwd, useProjectsStore } from '../../stores/projectsStore'
 import { useUiStore } from '../../stores/uiStore'
 import { ClaudeIcon, CodexIcon } from '../icons/AgentIcons'
 import { Modal } from './Modal'
@@ -98,7 +98,7 @@ export function RecentChatsModal() {
 
   const targetTab =
     targetTerminal?.tabs.find((item) => item.id === targetTerminal.activeTabId) ?? null
-  const cwd = targetTab?.cwd || targetTerminal?.cwd || project?.defaultCwd || ''
+  const cwd = targetTab?.cwd || targetTerminal?.cwd || getProjectDefaultCwd(project)
 
   useEffect(() => {
     if (open) setAgent(contextAgent)

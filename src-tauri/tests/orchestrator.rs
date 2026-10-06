@@ -501,6 +501,69 @@ fn checking_with_no_work_returns_at_once() {
     );
 }
 
+/// What the app installs: a folder under removal refuses a worker. The app's guard reads the marks
+/// `worktree_remove_checkout` sets; this one marks folders by name.
+fn refuse_removed(cwd: &str) -> Result<(), String> {
+    if cwd.contains("being-removed") {
+        Err(format!("worktree_being_removed: {cwd} is being removed"))
+    } else {
+        Ok(())
+    }
+}
+
+/// The text of the one delivery a worker in `cwd` settles with.
+fn delivered_text(core: &Core, cwd: &std::path::Path) -> String {
+    let delegated = call(
+        core,
+        "alethe_delegate",
+        json!({ "cwd": cwd.to_string_lossy(), "tasks": ["anything"] }),
+    );
+    assert_eq!(delegated["accepted"], json!(1), "{delegated}");
+    let checked = call(
+        core,
+        "alethe_check",
+        json!({ "wait": true, "timeoutMs": 5000 }),
+    );
+    checked["deliveries"][0]["text"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string()
+}
+
+/// A launcher whose program does not exist: a worker that gets past every check fails to start.
+fn missing_worker() -> Launcher {
+    Launcher::codex_app_server(PathBuf::from("alethe-no-such-worker-program"))
+}
+
+#[test]
+fn a_worker_is_refused_in_a_folder_the_spawn_guard_refuses() {
+    let core = Core::default();
+    core.set_launcher(missing_worker());
+    core.set_spawn_guard(refuse_removed);
+    let removed = workspace("being-removed");
+    let free = workspace("guard-free");
+
+    let refused = delivered_text(&core, &removed);
+    assert!(refused.contains("worktree_being_removed"), "{refused}");
+    let elsewhere = delivered_text(&core, &free);
+    assert!(elsewhere.contains("worker spawn failed"), "{elsewhere}");
+
+    for dir in [&removed, &free] {
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}
+
+#[test]
+fn without_a_spawn_guard_a_worker_starts_as_before() {
+    let core = Core::default();
+    core.set_launcher(missing_worker());
+    let dir = workspace("being-removed-unguarded");
+
+    let text = delivered_text(&core, &dir);
+    assert!(text.contains("worker spawn failed"), "{text}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn a_job_fails_cleanly_when_no_launcher_is_configured() {
     let core = Core::default();

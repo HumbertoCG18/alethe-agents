@@ -23,11 +23,12 @@ beforeEach(() => {
 })
 afterEach(() => vi.unstubAllGlobals())
 
-function setup() {
+function setup(overrides: Partial<SidebarMenuDeps> = {}) {
   const actions = {
     deleteTerminalWithWorktreeCleanup: vi.fn(async () => {}),
     deleteProject: vi.fn(),
     deleteGroup: vi.fn(),
+    createOrchestratorPane: vi.fn(),
   }
   const deps = {
     t: ((key: string) => key) as SidebarMenuDeps['t'],
@@ -43,6 +44,7 @@ function setup() {
     setFocusedTerminal: vi.fn(),
     requestPaneFocus: vi.fn(),
     openMarkdownSidebar: vi.fn(),
+    ...overrides,
   } satisfies SidebarMenuDeps
   return { menus: createSidebarMenus(deps), actions }
 }
@@ -62,6 +64,17 @@ const terminal = {
 } as unknown as Terminal
 const project = { id: 'proj-1', name: 'App', terminals: [terminal] } as unknown as Project
 const group = { id: 'group-1', name: 'Team', projectIds: ['proj-1'] } as unknown as Group
+
+describe('project menu', () => {
+  it('opens the orchestrator in the checkout the project picked, not its first folder', () => {
+    const { menus, actions } = setup({ orchestratorEnabled: true })
+    const onWorktree = { ...project, defaultCwd: 'C:\repo-night', checkoutPath: 'C:\repo' }
+
+    click(menus.projectMenu(onWorktree), 'menu.addOrchestrator')
+
+    expect(actions.createOrchestratorPane).toHaveBeenCalledWith('proj-1', 'C:\repo')
+  })
+})
 
 describe('sidebar menu confirmations', () => {
   it.each([

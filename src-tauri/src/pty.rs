@@ -270,15 +270,15 @@ pub async fn spawn_pty(
         let spawn_started = Instant::now();
         let id = id.unwrap_or_else(|| nanoid::nanoid!());
         let requested_command = command.clone();
-
-        let Some(_spawn_reservation) = reserve_spawn(&sessions, &id)? else {
+        // First step: the folder is resolved, checked and held as starting before the memory wait,
+        // and stays held until the session is registered or the spawn fails.
+        let Some(begun) = begin_pty_spawn(&sessions, &id, cwd.as_deref(), || {
+            prepare_memory_for_boot(&app, &id)
+        })?
+        else {
             return Ok(SpawnPtyResponse { id });
         };
-
-                                                                        
-                                                                            
-        // `prepare_memory_for_boot`).
-        let memory_wait_ms = prepare_memory_for_boot(&app, &id);
+        let memory_wait_ms = begun.memory_wait_ms;
 
         let scrollback = Arc::new(Mutex::new(ScrollbackBuffer::new(load_scrollback(
             &app, &id,
@@ -339,25 +339,9 @@ pub async fn spawn_pty(
                 s[..limit].to_string()
             })
             .unwrap_or_else(|| "<none>".to_string());
-        let cwd_warning = if let Some(cwd_value) = cwd.as_deref().filter(|cwd| !cwd.is_empty()) {
-            if PathBuf::from(cwd_value).is_dir() {
-                                                                               
-                                                                                 
-                                                                                 
-                                                                               
-                                                                                
-                                                                          
-                                                                      
-                command.cwd(crate::worktrees::git_arg(Path::new(cwd_value)));
-                None
-            } else {
-                Some(format!(
-                    "\r\nWarning: cwd not found, using default directory: {cwd_value}\r\n"
-                ))
-            }
-        } else {
-            None
-        };
+        if let Some(folder) = begun.folder.as_deref() {
+            command.cwd(crate::worktrees::git_arg(folder));
+        }
         let child = pair
             .slave
             .spawn_command(command)
@@ -409,7 +393,6 @@ pub async fn spawn_pty(
         let thread_reader_done = Arc::clone(&reader_done);
         let thread_child = Arc::clone(&child);
         let thread_sessions = sessions.clone();
-        let initial_warning = cwd_warning.clone();
         let read_active = Arc::new((std::sync::Mutex::new(true), std::sync::Condvar::new()));
         let thread_read_active = Arc::clone(&read_active);
         let visible = Arc::new(AtomicBool::new(true));
@@ -501,15 +484,6 @@ pub async fn spawn_pty(
             }
         };
 
-        if let Some(warning) = initial_warning {
-            let _ = event_app.emit(&event_name, &warning);
-            let _ = push_scrollback(
-                &scrollback_app,
-                &scrollback_id,
-                &thread_scrollback,
-                warning.as_bytes(),
-            );
-        }
 
         let mut sent_boot_nudge = false;
 
@@ -1784,9 +1758,161 @@ pub fn install_kill_on_close_guard() {
     let _ = JOB_GUARD_ACTIVE.set(true);
 }
 
+/// What `spawn_pty` holds from its first step until its session is registered: the folder it
+/// launches in, held as starting there, and the reservation of its id.
+struct BegunSpawn {
+    folder: Option<PathBuf>,
+    memory_wait_ms: u128,
+    _starting: crate::worktrees::PendingSpawn,
+    _reservation: SpawnReservation,
+}
+
+/// `spawn_pty`'s first step, in order: its folder is resolved, checked and held as starting before
+/// anything waits, so no worktree removal can take it meanwhile; then the id is reserved and the
+/// memory wait runs. `None` when a session with this id already runs.
+fn begin_pty_spawn(
+    sessions: &PtySessions,
+    id: &str,
+    cwd: Option<&str>,
+    wait_for_memory: impl FnOnce() -> u128,
+) -> Result<Option<BegunSpawn>, String> {
+    let folder = spawn_cwd(cwd)?;
+    let starting = crate::worktrees::begin_spawn(folder.as_deref())?;
+    let Some(reservation) = reserve_spawn(sessions, id)? else {
+        return Ok(None);
+    };
+    let memory_wait_ms = wait_for_memory();
+    Ok(Some(BegunSpawn {
+        folder,
+        memory_wait_ms,
+        _starting: starting,
+        _reservation: reservation,
+    }))
+}
+
+/// The folder a terminal starts in, absolute. None asked: the shell's own. One asked that does not
+/// exist, or can't be read, fails the spawn rather than starting it somewhere the user did not
+/// choose.
+fn spawn_cwd(cwd: Option<&str>) -> Result<Option<PathBuf>, String> {
+    let Some(folder) = cwd.and_then(crate::worktrees::absolute_cwd) else {
+        return Ok(None);
+    };
+    match std::fs::metadata(&folder) {
+        Ok(found) if found.is_dir() => Ok(Some(folder)),
+        Ok(_) => Err(format!(
+            "cwd_not_found: {} is not a folder",
+            folder.display()
+        )),
+        Err(error) => Err(cwd_error(&folder, &error)),
+    }
+}
+
+/// Missing is told apart from there but unreadable (permissions, a lock, a dead share).
+fn cwd_error(folder: &Path, error: &std::io::Error) -> String {
+    if error.kind() == std::io::ErrorKind::NotFound {
+        format!("cwd_not_found: {} does not exist", folder.display())
+    } else {
+        format!("cwd_unreadable: {}: {error}", folder.display())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn scratch_dir(tag: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("alethe-{tag}-{nanos}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn spawn_pty_holds_its_folder_from_its_first_step_through_the_memory_wait() {
+        let sessions: PtySessions = Arc::new(Mutex::new(HashMap::new()));
+        let dir = scratch_dir("begin");
+        let root = dir.canonicalize().unwrap();
+
+        let begun = begin_pty_spawn(&sessions, "pty-begin", Some(&dir.to_string_lossy()), || {
+            // However long this wait, the folder can't be marked for removal meanwhile.
+            assert_eq!(
+                crate::worktrees::mark_removal(&root).err().as_deref(),
+                Some("worktree_in_use_terminal")
+            );
+            7
+        })
+        .unwrap()
+        .expect("a fresh id is reserved");
+        assert_eq!(begun.folder.as_deref(), Some(dir.as_path()));
+        assert_eq!(begun.memory_wait_ms, 7);
+
+        drop(begun);
+        assert!(crate::worktrees::mark_removal(&root).is_ok());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn spawn_pty_refuses_a_missing_folder_before_waiting_for_memory() {
+        let sessions: PtySessions = Arc::new(Mutex::new(HashMap::new()));
+        let dir = scratch_dir("gone");
+        std::fs::remove_dir_all(&dir).unwrap();
+        let mut waited = false;
+
+        let refused = begin_pty_spawn(&sessions, "pty-gone", Some(&dir.to_string_lossy()), || {
+            waited = true;
+            0
+        });
+
+        assert!(refused
+            .err()
+            .unwrap_or_default()
+            .starts_with("cwd_not_found"));
+        assert!(!waited);
+    }
+
+    #[test]
+    fn a_folder_that_cannot_be_read_is_not_reported_missing() {
+        let folder = Path::new(r"C:\locked");
+        let denied = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+        let missing = std::io::Error::from(std::io::ErrorKind::NotFound);
+        assert!(cwd_error(folder, &denied).starts_with("cwd_unreadable"));
+        assert!(cwd_error(folder, &missing).starts_with("cwd_not_found"));
+    }
+
+    #[test]
+    fn home_and_quoted_folders_open_as_they_used_to() {
+        let home = dirs_next::home_dir().unwrap();
+        let dir = scratch_dir("quoted");
+        assert_eq!(spawn_cwd(Some("~")).unwrap(), Some(home));
+        assert_eq!(
+            spawn_cwd(Some(&format!("\"{}\"", dir.display()))).unwrap(),
+            Some(dir.clone())
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_requested_cwd_that_vanished_fails_the_spawn_instead_of_moving_it() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("alethe-cwd-{nanos}"));
+        assert_eq!(spawn_cwd(None).unwrap(), None);
+        assert_eq!(spawn_cwd(Some("  ")).unwrap(), None);
+        std::fs::create_dir_all(&dir).unwrap();
+        assert_eq!(
+            spawn_cwd(Some(&dir.to_string_lossy())).unwrap(),
+            Some(dir.clone())
+        );
+
+        std::fs::remove_dir_all(&dir).unwrap();
+        let error = spawn_cwd(Some(&dir.to_string_lossy())).unwrap_err();
+        assert!(error.starts_with("cwd_not_found"), "{error}");
+    }
 
     #[cfg(not(windows))]
     #[test]

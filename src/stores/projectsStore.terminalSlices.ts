@@ -75,7 +75,11 @@ export function createTerminalsSlice({ get, update, updateTerminal }: SliceCtx):
           p.id === projectId
             ? {
                 ...p,
-                ...(!args.worktreeAgentId && finalCwd ? { defaultCwd: finalCwd } : {}),
+                // A project remembers the folder of its latest terminal for the next one, unless
+                // it picked a checkout: the worktree picker decides that, and defaultCwd stays.
+                ...(!args.worktreeAgentId && finalCwd && !p.checkoutPath
+                  ? { defaultCwd: finalCwd }
+                  : {}),
                 terminals: [...p.terminals, terminal],
               }
             : p,

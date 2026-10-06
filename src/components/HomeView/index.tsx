@@ -23,6 +23,7 @@ import { useT, type TFunction } from '../../lib/i18n'
 import { formatShortcut } from '../../lib/platform'
 import { getFirstName, getProfileImageUrl, getProfileInitial } from '../../lib/profile'
 import { openInBrowser } from '../../lib/tauri'
+import { anchoredCwd } from '../../lib/projectCheckout'
 import { getProjectDefaultCwd, useProjectsStore } from '../../stores/projectsStore'
 import { useUiStore } from '../../stores/uiStore'
 import { resolveUnrestrictedFlag } from '../../lib/agentProviders'
@@ -211,8 +212,12 @@ export function HomeView() {
     if (quickTarget && quickTarget.id !== quickProjectId) setQuickProjectId(quickTarget.id)
   }, [quickProjectId, quickTarget])
 
+  /** The folder offered for the quick prompt; left as is, it follows the project's anchor. */
+  const quickOffered = useRef('')
   useEffect(() => {
-    if (!quickCwd && quickTarget) setQuickCwd(getProjectDefaultCwd(quickTarget, projects))
+    if (quickCwd || !quickTarget) return
+    quickOffered.current = getProjectDefaultCwd(quickTarget, projects)
+    setQuickCwd(quickOffered.current)
   }, [projects, quickCwd, quickTarget])
 
   const browseQuickFolder = async () => {
@@ -224,7 +229,10 @@ export function HomeView() {
     event.preventDefault()
     const prompt = quickPromptRef.current?.value.trim() ?? ''
     if (!quickTarget || !prompt) return
-    const cwd = quickCwd.trim() || getProjectDefaultCwd(quickTarget, projects)
+    const cwd = await anchoredCwd(quickTarget.id, {
+      typed: quickCwd,
+      offered: quickOffered.current,
+    })
     const flag = quickUnrestricted ? resolveUnrestrictedFlag(quickAgent) : null
     const label = QUICK_AGENTS.find((agent) => agent.type === quickAgent)?.label ?? quickAgent
     const terminal = await createAgentTerminal(quickTarget.id, {

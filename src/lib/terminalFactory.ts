@@ -235,6 +235,7 @@ export function getProjectDefaultCwd(
   projects: Project[] = [],
 ): string {
   if (!project) return ''
+  if (project.checkoutPath?.trim()) return project.checkoutPath.trim()
   if (project.defaultCwd?.trim()) return project.defaultCwd.trim()
   const candidates = [project]
   if (project.groupId) {

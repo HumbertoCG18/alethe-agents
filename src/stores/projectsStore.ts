@@ -113,6 +113,11 @@ export type ProjectsState = ProjectsFile & {
   archiveProject: (id: string) => void
   unarchiveProject: (id: string) => void
   setProjectHidden: (id: string, hidden: boolean) => void
+  /** The checkout new terminals start in and the Markdown tab reads (worktree picker). */
+  setProjectCheckout: (id: string, path: string) => void
+  /** Once `path` left the disk, `main` becomes the checkout of every project that picked it, or
+   *  sits in it with nothing picked. `defaultCwd` is never rewritten. */
+  retireCheckout: (path: string, main: string) => void
   setProjectColor: (id: string, color: string | undefined) => void
   setProjectIconUrl: (id: string, iconUrl: string | undefined) => void
   addMarkdownComment: (

@@ -7,6 +7,7 @@ import {
   Info,
   type LucideIcon,
   Palette,
+  PanelLeft,
   Plug,
   Puzzle,
   Search,
@@ -34,12 +35,14 @@ import { OrganizationPage } from './preferences/OrganizationPage'
 import { PluginsPage } from './preferences/PluginsPage'
 import { Avatar } from './preferences/primitives'
 import { RemoteControlPage } from './preferences/RemoteControlPage'
+import { SidebarPage } from './preferences/SidebarPage'
 import { TerminalPage } from './preferences/TerminalPage'
 import styles from './PreferencesModal.module.css'
 
 type CategoryId =
   | 'account'
   | 'appearance'
+  | 'sidebar'
   | 'features'
   | 'plugins'
   | 'terminal'
@@ -98,6 +101,12 @@ export function PreferencesModal() {
         label: t('prefs.categoryAppearance'),
         description: t('prefs.categoryAppearanceDesc'),
         Icon: Palette,
+      },
+      {
+        id: 'sidebar',
+        label: t('prefs.categorySidebar'),
+        description: t('prefs.categorySidebarDesc'),
+        Icon: PanelLeft,
       },
       {
         id: 'remoteControl',
@@ -173,6 +182,13 @@ export function PreferencesModal() {
         label: t('prefs.localAccounts'),
         description: t('prefs.localAccountsDesc'),
         keywords: 'account profile conta perfil local switch trocar',
+      },
+      {
+        category: 'sidebar',
+        target: 'sidebar-left',
+        label: t('prefs.categorySidebar'),
+        description: t('prefs.categorySidebarDesc'),
+        keywords: 'sidebar icons order hide show barra lateral ícones ordem ocultar mostrar',
       },
       {
         category: 'appearance',
@@ -552,6 +568,7 @@ export function PreferencesModal() {
                     />
                   ) : null}
                   {category === 'appearance' ? <AppearancePage /> : null}
+                  {category === 'sidebar' ? <SidebarPage /> : null}
                   {category === 'features' ? <FeaturesPage /> : null}
                   {category === 'plugins' ? <PluginsPage /> : null}
                   {category === 'terminal' ? <TerminalPage enabledCount={enabledCount} /> : null}

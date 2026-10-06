@@ -1,0 +1,45 @@
+.list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  background: var(--bg);
+}
+
+.row + .row {
+  border-top: 1px solid var(--border-subtle);
+}
+
+.row[data-dragging] {
+  position: relative;
+  z-index: 1;
+  opacity: 0.85;
+}
+
+.row > span {
+  flex: 1;
+  min-width: 0;
+}
+
+.grip {
+  cursor: grab;
+}
+
+.grip:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.pinned {
+  width: 26px;
+}

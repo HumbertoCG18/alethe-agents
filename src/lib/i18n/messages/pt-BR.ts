@@ -498,6 +498,16 @@ export const ptBR: Record<MessageKey, string> = {
   'prefs.restoreProject': 'Restaurar projeto',
   'prefs.categoryAppearance': 'Aparência',
   'prefs.categoryAppearanceDesc': 'Personalize as cores e a escala da interface.',
+  'prefs.categorySidebar': 'Barra Lateral',
+  'prefs.categorySidebarDesc': 'Mostre, oculte e reordene os ícones das barras laterais.',
+  'prefs.sidebarLeft': 'Barra lateral esquerda',
+  'prefs.sidebarRight': 'Barra lateral direita',
+  'prefs.sidebarDesc':
+    'Arraste um ícone, ou use as setas na alça dele, para reordenar. Em qual barra um painel de plugin abre é definido em Aparência.',
+  'prefs.sidebarIconMove': 'Mover {name}',
+  'prefs.sidebarIconMoveHint':
+    'Arraste, ou pressione as setas para cima e para baixo, para reordenar',
+  'prefs.sidebarIconLocked': 'Sempre visível, para o app continuar acessível',
   'prefs.categoryRemoteControl': 'Controle remoto',
   'prefs.categoryRemoteControlDesc':
     'Gerencie acesso LAN, políticas de segurança e dispositivos conectados.',
@@ -2088,6 +2098,31 @@ export const ptBR: Record<MessageKey, string> = {
   'ui.sidebar.emptyDesc': 'Crie o primeiro projeto aqui e comece a montar sua workspace.',
   'ui.sidebar.emptyAction': 'Criar projeto',
   'ui.sidebar.editNameColor': 'Editar (nome e cor)…',
+  'ui.sidebar.worktrees': 'Worktrees…',
+  'worktreePicker.title': 'Worktrees · {name}',
+  'worktreePicker.hint':
+    'Novos terminais abrem na worktree escolhida e a aba Markdown lê dela. Terminais abertos ficam onde estão.',
+  'worktreePicker.loading': 'Lendo worktrees…',
+  'worktreePicker.notGit': 'Este projeto não está em um repositório git.',
+  'worktreePicker.main': 'principal',
+  'worktreePicker.stale': 'obsoleta',
+  'worktreePicker.staleHint':
+    'A branch já foi mesclada na branch do checkout principal, ou está atrás dela sem commits próprios, e não há nada sem commit nela.',
+  'worktreePicker.uncommitted': '{count} alterações não commitadas',
+  'worktreePicker.beingRemoved': '{name} já está sendo removida.',
+  'worktreePicker.baseUnknown':
+    'Branch base desconhecida: o checkout principal está em HEAD destacado, então nenhuma worktree é marcada como obsoleta.',
+  'worktreePicker.workersUnknown':
+    'Não foi possível verificar os workers da orquestração, então {name} foi mantida.',
+  'worktreePicker.detached': 'HEAD destacado',
+  'worktreePicker.remove': 'Remover {name}',
+  'worktreePicker.confirmRemove':
+    'Remover a worktree {name} ({branch}) do disco? A branch continua existindo.',
+  'worktreePicker.busyTerminal': '{name} está em uso por um terminal aberto. Feche-o antes.',
+  'worktreePicker.busyWorker':
+    'Um worker da orquestração ainda roda em {name}. Aguarde ou cancele-o antes.',
+  'worktreePicker.refusedDirty': '{name} tem alterações não commitadas, então foi mantida.',
+  'worktreePicker.refusedMain': 'O checkout principal não pode ser removido.',
   'ui.sidebar.exportProjectConfig': 'Exportar configuração…',
   'ui.sidebar.exportProjectConfigTitle': 'Exportar configuração do projeto',
   'ui.sidebar.exportProjectConfigDone': 'Configuração do projeto exportada',

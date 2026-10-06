@@ -34,6 +34,8 @@ pub const STATUS_INTERRUPTED: &str = "interrupted";
 pub const STATUS_BLOCKED: &str = "blocked";
 
 pub type Observer = Arc<dyn Fn(Value) + Send + Sync>;
+/// Refuses a worker's folder; the app layer refuses one being removed.
+pub type SpawnGuard = fn(&str) -> Result<(), String>;
 
 /// How to start one worker. The app layer resolves this once; the core never guesses.
 #[derive(Clone, Debug)]
@@ -729,6 +731,7 @@ pub struct Core {
     observer: Arc<Mutex<Option<Observer>>>,
     dispatch: Arc<Mutex<Option<Sender<Value>>>>,
     store: Arc<Mutex<Option<PathBuf>>>,
+    spawn_guard: Arc<Mutex<Option<SpawnGuard>>>,
 }
 
 impl Default for Core {
@@ -745,6 +748,7 @@ impl Default for Core {
             observer: Arc::new(Mutex::new(None)),
             dispatch: Arc::new(Mutex::new(None)),
             store: Arc::new(Mutex::new(None)),
+            spawn_guard: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -1228,6 +1232,10 @@ impl Core {
         }
     }
 
+    pub fn set_spawn_guard(&self, check: SpawnGuard) {
+        *guard(&self.spawn_guard) = Some(check);
+    }
+
     pub fn set_launcher(&self, launcher: Launcher) {
         guard(&self.launchers).insert(launcher.kind.clone(), launcher);
     }
@@ -1452,6 +1460,11 @@ impl Core {
             );
             return;
         };
+        let refused = guard(&self.spawn_guard).and_then(|check| check(&cwd).err());
+        if let Some(error) = refused {
+            self.settle(job_id, STATUS_FAILED, "failed", &error);
+            return;
+        }
         let is_claude = agent == "claude";
 
         let mut command = Command::new(&launcher.program);

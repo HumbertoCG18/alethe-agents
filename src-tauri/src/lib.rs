@@ -479,6 +479,7 @@ pub fn run() {
             worktrees::worktree_list,
             worktrees::worktree_checkouts,
             worktrees::worktree_remove,
+            worktrees::worktree_remove_checkout,
             worktrees::worktree_cleanup,
             worktrees::worktree_fetch_branch,
             worktrees::worktree_lock,

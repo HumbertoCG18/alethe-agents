@@ -25,7 +25,12 @@ import { useEffect, useMemo, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 
 import { useT } from '../../lib/i18n'
-import { sidebarTabLabel, sidebarTabPanelLabel } from '../../lib/plugins'
+import {
+  type SidebarTabContribution,
+  sidebarTabLabel,
+  sidebarTabPanelLabel,
+} from '../../lib/plugins'
+import { sidebarIconIds, useVisibleSidebarIcons } from '../../lib/sidebarIcons'
 import { useSidebarViews } from '../../lib/viewPlacement'
 import { formatShortcut } from '../../lib/platform'
 import {
@@ -174,6 +179,13 @@ export function NormalProjectSidebar() {
   const setSidebarTab = useUiStore((s) => s.setLeftSidebarTab)
   const contributedTabs = useSidebarViews('left')
   const contributedTab = contributedTabs.find((tab) => tab.id === sidebarTab)
+  const tabIds = useVisibleSidebarIcons(
+    'left',
+    sidebarIconIds(
+      'left',
+      contributedTabs.map((tab) => tab.id),
+    ),
+  )
   const keepHome = activeView === 'home'
 
   // A contributed tab can vanish when its plugin is disabled at runtime.
@@ -470,6 +482,13 @@ export function NormalProjectSidebar() {
     )
   }
 
+  const tabs: Record<string, { label: string; Icon: SidebarTabContribution['icon'] }> = {
+    projects: { label: t('ui.sidebar.projects'), Icon: Grid3x3 },
+    files: { label: t('ui.sidebar.files'), Icon: Folder },
+  }
+  for (const tab of contributedTabs)
+    tabs[tab.id] = { label: sidebarTabLabel(t, tab), Icon: tab.icon }
+
   return (
     <aside className={styles.sidebar}>
       <div className={styles.sidebarTabs} role="tablist" aria-label={t('ui.sidebar.navigation')}>
@@ -489,54 +508,23 @@ export function NormalProjectSidebar() {
           <Home size={14} />
           <span>{t('ui.sidebar.home')}</span>
         </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={sidebarTab === 'projects'}
-          aria-label={t('ui.sidebar.projects')}
-          title={t('ui.sidebar.projects')}
-          className={`${styles.sidebarTab} ${sidebarTab === 'projects' ? styles.sidebarTabActive : ''}`}
-          onClick={() => {
-            setSidebarTab('projects')
-            if (!keepHome) setActiveView('workspace')
-          }}
-        >
-          <Grid3x3 size={14} />
-          <span>{t('ui.sidebar.projects')}</span>
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={sidebarTab === 'files'}
-          aria-label={t('ui.sidebar.files')}
-          title={t('ui.sidebar.files')}
-          className={`${styles.sidebarTab} ${sidebarTab === 'files' ? styles.sidebarTabActive : ''}`}
-          onClick={() => {
-            setSidebarTab('files')
-            if (!keepHome) setActiveView('workspace')
-          }}
-        >
-          <Folder size={14} />
-          <span>{t('ui.sidebar.files')}</span>
-        </button>
-        {contributedTabs.map((tab) => {
-          const TabIcon = tab.icon
-          const label = sidebarTabLabel(t, tab)
+        {tabIds.map((id) => {
+          const { label, Icon } = tabs[id]
           return (
             <button
-              key={tab.id}
+              key={id}
               type="button"
               role="tab"
-              aria-selected={sidebarTab === tab.id}
+              aria-selected={sidebarTab === id}
               aria-label={label}
               title={label}
-              className={`${styles.sidebarTab} ${sidebarTab === tab.id ? styles.sidebarTabActive : ''}`}
+              className={`${styles.sidebarTab} ${sidebarTab === id ? styles.sidebarTabActive : ''}`}
               onClick={() => {
-                setSidebarTab(tab.id)
+                setSidebarTab(id)
                 if (!keepHome) setActiveView('workspace')
               }}
             >
-              <TabIcon size={14} />
+              <Icon size={14} />
               <span>{label}</span>
             </button>
           )

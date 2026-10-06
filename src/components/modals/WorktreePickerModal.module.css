@@ -1,0 +1,46 @@
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.row > button:first-child {
+  flex: 1;
+}
+
+.name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.badge {
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--fg-muted);
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.stale {
+  border-color: var(--status-waiting);
+  color: var(--status-waiting);
+  background: var(--status-waiting-soft);
+}
+
+.notice {
+  margin: 10px 0 0;
+  color: var(--fg-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}

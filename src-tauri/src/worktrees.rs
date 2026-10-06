@@ -13,6 +13,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
+use crate::filesystem::{release_watchers_under, FileWatchers};
 use crate::git_control::{
     checked_output, git_command, main_repository_root, repository_root, with_lock_awareness,
 };
@@ -183,6 +184,12 @@ pub struct GitCheckout {
     pub path: String,
     pub branch: Option<String>,
     pub last_commit_ms: Option<i64>,
+    /// No commits of its own beyond the main checkout's branch (merged, or behind it) and nothing
+    /// uncommitted. Only set by the status pass.
+    pub stale: bool,
+    /// Uncommitted changes `git status` counts, untracked links left out; `None` without the status
+    /// pass or when git could not tell.
+    pub uncommitted: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -192,16 +199,23 @@ pub struct GitCheckouts {
     pub main: Option<String>,
     /// Every checkout whose folder exists, the main one included.
     pub worktrees: Vec<GitCheckout>,
+    /// The main checkout's branch, which stale marks compare against; `None` when it is detached.
+    pub base: Option<String>,
 }
 
 #[tauri::command]
-pub async fn worktree_checkouts(path: String) -> Result<GitCheckouts, String> {
-    tokio::task::spawn_blocking(move || worktree_checkouts_inner(&path))
+pub async fn worktree_checkouts(
+    path: String,
+    status: Option<bool>,
+) -> Result<GitCheckouts, String> {
+    tokio::task::spawn_blocking(move || worktree_checkouts_inner(&path, status.unwrap_or(false)))
         .await
         .map_err(|error| format!("worktree_checkouts: blocking task failed: {error}"))?
 }
 
-pub(crate) fn worktree_checkouts_inner(path: &str) -> Result<GitCheckouts, String> {
+/// The repository's checkouts. `status` adds what the worktree picker shows: each checkout's
+/// uncommitted count (one `git status` each) and the stale mark.
+pub(crate) fn worktree_checkouts_inner(path: &str, status: bool) -> Result<GitCheckouts, String> {
     let cwd = Path::new(path.trim());
     let output = checked_output(cwd, &["worktree", "list", "--porcelain"])?;
     let text = String::from_utf8_lossy(&output.stdout);
@@ -244,20 +258,435 @@ pub(crate) fn worktree_checkouts_inner(path: &str) -> Result<GitCheckouts, Strin
         }
     }
 
-    let main = entries
-        .first()
-        .filter(|entry| !entry.3)
-        .map(|entry| entry.0.to_string_lossy().into_owned());
+    let main_entry = entries.first().filter(|entry| !entry.3);
+    let main = main_entry.map(|entry| entry.0.to_string_lossy().into_owned());
+    // The base is the main checkout's branch, the target the merge flow integrates into.
+    let base = main_entry.and_then(|entry| entry.2.clone());
+    let merged = match base.as_deref() {
+        Some(base) if status => merged_branches(cwd, base),
+        _ => std::collections::HashSet::new(),
+    };
     let worktrees = entries
         .iter()
         .filter(|entry| !entry.3 && entry.0.is_dir())
-        .map(|(dir, head, branch, _)| GitCheckout {
-            path: dir.to_string_lossy().into_owned(),
-            branch: branch.clone(),
-            last_commit_ms: head.and_then(|sha| commit_ms.get(sha).copied()),
+        .map(|(dir, head, branch, _)| {
+            let uncommitted = if status { uncommitted(dir).ok() } else { None };
+            GitCheckout {
+                path: dir.to_string_lossy().into_owned(),
+                branch: branch.clone(),
+                last_commit_ms: head.and_then(|sha| commit_ms.get(sha).copied()),
+                stale: uncommitted == Some(0)
+                    && branch.as_ref().is_some_and(|name| merged.contains(name)),
+                uncommitted,
+            }
         })
         .collect();
-    Ok(GitCheckouts { main, worktrees })
+    Ok(GitCheckouts {
+        main,
+        worktrees,
+        base,
+    })
+}
+
+/// Local branches with no commits `base` lacks: merged, behind, or level with it. `base` itself is
+/// left out. One `for-each-ref`; a failure marks nothing stale.
+fn merged_branches(cwd: &Path, base: &str) -> std::collections::HashSet<String> {
+    let merged = format!("--merged=refs/heads/{base}");
+    let args = [
+        "for-each-ref",
+        merged.as_str(),
+        "--format=%(refname)",
+        "refs/heads/",
+    ];
+    checked_output(cwd, &args)
+        .map(|listed| {
+            String::from_utf8_lossy(&listed.stdout)
+                .lines()
+                .filter_map(|line| line.strip_prefix("refs/heads/"))
+                .filter(|branch| *branch != base)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Uncommitted changes in `dir`, one per `git status` entry. An untracked entry that is only a link,
+/// such as a junctioned `node_modules`, is not work and does not count.
+fn uncommitted(dir: &Path) -> Result<u32, String> {
+    let output = checked_output(dir, &["status", "--porcelain", "-z"])?;
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut fields = text.split('\0').filter(|field| !field.is_empty());
+    let mut count = 0;
+    while let Some(entry) = fields.next() {
+        let code = entry.get(..2).unwrap_or_default();
+        if code.contains(['R', 'C']) {
+            // A rename or copy is followed by the path it came from.
+            fields.next();
+        }
+        let path = entry.get(3..).unwrap_or_default().trim_end_matches('/');
+        let untracked_link = code == "??"
+            && std::fs::symlink_metadata(dir.join(path)).is_ok_and(|found| is_link(&found));
+        if !untracked_link {
+            count += 1;
+        }
+    }
+    Ok(count)
+}
+
+#[tauri::command]
+pub async fn worktree_remove_checkout(
+    watchers: tauri::State<'_, FileWatchers>,
+    sessions: tauri::State<'_, crate::pty::PtySessions>,
+    orchestrator: tauri::State<'_, crate::orchestrator::OrchestratorState>,
+    path: String,
+) -> Result<(), String> {
+    use crate::orchestrator_core::{STATUS_BLOCKED, STATUS_QUEUED, STATUS_RUNNING};
+    let watchers = watchers.0.clone();
+    let sessions = std::sync::Arc::clone(sessions.inner());
+    let core = orchestrator.core().clone();
+    tokio::task::spawn_blocking(move || {
+        let in_use = |target: &Path| {
+            // A poisoned lock can't tell: it refuses, as anything else unknown does.
+            let terminal = sessions.lock().map_or(true, |open| {
+                live_cwd_inside(target, open.values().filter_map(|pty| pty.cwd.as_deref()))
+            });
+            if terminal {
+                return Some("worktree_in_use_terminal".to_string());
+            }
+            let snapshot = core.snapshot();
+            let jobs = snapshot["jobs"].as_array().cloned().unwrap_or_default();
+            let live = jobs.iter().filter(|job| {
+                matches!(
+                    job["status"].as_str(),
+                    Some(STATUS_QUEUED | STATUS_RUNNING | STATUS_BLOCKED)
+                )
+            });
+            live_cwd_inside(target, live.filter_map(|job| job["cwd"].as_str()))
+                .then(|| "worktree_in_use_worker".to_string())
+        };
+        worktree_remove_checkout_inner(&path, in_use, |root| {
+            release_watchers_under(&watchers, root)
+        })
+    })
+    .await
+    .map_err(|error| format!("worktree_remove_checkout: blocking task failed: {error}"))?
+}
+
+/// Removes a linked worktree listed by `git worktree list`, wherever it lives. Refuses the main
+/// checkout and any worktree with uncommitted or untracked changes (untracked links aside, which
+/// go first, as links). Every check that can refuse runs before anything changes. While it runs
+/// the path is marked, so nothing starts inside it; `in_use` then names anything already running
+/// there, and `release` lets go of what the app still holds inside it.
+pub(crate) fn worktree_remove_checkout_inner(
+    path: &str,
+    in_use: impl FnOnce(&Path) -> Option<String>,
+    release: impl FnOnce(&Path),
+) -> Result<(), String> {
+    let target = Path::new(path.trim())
+        .canonicalize()
+        .map_err(|_| "worktree_not_found".to_string())?;
+    let checkouts = worktree_checkouts_inner(path, false)?;
+    let same = |listed: &str| Path::new(listed).canonicalize().ok().as_ref() == Some(&target);
+    let main = checkouts.main.ok_or("worktree_not_found")?;
+    if same(&main) {
+        return Err("worktree_is_main".to_string());
+    }
+    if !checkouts
+        .worktrees
+        .iter()
+        .any(|checkout| same(&checkout.path))
+    {
+        return Err("worktree_not_found".to_string());
+    }
+    if uncommitted(&target)? > 0 {
+        return Err("worktree_dirty".to_string());
+    }
+    // An administrative lock would refuse the removal only after the links are gone.
+    with_lock_awareness(&target, || Ok(()))?;
+    // A link git tracks is part of the checkout; unlinking it would leave the worktree dirty.
+    let tracked = tracked_paths(&target)?;
+    let links: Vec<_> = links_inside(&target, LINK_SWEEP_ENTRIES)?
+        .into_iter()
+        .filter(|(link, _)| !tracked.contains(&relative_path(&target, link)))
+        .collect();
+    // Marked first, then checked: a terminal or worker starting now is refused at its spawn, and
+    // one that started before is seen here. Whatever ends the removal lifts the mark.
+    let _mark = mark_removal(&target)?;
+    if let Some(reason) = in_use(&target) {
+        return Err(reason);
+    }
+    release(&target);
+    // A junctioned `node_modules` points at the main checkout's: only the link may go.
+    unlink(&links)?;
+    remove_git_worktree(Path::new(&main), &target, false)
+}
+
+/// Worktrees being removed and the folders of terminals still starting, as `cwd_key`s, under one
+/// lock: a removal refuses while a terminal is starting inside, and nothing starts inside a removal.
+struct Guarded {
+    removing: Vec<String>,
+    starting: Vec<(u64, String)>,
+    next: u64,
+}
+
+static GUARDED: std::sync::Mutex<Guarded> = std::sync::Mutex::new(Guarded {
+    removing: Vec::new(),
+    starting: Vec::new(),
+    next: 0,
+});
+
+fn guarded() -> std::sync::MutexGuard<'static, Guarded> {
+    GUARDED
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+fn being_removed(marked: &str) -> String {
+    format!("worktree_being_removed: {marked} is being removed, so nothing can start in it")
+}
+
+/// A cwd as the user or a caller wrote it, made absolute: trimmed, one pair of surrounding quotes
+/// dropped, a leading `~` taken as the home folder, and a relative path joined to the process's
+/// folder. `None` when nothing is left. Nothing on disk is touched.
+pub(crate) fn absolute_cwd(raw: &str) -> Option<PathBuf> {
+    let trimmed = raw.trim();
+    let unquoted = ['"', '\'']
+        .iter()
+        .find_map(|quote| trimmed.strip_prefix(*quote)?.strip_suffix(*quote))
+        .unwrap_or(trimmed)
+        .trim();
+    if unquoted.is_empty() {
+        return None;
+    }
+    let path = match unquoted.strip_prefix('~') {
+        Some(rest) if rest.is_empty() || rest.starts_with(['/', '\\']) => dirs_next::home_dir()
+            .map(|home| home.join(rest.trim_start_matches(['/', '\\'])))
+            .unwrap_or_else(|| PathBuf::from(unquoted)),
+        _ => PathBuf::from(unquoted),
+    };
+    Some(std::path::absolute(&path).unwrap_or(path))
+}
+
+/// One spelling per folder: no `\\?\` prefix, one separator, no trailing one and, on Windows, one
+/// case. A UNC or WSL path keeps its `\\server\share` form.
+pub(crate) fn path_key(path: &Path) -> String {
+    let plain = git_arg(path);
+    #[cfg(windows)]
+    let plain = plain.replace('/', "\\").to_lowercase();
+    plain
+        .trim_end_matches(std::path::MAIN_SEPARATOR)
+        .to_string()
+}
+
+/// `path` made absolute and resolved as far as it exists (a junction or a symlink to where it
+/// points), then keyed: a folder not created yet compares by its parents.
+fn cwd_key(path: &Path) -> String {
+    let path = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+    let mut missing = Vec::new();
+    let mut current = path.as_path();
+    loop {
+        if let Ok(found) = current.canonicalize() {
+            return path_key(&missing.iter().rev().fold(found, |at, part| at.join(part)));
+        }
+        match (current.parent(), current.file_name()) {
+            (Some(parent), Some(name)) => {
+                missing.push(name.to_os_string());
+                current = parent;
+            }
+            _ => return path_key(&path),
+        }
+    }
+}
+
+/// Whether the folder keyed `key` is `root`'s or lies under it.
+fn key_inside(key: &str, root: &str) -> bool {
+    key == root
+        || key
+            .strip_prefix(root)
+            .is_some_and(|rest| rest.starts_with(std::path::MAIN_SEPARATOR))
+}
+
+/// Holds a path as being removed until dropped, whatever ends the removal.
+pub(crate) struct RemovalMark(String);
+
+impl Drop for RemovalMark {
+    fn drop(&mut self) {
+        guarded().removing.retain(|marked| marked != &self.0);
+    }
+}
+
+/// Marks `root` as being removed; refuses when a removal of it is already running or a terminal is
+/// still starting inside it.
+pub(crate) fn mark_removal(root: &Path) -> Result<RemovalMark, String> {
+    let root = cwd_key(root);
+    let mut state = guarded();
+    if state.removing.contains(&root) {
+        return Err("worktree_being_removed".to_string());
+    }
+    if state.starting.iter().any(|(_, cwd)| key_inside(cwd, &root)) {
+        return Err("worktree_in_use_terminal".to_string());
+    }
+    state.removing.push(root.clone());
+    Ok(RemovalMark(root))
+}
+
+/// A terminal still starting in a folder, from `begin_spawn` until dropped.
+pub(crate) struct PendingSpawn(Option<u64>);
+
+impl Drop for PendingSpawn {
+    fn drop(&mut self) {
+        if let Some(id) = self.0 {
+            guarded().starting.retain(|(starting, _)| *starting != id);
+        }
+    }
+}
+
+/// Begins a terminal's spawn in `cwd`: refused inside a worktree being removed, else held as
+/// starting there until the returned guard is dropped.
+pub(crate) fn begin_spawn(cwd: Option<&Path>) -> Result<PendingSpawn, String> {
+    let Some(cwd) = cwd else {
+        return Ok(PendingSpawn(None));
+    };
+    let at = cwd_key(cwd);
+    let mut state = guarded();
+    if let Some(marked) = state.removing.iter().find(|marked| key_inside(&at, marked)) {
+        return Err(being_removed(marked));
+    }
+    state.next += 1;
+    let id = state.next;
+    state.starting.push((id, at));
+    Ok(PendingSpawn(Some(id)))
+}
+
+/// Whether any of `cwds` lies inside `root`.
+pub(crate) fn live_cwd_inside<'a>(root: &Path, cwds: impl IntoIterator<Item = &'a str>) -> bool {
+    let root = cwd_key(root);
+    cwds.into_iter()
+        .filter_map(absolute_cwd)
+        .any(|cwd| key_inside(&cwd_key(&cwd), &root))
+}
+
+/// Refuses to start a terminal or a worker in a worktree being removed.
+pub(crate) fn refuse_spawn_in_removal(cwd: Option<&str>) -> Result<(), String> {
+    let Some(at) = cwd.and_then(absolute_cwd).map(|cwd| cwd_key(&cwd)) else {
+        return Ok(());
+    };
+    match guarded()
+        .removing
+        .iter()
+        .find(|marked| key_inside(&at, marked))
+    {
+        Some(marked) => Err(being_removed(marked)),
+        None => Ok(()),
+    }
+}
+
+/// Entries the link sweep reads before refusing to guess. Linked worktrees here hold about 1,100
+/// (Alethe, its `node_modules` a junction the sweep never enters) or fewer; one with its own
+/// installed dependencies or build output passes this and is refused, to be cleaned first.
+const LINK_SWEEP_ENTRIES: usize = 50_000;
+
+/// What `git ls-files` lists for the checkout at `root`, as `/`-separated paths.
+fn tracked_paths(root: &Path) -> Result<std::collections::HashSet<String>, String> {
+    let listed = checked_output(root, &["ls-files", "-z"])?;
+    Ok(String::from_utf8_lossy(&listed.stdout)
+        .split('\0')
+        .filter(|path| !path.is_empty())
+        .map(str::to_string)
+        .collect())
+}
+
+/// `path` under `root`, `/`-separated as git writes it.
+fn relative_path(root: &Path, path: &Path) -> String {
+    let inner = path.strip_prefix(root).unwrap_or(path);
+    inner
+        .components()
+        .map(|part| part.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+/// A symlink or, on Windows, any reparse point, a directory junction included.
+fn is_link(metadata: &std::fs::Metadata) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+        if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return true;
+        }
+    }
+    metadata.file_type().is_symlink()
+}
+
+/// A link to a folder: Windows takes it out with `remove_dir`, which never touches the target.
+fn is_folder_link(metadata: &std::fs::Metadata) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
+        metadata.file_attributes() & FILE_ATTRIBUTE_DIRECTORY != 0
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = metadata;
+        false
+    }
+}
+
+/// Every link inside `root`, each with whether it is a folder link. Never walks into a link;
+/// refuses once it has read more than `max_entries`.
+fn links_inside(root: &Path, max_entries: usize) -> Result<Vec<(PathBuf, bool)>, String> {
+    let mut links = Vec::new();
+    let mut folders = vec![root.to_path_buf()];
+    let mut read = 0;
+    while let Some(folder) = folders.pop() {
+        let entries =
+            std::fs::read_dir(&folder).map_err(|error| format!("read_dir_failed:{error}"))?;
+        for entry in entries {
+            read += 1;
+            if read > max_entries {
+                return Err("worktree_too_large_to_check".to_string());
+            }
+            let path = entry
+                .map_err(|error| format!("read_dir_failed:{error}"))?
+                .path();
+            let metadata = std::fs::symlink_metadata(&path)
+                .map_err(|error| format!("metadata_failed:{error}"))?;
+            if is_link(&metadata) {
+                links.push((path, is_folder_link(&metadata)));
+            } else if metadata.is_dir() {
+                folders.push(path);
+            }
+        }
+    }
+    Ok(links)
+}
+
+/// Removes each link itself, never what it points at.
+fn unlink(links: &[(PathBuf, bool)]) -> Result<(), String> {
+    for (link, folder) in links {
+        let removed = if *folder {
+            std::fs::remove_dir(link)
+        } else {
+            std::fs::remove_file(link)
+        };
+        removed.map_err(|error| format!("unlink_failed:{}:{error}", link.display()))?;
+    }
+    Ok(())
+}
+
+/// `git worktree remove`, waiting out a transient index lock and reporting an admin lock.
+fn remove_git_worktree(root: &Path, dest: &Path, force: bool) -> Result<(), String> {
+    let dest_arg = git_arg(dest);
+    with_lock_awareness(dest, || {
+        if force {
+            checked_output(root, &["worktree", "remove", "--force", &dest_arg])
+        } else {
+            checked_output(root, &["worktree", "remove", &dest_arg])
+        }
+    })
+    .map(|_| ())
 }
 
 #[tauri::command]
@@ -292,17 +721,7 @@ pub(crate) fn worktree_remove_inner(
     }
 
     match detect_mode(&dest) {
-        Some(WorktreeMode::GitWorktree) => {
-            let dest_arg = git_arg(&canon_dest);
-
-            with_lock_awareness(&canon_dest, || {
-                if force {
-                    checked_output(&root, &["worktree", "remove", "--force", &dest_arg])
-                } else {
-                    checked_output(&root, &["worktree", "remove", &dest_arg])
-                }
-            })?;
-        }
+        Some(WorktreeMode::GitWorktree) => remove_git_worktree(&root, &canon_dest, force)?,
 
         _ => {
             std::fs::remove_dir_all(&canon_dest)
@@ -599,7 +1018,7 @@ mod tests {
             * 1000;
 
         // Asked from the linked worktree, the main checkout is still the first entry.
-        let found = worktree_checkouts_inner(&linked.to_string_lossy()).unwrap();
+        let found = worktree_checkouts_inner(&linked.to_string_lossy(), false).unwrap();
         assert!(same(found.main.as_deref().unwrap(), &root));
         assert_eq!(found.worktrees.len(), 2);
         let feature = found
@@ -619,7 +1038,7 @@ mod tests {
         let bare_linked_arg = git_arg(&bare_linked);
         git(&root, &["clone", "--bare", &root_arg, &bare_arg]);
         git(&bare, &["worktree", "add", &bare_linked_arg, "feature"]);
-        let from_bare = worktree_checkouts_inner(&bare_linked.to_string_lossy()).unwrap();
+        let from_bare = worktree_checkouts_inner(&bare_linked.to_string_lossy(), false).unwrap();
         assert_eq!(from_bare.main, None);
         assert_eq!(from_bare.worktrees.len(), 1);
         assert!(same(&from_bare.worktrees[0].path, &bare_linked));
@@ -898,6 +1317,460 @@ mod tests {
         assert_eq!(worktree_list(root_str).unwrap().len(), 0);
 
         fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Adds a sibling worktree on a new branch at `start`.
+    fn add_sibling(root: &Path, branch: &str, start: &str) -> PathBuf {
+        let name = root.file_name().unwrap().to_string_lossy().into_owned();
+        let dir = root.with_file_name(format!("{name}-{branch}"));
+        let dir_arg = git_arg(&dir);
+        checked_output(root, &["worktree", "add", "-b", branch, &dir_arg, start]).unwrap();
+        dir
+    }
+
+    /// `mklink /J`: a directory junction, which needs no admin rights.
+    #[cfg(windows)]
+    fn junction(link: &Path, target: &Path) {
+        let status = std::process::Command::new("cmd")
+            .args(["/c", "mklink", "/J"])
+            .arg(link)
+            .arg(target)
+            .stdout(std::process::Stdio::null())
+            .status()
+            .unwrap();
+        assert!(status.success());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn remove_checkout_takes_a_junction_out_without_touching_its_target() {
+        let root = temp_repo();
+        fs::write(root.join(".gitignore"), "node_modules\n").unwrap();
+        checked_output(&root, &["add", ".gitignore"]).unwrap();
+        checked_output(&root, &["commit", "-m", "ignore"]).unwrap();
+        // The main checkout's dependencies, which a worktree reaches through a junction.
+        let deps = root.join("node_modules");
+        fs::create_dir_all(&deps).unwrap();
+        fs::write(deps.join("sentinel.txt"), "keep").unwrap();
+        let linked = add_sibling(&root, "linked", "HEAD");
+        junction(&linked.join("node_modules"), &deps);
+
+        worktree_remove_checkout_inner(&linked.to_string_lossy(), |_| None, |_| {}).unwrap();
+
+        assert!(
+            deps.join("sentinel.txt").is_file(),
+            "the junction's target is untouched"
+        );
+        assert!(fs::symlink_metadata(linked.join("node_modules")).is_err());
+        assert!(!linked.exists(), "the worktree folder is gone");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn remove_checkout_takes_out_a_junction_however_deep() {
+        let root = temp_repo();
+        let deep = Path::new("a").join("b").join("c").join("d");
+        fs::create_dir_all(root.join(&deep)).unwrap();
+        commit_in(&root, &deep.join("keep.txt").to_string_lossy());
+        let deps = root.with_extension("deps");
+        fs::create_dir_all(&deps).unwrap();
+        fs::write(deps.join("sentinel.txt"), "keep").unwrap();
+        let linked = add_sibling(&root, "deep", "HEAD");
+        let link = linked.join(&deep).join("node_modules");
+        junction(&link, &deps);
+
+        worktree_remove_checkout_inner(&linked.to_string_lossy(), |_| None, |_| {}).unwrap();
+
+        assert!(
+            deps.join("sentinel.txt").is_file(),
+            "the junction's target is untouched"
+        );
+        assert!(
+            fs::symlink_metadata(&link).is_err(),
+            "the deep junction is gone"
+        );
+        assert!(!linked.exists());
+        for dir in [&deps, &root] {
+            let _ = fs::remove_dir_all(dir);
+        }
+    }
+
+    /// A symlink git tracks belongs to the checkout: unlinking it would make the worktree dirty.
+    #[cfg(windows)]
+    #[test]
+    fn remove_checkout_leaves_a_tracked_symlink_to_git() {
+        let root = temp_repo();
+        checked_output(&root, &["config", "core.symlinks", "true"]).unwrap();
+        fs::create_dir_all(root.join("real")).unwrap();
+        fs::write(root.join("real").join("x.txt"), "x").unwrap();
+        if std::os::windows::fs::symlink_dir("real", root.join("tracked-link")).is_err() {
+            eprintln!("skipped: creating symlinks needs Developer Mode or admin rights");
+            let _ = fs::remove_dir_all(&root);
+            return;
+        }
+        checked_output(&root, &["add", "-A"]).unwrap();
+        checked_output(&root, &["commit", "-m", "tracked link"]).unwrap();
+        let linked = add_sibling(&root, "symlinked", "HEAD");
+        assert!(fs::symlink_metadata(linked.join("tracked-link"))
+            .unwrap()
+            .file_type()
+            .is_symlink());
+
+        worktree_remove_checkout_inner(&linked.to_string_lossy(), |_| None, |_| {}).unwrap();
+
+        assert!(!linked.exists());
+        assert!(root.join("real").join("x.txt").is_file());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_detached_main_checkout_leaves_the_base_unknown() {
+        let root = temp_repo();
+        let merged = add_sibling(&root, "merged", "HEAD");
+        checked_output(&root, &["checkout", "--detach"]).unwrap();
+
+        let found = worktree_checkouts_inner(&root.to_string_lossy(), true).unwrap();
+
+        assert_eq!(found.base, None);
+        assert!(found.worktrees.iter().all(|checkout| !checkout.stale));
+        for dir in [&merged, &root] {
+            let _ = fs::remove_dir_all(dir);
+        }
+    }
+
+    #[test]
+    fn removal_refuses_a_live_session_inside_and_marks_the_path_while_it_runs() {
+        let root = temp_repo();
+        let linked = add_sibling(&root, "busy", "HEAD");
+        let inside = linked.join("src");
+        let path = linked.to_string_lossy().into_owned();
+        // Terminal sessions: one in the main checkout, one in a subfolder of the worktree.
+        let cwds = [
+            root.to_string_lossy().into_owned(),
+            inside.to_string_lossy().into_owned(),
+        ];
+        let terminal = |target: &Path| {
+            live_cwd_inside(target, cwds.iter().map(String::as_str))
+                .then(|| "worktree_in_use_terminal".to_string())
+        };
+
+        let refused = worktree_remove_checkout_inner(&path, terminal, |_| {});
+        assert_eq!(refused.unwrap_err(), "worktree_in_use_terminal");
+        assert!(linked.is_dir());
+        // The refusal let go of the mark: nothing there refuses a spawn any more.
+        assert!(refuse_spawn_in_removal(Some(&inside.to_string_lossy())).is_ok());
+
+        let mut meanwhile = None;
+        worktree_remove_checkout_inner(
+            &path,
+            |_| None,
+            |target| {
+                meanwhile = Some((
+                    refuse_spawn_in_removal(Some(&target.join("src").to_string_lossy())),
+                    refuse_spawn_in_removal(Some(&root.to_string_lossy())),
+                ));
+            },
+        )
+        .unwrap();
+        let (in_worktree, in_main) = meanwhile.unwrap();
+        assert!(in_worktree
+            .unwrap_err()
+            .starts_with("worktree_being_removed"));
+        assert!(in_main.is_ok());
+        assert!(refuse_spawn_in_removal(Some(&inside.to_string_lossy())).is_ok());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn removal_is_refused_while_a_spawn_into_the_worktree_is_still_starting() {
+        let root = temp_repo();
+        let linked = add_sibling(&root, "pending", "HEAD");
+        let path = linked.to_string_lossy().into_owned();
+        // A terminal waiting for memory before its shell starts: no session yet, only its cwd.
+        let starting = begin_spawn(Some(&linked.join("src"))).unwrap();
+
+        let refused = worktree_remove_checkout_inner(&path, |_| None, |_| {});
+        assert_eq!(refused.unwrap_err(), "worktree_in_use_terminal");
+        assert!(linked.is_dir());
+
+        drop(starting);
+        worktree_remove_checkout_inner(&path, |_| None, |_| {}).unwrap();
+        assert!(!linked.exists());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_relative_cwd_not_created_yet_is_seen_inside_a_worktree_being_removed() {
+        // A relative cwd lands under the process's own folder, which stands in for the worktree.
+        let here = std::env::current_dir().unwrap().canonicalize().unwrap();
+        let relative = Path::new("alethe-nova-not-created-yet");
+
+        let mark = mark_removal(&here).unwrap();
+        let refused = begin_spawn(Some(relative)).err().unwrap_or_default();
+        assert!(refused.starts_with("worktree_being_removed"), "{refused}");
+        drop(mark);
+
+        let starting = begin_spawn(Some(relative)).unwrap();
+        assert_eq!(
+            mark_removal(&here).err().as_deref(),
+            Some("worktree_in_use_terminal")
+        );
+        drop(starting);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_unc_folder_has_one_spelling_and_resolves_without_touching_it() {
+        let listed = path_key(Path::new(r"\\wsl$\Ubuntu\home\Me"));
+        assert_eq!(listed, r"\\wsl$\ubuntu\home\me");
+        assert_eq!(listed, path_key(Path::new(r"\\?\UNC\wsl$\Ubuntu\home\Me\")));
+        assert_eq!(
+            absolute_cwd(r"\\wsl$\Ubuntu\home\Me"),
+            Some(PathBuf::from(r"\\wsl$\Ubuntu\home\Me"))
+        );
+    }
+
+    #[test]
+    fn a_cwd_is_trimmed_unquoted_and_expanded_before_it_resolves() {
+        let home = dirs_next::home_dir().unwrap();
+        let temp = std::env::temp_dir();
+        assert_eq!(absolute_cwd("  "), None);
+        assert_eq!(absolute_cwd("\"\""), None);
+        assert_eq!(absolute_cwd("~"), Some(home.clone()));
+        assert_eq!(absolute_cwd("~/x"), Some(home.join("x")));
+        assert_eq!(absolute_cwd(r"~\x"), Some(home.join("x")));
+        assert_eq!(
+            absolute_cwd("~x"),
+            Some(std::env::current_dir().unwrap().join("~x"))
+        );
+        assert_eq!(
+            absolute_cwd(&format!("\"{}\"", temp.display())),
+            Some(temp.clone())
+        );
+        assert_eq!(
+            absolute_cwd(&format!(" '{}' ", temp.display())),
+            Some(temp.clone())
+        );
+        assert_eq!(
+            absolute_cwd("nova"),
+            Some(std::env::current_dir().unwrap().join("nova"))
+        );
+    }
+
+    #[test]
+    fn a_spawn_cannot_begin_in_a_path_being_removed() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("alethe-begin-{nanos}"));
+        fs::create_dir_all(dir.join("inner")).unwrap();
+        let inside = dir.join("inner");
+
+        let mark = mark_removal(&dir.canonicalize().unwrap()).unwrap();
+        assert!(begin_spawn(Some(&inside))
+            .err()
+            .unwrap_or_default()
+            .starts_with("worktree_being_removed"));
+        assert!(begin_spawn(None).is_ok());
+        drop(mark);
+        assert!(begin_spawn(Some(&inside)).is_ok());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_spawn_inside_a_path_being_removed_is_refused_until_the_mark_goes() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("alethe-mark-{nanos}"));
+        fs::create_dir_all(dir.join("inner")).unwrap();
+        let root = dir.canonicalize().unwrap();
+        let inside = dir.join("inner").to_string_lossy().into_owned();
+
+        let mark = mark_removal(&root).unwrap();
+        assert!(refuse_spawn_in_removal(Some(&inside))
+            .unwrap_err()
+            .starts_with("worktree_being_removed"));
+        assert!(
+            refuse_spawn_in_removal(Some(&dir.with_extension("other").to_string_lossy())).is_ok()
+        );
+        assert!(refuse_spawn_in_removal(None).is_ok());
+        assert_eq!(
+            mark_removal(&root).err().as_deref(),
+            Some("worktree_being_removed")
+        );
+        drop(mark);
+        assert!(refuse_spawn_in_removal(Some(&inside)).is_ok());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn link_sweep_refuses_past_its_bound() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("alethe-sweep-{nanos}"));
+        fs::create_dir_all(dir.join("a").join("b")).unwrap();
+        for name in ["one", "two", "three"] {
+            fs::write(dir.join(name), name).unwrap();
+        }
+
+        assert_eq!(
+            links_inside(&dir, 3).unwrap_err(),
+            "worktree_too_large_to_check"
+        );
+        assert!(links_inside(&dir, 100).unwrap().is_empty());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    fn commit_in(dir: &Path, file: &str) {
+        fs::write(dir.join(file), file).unwrap();
+        checked_output(dir, &["add", file]).unwrap();
+        checked_output(dir, &["commit", "-m", file]).unwrap();
+    }
+
+    #[test]
+    fn checkouts_mark_merged_and_behind_worktrees_stale() {
+        let root = temp_repo();
+        let behind = add_sibling(&root, "behind", "HEAD");
+        let ahead = add_sibling(&root, "ahead", "HEAD");
+        commit_in(&ahead, "ahead.txt");
+        let merged = add_sibling(&root, "merged", "HEAD");
+        commit_in(&merged, "merged.txt");
+        checked_output(&root, &["merge", "--no-ff", "-m", "merge", "merged"]).unwrap();
+        let fresh = add_sibling(&root, "fresh", "HEAD");
+        // Behind the base branch too, but holding work nobody committed yet.
+        let wip = add_sibling(&root, "wip", "HEAD~1");
+        fs::write(wip.join("file.txt"), "changed\n").unwrap();
+        fs::write(wip.join("new.txt"), "new\n").unwrap();
+        let detached = root.with_file_name(format!(
+            "{}-detached",
+            root.file_name().unwrap().to_string_lossy()
+        ));
+        let detached_arg = git_arg(&detached);
+        checked_output(
+            &root,
+            &["worktree", "add", "--detach", &detached_arg, "HEAD~1"],
+        )
+        .unwrap();
+
+        let found = worktree_checkouts_inner(&root.to_string_lossy(), true).unwrap();
+        let checkout = |branch: Option<&str>| {
+            found
+                .worktrees
+                .iter()
+                .find(|checkout| checkout.branch.as_deref() == branch)
+                .unwrap()
+        };
+        let stale = |branch: &str| checkout(Some(branch)).stale;
+        let base = current_branch(&root);
+        assert!(!stale(&base), "the main checkout is never stale");
+        assert!(stale("merged"), "merged into the base branch");
+        assert!(
+            stale("behind"),
+            "behind the base branch with no own commits"
+        );
+        assert!(!stale("ahead"), "has commits the base branch lacks");
+        assert!(
+            stale("fresh"),
+            "level with the base branch, nothing of its own"
+        );
+        assert_eq!(found.base.as_deref(), Some(base.as_str()));
+        assert!(!stale("wip"), "uncommitted work is not stale");
+        assert_eq!(checkout(Some("wip")).uncommitted, Some(2));
+        assert_eq!(checkout(Some("merged")).uncommitted, Some(0));
+        assert!(!checkout(None).stale, "a detached worktree is never stale");
+
+        // Without the status pass nothing is counted, nor marked.
+        let quick = worktree_checkouts_inner(&root.to_string_lossy(), false).unwrap();
+        assert!(quick
+            .worktrees
+            .iter()
+            .all(|checkout| !checkout.stale && checkout.uncommitted.is_none()));
+
+        for dir in [&behind, &ahead, &merged, &fresh, &wip, &detached, &root] {
+            let _ = fs::remove_dir_all(dir);
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn an_untracked_junction_alone_leaves_a_merged_worktree_stale_and_removable() {
+        let root = temp_repo();
+        let deps = root.join("deps");
+        fs::create_dir_all(&deps).unwrap();
+        fs::write(deps.join("sentinel.txt"), "keep").unwrap();
+        let linked = add_sibling(&root, "linked", "HEAD");
+        commit_in(&root, "base-moved.txt");
+        junction(&linked.join("node_modules"), &deps);
+
+        let found = worktree_checkouts_inner(&root.to_string_lossy(), true).unwrap();
+        let listed = found
+            .worktrees
+            .iter()
+            .find(|checkout| checkout.branch.as_deref() == Some("linked"))
+            .unwrap();
+        assert!(listed.stale);
+        assert_eq!(listed.uncommitted, Some(0));
+
+        worktree_remove_checkout_inner(&linked.to_string_lossy(), |_| None, |_| {}).unwrap();
+        assert!(deps.join("sentinel.txt").is_file());
+        assert!(!linked.exists());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn remove_checkout_refuses_the_main_dirty_and_unknown_ones() {
+        let root = temp_repo();
+        let dirty = add_sibling(&root, "dirty", "HEAD");
+        fs::write(dirty.join("file.txt"), "changed\n").unwrap();
+        let untracked = add_sibling(&root, "untracked", "HEAD");
+        fs::write(untracked.join("new.txt"), "new\n").unwrap();
+        let clean = add_sibling(&root, "clean", "HEAD");
+        // A watch the app holds inside the clean worktree, and one in the main checkout.
+        let mut watcher = notify::recommended_watcher(|_| {}).unwrap();
+        notify::Watcher::watch(&mut watcher, &clean, notify::RecursiveMode::NonRecursive).unwrap();
+        let key = |dir: &Path| dir.join("file.txt").to_string_lossy().into_owned();
+        let watchers = std::sync::Mutex::new(std::collections::HashMap::from([
+            (key(&clean), Some(watcher)),
+            (key(&root), None),
+        ]));
+        let released = std::cell::Cell::new(false);
+        let remove = |dir: &Path| {
+            worktree_remove_checkout_inner(
+                &dir.to_string_lossy(),
+                |_| None,
+                |target| {
+                    released.set(true);
+                    release_watchers_under(&watchers, target);
+                },
+            )
+        };
+
+        assert_eq!(remove(&root).unwrap_err(), "worktree_is_main");
+        assert_eq!(remove(&dirty).unwrap_err(), "worktree_dirty");
+        assert_eq!(remove(&untracked).unwrap_err(), "worktree_dirty");
+        assert!(dirty.is_dir() && untracked.is_dir());
+        assert_eq!(
+            remove(&root.join("not-a-checkout")).unwrap_err(),
+            "worktree_not_found"
+        );
+        assert!(!released.get(), "nothing is released for a refused removal");
+
+        remove(&clean).unwrap();
+        assert!(!clean.exists());
+        let kept: Vec<String> = watchers.lock().unwrap().keys().cloned().collect();
+        assert_eq!(kept, vec![key(&root)]);
+        let listed = worktree_checkouts_inner(&root.to_string_lossy(), false).unwrap();
+        assert_eq!(listed.worktrees.len(), 3);
+
+        for dir in [&dirty, &untracked, &root] {
+            let _ = fs::remove_dir_all(dir);
+        }
     }
 
     // ========================================================================

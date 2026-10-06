@@ -1,4 +1,5 @@
 import { normalizeProjectGrids } from '../lib/projectGrids'
+import { sameCwd } from '../lib/paths'
 /** Group and project actions extracted from the main store. */
 
 import { nanoid } from 'nanoid'
@@ -361,6 +362,8 @@ type ProjectsSlice = Pick<
   | 'archiveProject'
   | 'unarchiveProject'
   | 'setProjectHidden'
+  | 'setProjectCheckout'
+  | 'retireCheckout'
   | 'setProjectColor'
   | 'setProjectIconUrl'
   | 'addMarkdownComment'
@@ -469,6 +472,18 @@ export function createProjectsSlice({ set, get, update, updateProject }: SliceCt
     unarchiveProject: (id) => updateProject(id, (p) => ({ ...p, archived: false })),
 
     setProjectHidden: (id, hidden) => updateProject(id, (p) => ({ ...p, hidden })),
+
+    setProjectCheckout: (id, checkoutPath) => updateProject(id, (p) => ({ ...p, checkoutPath })),
+
+    retireCheckout: (path, main) =>
+      update((state) => ({
+        projects: state.projects.map((p) => {
+          const used = p.checkoutPath
+            ? sameCwd(p.checkoutPath, path)
+            : Boolean(p.defaultCwd && sameCwd(p.defaultCwd, path))
+          return used ? { ...p, checkoutPath: main } : p
+        }),
+      })),
 
     setProjectColor: (id, color) => updateProject(id, (p) => ({ ...p, color })),
 

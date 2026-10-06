@@ -35,6 +35,8 @@ fn prepare(app: &AppHandle, state: &OrchestratorState) {
         return;
     }
     let core = state.core.clone();
+    // A worker never starts in a worktree being removed.
+    core.set_spawn_guard(|cwd| crate::worktrees::refuse_spawn_in_removal(Some(cwd)));
     // History outlives the app: what each worker was asked and reported is kept, and Codex keeps
     // the thread itself, so a worker can be started again with its context intact.
     if let Ok(path) = crate::paths::orchestrator_store_path(app) {

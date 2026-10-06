@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Component, Path, PathBuf, Prefix};
 use std::sync::{Arc, Mutex};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 const TODO_TEMPLATE_FILE: &str = "alethe-todo.template.jsonc";
 const TODO_TEMPLATE: &str = r#"// Alethe Todo template
@@ -152,7 +152,9 @@ pub fn browse_directory(path: String) -> Result<DirectoryListing, String> {
         let p = PathBuf::from(trimmed);
         if p.exists() {
             if p.is_file() {
-                p.parent().map(|parent| parent.to_path_buf()).unwrap_or(home.clone())
+                p.parent()
+                    .map(|parent| parent.to_path_buf())
+                    .unwrap_or(home.clone())
             } else {
                 p
             }
@@ -161,7 +163,9 @@ pub fn browse_directory(path: String) -> Result<DirectoryListing, String> {
         }
     };
 
-    let canonical = directory.canonicalize().unwrap_or_else(|_| directory.clone());
+    let canonical = directory
+        .canonicalize()
+        .unwrap_or_else(|_| directory.clone());
     let current_path_str = canonical.to_string_lossy().into_owned();
     let clean_current_path = current_path_str
         .strip_prefix(r"\\?\")
@@ -184,7 +188,10 @@ pub fn browse_directory(path: String) -> Result<DirectoryListing, String> {
                     return None;
                 }
                 let full_path = entry.path().to_string_lossy().into_owned();
-                let clean_path = full_path.strip_prefix(r"\\?\").unwrap_or(&full_path).to_string();
+                let clean_path = full_path
+                    .strip_prefix(r"\\?\")
+                    .unwrap_or(&full_path)
+                    .to_string();
                 Some(BrowseDirectoryEntry {
                     name,
                     path: clean_path,
@@ -203,7 +210,10 @@ pub fn browse_directory(path: String) -> Result<DirectoryListing, String> {
     });
 
     let clean_home = home.to_string_lossy().into_owned();
-    let home_path = clean_home.strip_prefix(r"\\?\").unwrap_or(&clean_home).to_string();
+    let home_path = clean_home
+        .strip_prefix(r"\\?\")
+        .unwrap_or(&clean_home)
+        .to_string();
 
     Ok(DirectoryListing {
         current_path: clean_current_path,
@@ -329,7 +339,18 @@ pub fn ensure_todo_template(directory: String) -> Result<String, String> {
 }
 
 #[derive(Default)]
-pub struct FileWatchers(pub Arc<Mutex<HashMap<String, (RecommendedWatcher, usize)>>>);
+pub struct FileWatchers(
+    pub Arc<Mutex<HashMap<String, (RecommendedWatcher, HashMap<String, usize>)>>>,
+);
+
+pub(crate) fn release_window_watchers(state: &FileWatchers, label: &str) {
+    if let Ok(mut map) = state.0.lock() {
+        map.retain(|_, (_, owners)| {
+            owners.remove(label);
+            !owners.is_empty()
+        });
+    }
+}
 
 /// Drops every watch on a path inside `root` (canonical), whoever holds it, so the folder can
 /// leave the disk: on Windows a watched folder blocks the removal of its parent.
@@ -392,14 +413,18 @@ fn path_watcher(
 #[tauri::command]
 pub fn watch_file(
     app: AppHandle,
+    window: tauri::WebviewWindow,
     state: tauri::State<'_, FileWatchers>,
     path: String,
 ) -> Result<(), String> {
     let key = normalize(&path);
     let mut map = state.0.lock().map_err(|e| e.to_string())?;
 
+    if app.get_webview_window(window.label()).is_none() {
+        return Err("Window closed".into());
+    }
     if let Some(entry) = map.get_mut(&key) {
-        entry.1 += 1;
+        *entry.1.entry(window.label().into()).or_default() += 1;
         return Ok(());
     }
 
@@ -407,20 +432,28 @@ pub fn watch_file(
     let watcher = path_watcher(PathBuf::from(&key), move || {
         let _ = app.emit("md://changed", serde_json::json!({ "path": emit_path }));
     })?;
-    map.insert(key, (watcher, 1));
+    map.insert(key, (watcher, HashMap::from([(window.label().into(), 1)])));
     Ok(())
 }
 
 #[tauri::command]
-pub fn unwatch_file(state: tauri::State<'_, FileWatchers>, path: String) -> Result<(), String> {
+pub fn unwatch_file(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, FileWatchers>,
+    path: String,
+) -> Result<(), String> {
     let key = normalize(&path);
     let mut map = state.0.lock().map_err(|e| e.to_string())?;
 
     if let Some(entry) = map.get_mut(&key) {
-        if entry.1 <= 1 {
-            map.remove(&key); // drop do watcher para o watch
-        } else {
-            entry.1 -= 1;
+        if let Some(count) = entry.1.get_mut(window.label()) {
+            *count -= 1;
+            if *count == 0 {
+                entry.1.remove(window.label());
+            }
+        }
+        if entry.1.is_empty() {
+            map.remove(&key);
         }
     }
     Ok(())
@@ -550,6 +583,27 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("alethe-watch-{tag}-{suffix}"));
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn closing_window_releases_only_its_watches() {
+        let dir = scratch("window");
+        let state = FileWatchers::default();
+        state.0.lock().unwrap().insert(
+            "shared".into(),
+            (
+                path_watcher(dir.clone(), || {}).unwrap(),
+                HashMap::from([("main".into(), 1), ("reader".into(), 2)]),
+            ),
+        );
+        release_window_watchers(&state, "reader");
+        assert_eq!(
+            state.0.lock().unwrap()["shared"].1,
+            HashMap::from([("main".into(), 1)])
+        );
+        release_window_watchers(&state, "main");
+        assert!(state.0.lock().unwrap().is_empty());
+        fs::remove_dir_all(dir).unwrap();
     }
 
     // Only a path with nothing at it reads as missing: a folder in its place is another failure.

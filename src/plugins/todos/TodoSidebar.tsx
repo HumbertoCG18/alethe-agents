@@ -770,6 +770,7 @@ export function TodoSidebar() {
   const night = (
     <>
       <NightStatus projectId={view.projectId} />
+      <CampaignsSection view={view} workers={workers} includeLive />
       {view.registry && diary ? (
         <NightCard registry={view.registry} diary={diary} edits={edits} />
       ) : (

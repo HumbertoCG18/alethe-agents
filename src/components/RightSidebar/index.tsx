@@ -10,25 +10,18 @@ import {
   PanelRightClose,
   Plug,
   RefreshCw,
+  Settings2,
   Sparkles,
   X,
 } from 'lucide-react'
-import {
-  type DragEvent,
-  lazy,
-  Suspense,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from 'react'
+import { type DragEvent, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import {
   type GsdSyncSession,
   useGsdSyncAvailable,
   useGsdSyncSessions,
 } from '../../hooks/useGsdSyncSessions'
+import { useMarkdownFile } from '../../hooks/useMarkdownFile'
 import { hasFileDragPayload, readFileDragPayload } from '../../lib/fileDrag'
 import { useT } from '../../lib/i18n'
 import { isMarkdownPath } from '../../lib/markdownSidebarHistory'
@@ -44,17 +37,13 @@ import {
   listProjectPlans,
   type PlanningStatus,
   readPlanningStatus,
-  readTextFile,
   writeClipboardText,
 } from '../../lib/tauri'
 import { useSidebarViews } from '../../lib/viewPlacement'
 import { selectActiveProject, useProjectsStore } from '../../stores/projectsStore'
 import { useUiStore } from '../../stores/uiStore'
-
-const MarkdownRenderer = lazy(() =>
-  import('../MarkdownPane/MarkdownRenderer').then((m) => ({ default: m.MarkdownRenderer })),
-)
 import { ContributedView } from '../ContributedView'
+import { MarkdownSummary } from '../MarkdownPane/MarkdownSummary'
 import { McpPanel } from '../McpPanel'
 import { PluginsSidebar } from '../PluginsSidebar'
 import { PullRequestsSidebar } from '../PullRequestsSidebar'
@@ -167,6 +156,15 @@ export function RightSidebar() {
           )
         })}
         <span className={styles.toolbarSpacer} />
+        <button
+          type="button"
+          className={styles.toolbarUtility}
+          onClick={() => openModal('preferences', { category: 'sidebar' })}
+          title={t('rightSidebar.configure')}
+          aria-label={t('rightSidebar.configure')}
+        >
+          <Settings2 size={14} />
+        </button>
         {mode === 'mcp' && mcpEnabled ? (
           <button
             type="button"
@@ -330,8 +328,6 @@ function MarkdownSidebarViewer() {
   const dark = useProjectsStore(
     (state) => state.preferences.uiTheme !== 'light' && state.preferences.uiTheme !== 'min-light',
   )
-  const [content, setContent] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
   const [dropActive, setDropActive] = useState(false)
   const [selectedPath, setSelectedPath] = useState(markdown?.path ?? '')
@@ -395,23 +391,7 @@ function MarkdownSidebarViewer() {
     readmeTabs.find((tab) => tab.path === selectedPath) ??
     (markdown ? { path: markdown.path, title: markdown.title } : null)
 
-  const load = async () => {
-    if (!selected?.path) return
-    try {
-      setContent(await readTextFile(selected.path))
-      setError(null)
-    } catch (err) {
-      setError(String(err))
-      setContent(null)
-    }
-  }
-
-  useEffect(() => {
-    setContent(null)
-    setError(null)
-    void load()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [markdown?.path, selectedPath])
+  const { content, error, reload: load } = useMarkdownFile(selected?.path ?? null)
 
   useEffect(() => {
     if (!selected?.path || content === null) return
@@ -722,7 +702,7 @@ function MarkdownSidebarViewer() {
           ) : (
             <div ref={markdownRef} className={styles.commentableMarkdown}>
               <Suspense fallback={<span>{t('ui.markdown.loading')}</span>}>
-                <MarkdownRenderer content={content} dark={dark} />
+                <MarkdownSummary path={selected!.path} content={content} dark={dark} />
               </Suspense>
             </div>
           )}

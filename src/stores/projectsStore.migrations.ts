@@ -1,4 +1,3 @@
-import { normalizeProjectGrids, projectGridContainer } from '../lib/projectGrids'
 import { nanoid } from 'nanoid'
 
 import {
@@ -6,8 +5,10 @@ import {
   legacyTodosFeatureFlag,
   normalizeEnabledFeatures,
 } from '../lib/features'
+import { normalizeMarkdownSummary } from '../lib/markdownSummary'
 import { normalizeOrchestrationSettings } from '../lib/orchestrationSettings'
 import { recordLegacyGitFlag, recordLegacyTodosFlag } from '../lib/plugins/legacyMigration'
+import { normalizeProjectGrids, projectGridContainer } from '../lib/projectGrids'
 import { normalizePort } from '../lib/router9'
 import { normalizeAppIconTheme } from '../lib/themeIcons'
 import { normalizeTodoTags, normalizeTodoTitle } from '../lib/todos'
@@ -145,6 +146,7 @@ export function normalizePreferences(raw: LegacyPreferences | undefined): Prefer
     topbarStyle: preferences.topbarStyle === 'three-areas' ? 'three-areas' : 'classic',
     viewPlacements: normalizeViewPlacements(preferences),
     sidebarIcons: normalizeSidebarIcons(raw?.sidebarIcons),
+    markdownSummary: normalizeMarkdownSummary(raw?.markdownSummary),
     mcpDefaultScope: preferences.mcpDefaultScope === 'project' ? 'project' : 'global',
     mcpOnboardingSeen: Boolean(preferences.mcpOnboardingSeen),
     setupWalkthrough: {

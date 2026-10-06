@@ -78,12 +78,14 @@ export function CampaignsSection({
   workers = NO_WORKERS,
   pending = NO_TASKS,
   finished = false,
+  includeLive = false,
 }: {
   view: CampaignView
   /** Live orchestrator workers per task; the active campaign shows its own. */
   workers?: ReadonlyMap<string, TaskWorkers>
   /** The tasks Pending lists, left out of the rows' details. */
   pending?: ReadonlySet<string>
+  includeLive?: boolean
   finished?: boolean
 }) {
   const { projectId, registry, activeId } = view
@@ -97,7 +99,9 @@ export function CampaignsSection({
   const done = (campaign: Campaign) => campaign.situation.kind === 'done'
   // Stable sort: the active campaign first in its group, the rest in priority order.
   const campaigns = registry.campaigns
-    .filter((campaign) => (finished ? done(campaign) : !done(campaign) && !live.has(campaign.id)))
+    .filter((campaign) =>
+      finished ? done(campaign) : !done(campaign) && (includeLive || !live.has(campaign.id)),
+    )
     .sort((a, b) => Number(b.id === activeId) - Number(a.id === activeId))
   if (finished && campaigns.length === 0) return null
   const invalid = !finished && registry.errors.length > 0
@@ -224,6 +228,13 @@ function CampaignRow({
       className={styles.campaign}
       data-lane={live ? undefined : SITUATION_LANES[campaign.situation.kind]}
       data-status={live}
+      data-blocked={
+        campaign.situation.kind === 'done'
+          ? undefined
+          : prerequisites.length > 0 ||
+            campaign.situation.kind === 'blocked' ||
+            campaign.situation.kind === 'waits'
+      }
       data-active={active ? 'true' : undefined}
       aria-current={active ? 'true' : undefined}
     >

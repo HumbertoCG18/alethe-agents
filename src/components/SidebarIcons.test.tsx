@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { EMPTY_PROJECTS_FILE, type Preferences } from '../lib/types'
@@ -83,4 +83,11 @@ describe('sidebar icons in the bars', () => {
       screen.getByRole(visualStyle === 'normal' ? 'tab' : 'button', { name: 'Home' }),
     ).toBeInTheDocument()
   })
+})
+
+it('opens the existing sidebar preferences from the right toolbar', () => {
+  render(<RightSidebar />)
+  fireEvent.click(screen.getByRole('button', { name: 'Configure sidebar' }))
+  expect(useUiStore.getState().openModal).toBe('preferences')
+  expect(useUiStore.getState().modalContext).toMatchObject({ category: 'sidebar' })
 })

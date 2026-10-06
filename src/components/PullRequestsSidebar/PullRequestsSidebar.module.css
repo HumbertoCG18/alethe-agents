@@ -239,3 +239,20 @@
     transform: rotate(360deg);
   }
 }
+
+.projectPicker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  color: var(--fg-muted);
+}
+.projectPicker select {
+  flex: 1;
+  min-width: 0;
+  padding: 4px;
+  background: var(--bg-elevated);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}

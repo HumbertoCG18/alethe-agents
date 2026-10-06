@@ -1,0 +1,64 @@
+.root {
+  height: 100vh;
+  overflow: auto;
+  color: var(--fg);
+  background: var(--bg);
+}
+.header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border-bottom: 1px solid var(--border);
+}
+.header span {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg-muted);
+}
+.document,
+.questions {
+  padding: var(--space-4);
+}
+.questions {
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.questions label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.questions textarea,
+.questions select,
+.root button {
+  color: var(--fg);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2);
+}
+.questions textarea {
+  width: 100%;
+  resize: vertical;
+}
+.actions {
+  display: flex;
+  align-items: end;
+  gap: var(--space-3);
+}
+.actions label {
+  flex: 1;
+  min-width: 0;
+}
+.root button {
+  cursor: pointer;
+}
+.root button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

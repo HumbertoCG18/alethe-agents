@@ -29,6 +29,7 @@ import { AccountPage } from './preferences/AccountPage'
 import { AppearancePage } from './preferences/AppearancePage'
 import { FeaturesPage } from './preferences/FeaturesPage'
 import { IntegrationsPage } from './preferences/IntegrationsPage'
+import { MarkdownPage } from './preferences/MarkdownPage'
 import { MultiagentPage } from './preferences/MultiagentPage'
 import { OrchestrationPage } from './preferences/OrchestrationPage'
 import { OrganizationPage } from './preferences/OrganizationPage'
@@ -40,6 +41,7 @@ import { TerminalPage } from './preferences/TerminalPage'
 import styles from './PreferencesModal.module.css'
 
 type CategoryId =
+  | 'markdown'
   | 'account'
   | 'appearance'
   | 'sidebar'
@@ -84,6 +86,12 @@ export function PreferencesModal() {
 
   const categories = useMemo<Category[]>(
     () => [
+      {
+        id: 'markdown',
+        label: t('markdown.settings'),
+        description: t('markdown.settingsDesc'),
+        Icon: PanelLeft,
+      },
       {
         id: 'account',
         label: t('prefs.categoryAccount'),
@@ -568,6 +576,7 @@ export function PreferencesModal() {
                     />
                   ) : null}
                   {category === 'appearance' ? <AppearancePage /> : null}
+                  {category === 'markdown' ? <MarkdownPage /> : null}
                   {category === 'sidebar' ? <SidebarPage /> : null}
                   {category === 'features' ? <FeaturesPage /> : null}
                   {category === 'plugins' ? <PluginsPage /> : null}

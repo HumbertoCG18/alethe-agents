@@ -1,8 +1,8 @@
 import { useDraggable, useDroppable } from '@dnd-kit/core'
 import {
+  ClipboardCopy,
   FileCode,
   FileText,
-  ClipboardCopy,
   FolderOpen,
   GripVertical,
   Maximize2,
@@ -13,26 +13,19 @@ import {
   Trash2,
   X,
 } from 'lucide-react'
-import { memo, useCallback, useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 
-import { pathSegments } from '../../lib/paths'
+import { useMarkdownFile } from '../../hooks/useMarkdownFile'
 import { askConfirm } from '../../lib/dialog'
 import { useT } from '../../lib/i18n'
-import {
-  listenFileChanged,
-  openInFileExplorer,
-  readTextFile,
-  writeTextFile,
-  writeClipboardText,
-  unwatchFile,
-  watchFile,
-} from '../../lib/tauri'
+import { pathSegments } from '../../lib/paths'
+import { openInFileExplorer, writeClipboardText, writeTextFile } from '../../lib/tauri'
+import { isLightTheme } from '../../lib/themes'
+import type { Terminal as TerminalEntry } from '../../lib/types'
 import { useProjectsStore } from '../../stores/projectsStore'
 import { useUiStore } from '../../stores/uiStore'
-import type { Terminal as TerminalEntry } from '../../lib/types'
-import { MarkdownRenderer } from './MarkdownRenderer'
 import styles from './MarkdownPane.module.css'
-import { isLightTheme } from '../../lib/themes'
+import { MarkdownSummary } from './MarkdownSummary'
 
 const markdownPaneScrollPositions = new Map<string, number>()
 
@@ -51,13 +44,15 @@ export const MarkdownPane = memo(function MarkdownPane({
 }: MarkdownPaneProps) {
   const t = useT()
   const filePath = terminal.filePath ?? ''
-  const [content, setContent] = useState<string | null>(null)
+  const { content, error: readError, reload } = useMarkdownFile(filePath || null)
   const [draft, setDraft] = useState('')
   const [editing, setEditing] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [saveError, setError] = useState<string | null>(null)
+  const error = saveError ?? readError
   const [copied, setCopied] = useState(false)
   const editingRef = useRef(false)
+  const saveSequence = useRef(0)
 
   const focusedTerminalId = useUiStore((s) => s.focusedTerminalId)
   const isFocusMode = inFocusOverlay || focusedTerminalId === terminal.id
@@ -81,21 +76,6 @@ export const MarkdownPane = memo(function MarkdownPane({
     droppable.setNodeRef(node)
   }
 
-  const reload = useCallback(async () => {
-    if (!filePath) {
-      setError('no file')
-      return
-    }
-    try {
-      const text = await readTextFile(filePath)
-      setContent(text)
-      if (!editingRef.current) setDraft(text)
-      setError(null)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-    }
-  }, [filePath])
-
   const startEditing = () => {
     if (content === null) return
     setDraft(content)
@@ -111,34 +91,35 @@ export const MarkdownPane = memo(function MarkdownPane({
 
   const saveEditing = async () => {
     if (!filePath || content === null || saving) return
+    const request = ++saveSequence.current
     setSaving(true)
     try {
       await writeTextFile(filePath, draft)
-      setContent(draft)
+      if (saveSequence.current !== request) return
+      await reload()
+      if (saveSequence.current !== request) return
       editingRef.current = false
       setEditing(false)
       setError(null)
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      if (saveSequence.current === request)
+        setError(err instanceof Error ? err.message : String(err))
     } finally {
-      setSaving(false)
+      if (saveSequence.current === request) setSaving(false)
     }
   }
 
   useEffect(() => {
-    if (!filePath) return
+    saveSequence.current++
+    setSaving(false)
     editingRef.current = false
     setEditing(false)
-    void reload()
-    void watchFile(filePath).catch(() => {})
-    const unlisten = listenFileChanged((changed) => {
-      if (changed === filePath) void reload()
-    })
-    return () => {
-      void unwatchFile(filePath).catch(() => {})
-      void unlisten.then((fn) => fn()).catch(() => {})
-    }
-  }, [filePath, reload])
+    setError(null)
+  }, [filePath])
+
+  useEffect(() => {
+    if (content !== null && !editingRef.current) setDraft(content)
+  }, [content])
 
   useEffect(() => {
     if (!filePath || content === null) return
@@ -149,7 +130,7 @@ export const MarkdownPane = memo(function MarkdownPane({
     return () => window.cancelAnimationFrame(frame)
   }, [content, filePath])
 
-  // Foco vindo da sidebar — scroll into view.
+  // Sidebar focus requests scroll the pane into view.
   const focusReq = useUiStore((s) => s.focusRequest)
   useEffect(() => {
     if (!focusReq || focusReq.terminalId !== terminal.id) return
@@ -371,7 +352,7 @@ export const MarkdownPane = memo(function MarkdownPane({
               markdownPaneScrollPositions.set(filePath, event.currentTarget.scrollTop)
             }
           >
-            <MarkdownRenderer content={content} dark={dark} />
+            <MarkdownSummary path={filePath} content={content} dark={dark} />
           </div>
         )}
       </div>

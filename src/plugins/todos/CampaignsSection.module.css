@@ -432,3 +432,15 @@ button.evidence:hover {
   align-items: center;
   gap: 6px;
 }
+
+/* Dependency changes override stale task/live status in the registry. */
+.campaign[data-blocked='true'] .dot {
+  background: var(--status-offline);
+  box-shadow: none;
+  animation: none;
+}
+.campaign[data-blocked='false']:not([data-status='working']) .dot {
+  background: var(--status-waiting);
+  box-shadow: none;
+  animation: none;
+}

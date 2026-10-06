@@ -12,6 +12,7 @@ import { orchestrationWindowPane } from './lib/orchestrationWindow'
 import { initPluginHost } from './lib/plugins'
 import { recordFrontendError } from './lib/tauri'
 import { watchPluginThemeStyles } from './lib/themeTokens'
+import { MarkdownReaderWindow } from './MarkdownReaderWindow'
 import { OrchestrationWindow } from './OrchestrationWindow'
 import { setProjectsReadOnly } from './stores/projectsStore'
 
@@ -59,7 +60,8 @@ function detachedBoardPane(): string | null {
 }
 
 const boardPane = detachedBoardPane()
-if (boardPane) {
+const readerPath = new URLSearchParams(window.location.search).get('markdown')
+if (boardPane || readerPath) {
   // The main window owns projects.json; this one only reads it.
   setProjectsReadOnly(true)
 } else {
@@ -70,6 +72,12 @@ if (boardPane) {
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    {boardPane ? <OrchestrationWindow terminalId={boardPane} /> : <App />}
+    {readerPath ? (
+      <MarkdownReaderWindow path={readerPath} />
+    ) : boardPane ? (
+      <OrchestrationWindow terminalId={boardPane} />
+    ) : (
+      <App />
+    )}
   </React.StrictMode>,
 )

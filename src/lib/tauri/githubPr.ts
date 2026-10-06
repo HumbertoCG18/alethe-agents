@@ -40,7 +40,8 @@ export type MyPullRequestSummary = {
   updatedAt: string
 }
 
-/** Without a repo path, falls back to every open PR the `gh` user is involved in. */
-export async function githubPrListMine(repo?: string): Promise<MyPullRequestSummary[]> {
-  return invoke<MyPullRequestSummary[]>('github_pr_list_mine', { repo: repo ?? null })
+/** Only query the selected project; an empty path must never become an account-wide search. */
+export async function githubPrListMine(repo: string): Promise<MyPullRequestSummary[]> {
+  if (!repo.trim()) return []
+  return invoke<MyPullRequestSummary[]>('github_pr_list_mine', { repo })
 }

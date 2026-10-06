@@ -39,6 +39,7 @@ mod handoff;
 mod health_probe;
 mod jev;
 mod logging;
+mod markdown_reader;
 mod mcp_agents;
 mod mcp_catalog;
 mod mcp_health;
@@ -166,6 +167,15 @@ pub fn run() {
         .manage(resource_supervisor)
         .manage(ghostty_bridge::GhosttySurfaces::default())
         .manage(filesystem::FileWatchers::default())
+        .on_window_event(|window, event| {
+            if matches!(event, tauri::WindowEvent::Destroyed) {
+                filesystem::release_window_watchers(
+                    &window.state::<filesystem::FileWatchers>(),
+                    window.label(),
+                );
+                markdown_reader::close_window(window.label());
+            }
+        })
         .manage(discord_presence::DiscordPresence::new())
         .manage(planning::PlanningWatchers::default())
         .manage(cli_launch::PendingOpen::default())
@@ -261,6 +271,9 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            markdown_reader::markdown_generate,
+            markdown_reader::markdown_cancel,
+            markdown_reader::open_markdown_reader,
             agent_events::agent_hooks_settings_path,
             agent_events::codex_hooks_config_write,
             agent_events::codex_mcp_config_write,

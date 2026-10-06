@@ -10,6 +10,16 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ## [Unreleased]
 
+- AGY document generation remains unavailable until its CLI tool isolation can be verified.
+- Configurable Markdown summaries with Claude Code or Codex, model selection and Caveman, Medium or Detailed styles. Changing settings refreshes the visible summary; unchanged documents reuse results during the app session.
+- A dedicated Markdown reader window with full document rendering and selected-text questions to an agent, existing orchestration worker or open individual night session. Night evidence opens the same summary flow.
+
+- Late Markdown file reads and summary responses no longer replace the newly selected document. Pending summaries are cancelled when their last reader leaves, and queue time counts toward the generation deadline.
+- Closing a native reader releases its file watches; answers retain the submitted selection and question.
+- The Night tab offers campaign launch choices; blocked campaign indicators turn red and update when dependencies are released.
+- Right sidebar icon preferences are accessible from its toolbar.
+- Pull requests are scoped to a selectable project and refresh automatically, discarding stale responses after project changes.
+
 - Campaign session dialogs offer individual terminals or orchestration; compact campaign rows identify unfinished campaign prerequisites.
 
 - Campaigns show the last active selection and open the New session dialog before creating an agent session. Existing sessions can still be focused directly.

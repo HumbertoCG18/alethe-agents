@@ -589,7 +589,15 @@ export type OrchestrationSettings = {
   workerDisabledPlugins: string[]
 }
 
+export type MarkdownSummarySettings = {
+  enabled: boolean
+  agent: 'antigravity' | 'claude' | 'codex'
+  model: string
+  style: 'caveman' | 'medium' | 'detailed'
+}
+
 export type Preferences = {
+  markdownSummary?: MarkdownSummarySettings
   /** Idioma da UI. Default 'en'. */
   language: Locale
   uiTheme: Theme

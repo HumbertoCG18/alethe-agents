@@ -1623,7 +1623,9 @@ describe('Night card', () => {
     expect(screen.getByText('a1b2c3d').tagName).toBe('SPAN')
     fireEvent.click(screen.getByRole('button', { name: 'docs/motor.md' }))
     await waitFor(() =>
-      expect(useUiStore.getState().linkViewerUrl).toBe('C:\\repo-feature\\docs\\motor.md'),
+      expect(useUiStore.getState().rightSidebarMarkdown?.path ?? null).toBe(
+        'C:\\repo-feature\\docs\\motor.md',
+      ),
     )
     expect(findRelativePath).toHaveBeenCalledWith('C:\\repo', 'docs/motor.md')
   })
@@ -1678,12 +1680,16 @@ describe('Night card', () => {
     expect(findRelativePath).not.toHaveBeenCalled()
     expect(vi.mocked(listDirectory).mock.calls.every(([path]) => path === NIGHTS)).toBe(true)
     expect(openInFileExplorer).not.toHaveBeenCalled()
-    expect(useUiStore.getState().linkViewerUrl).toBeNull()
+    expect(useUiStore.getState().rightSidebarMarkdown?.path ?? null).toBeNull()
     expect(useProjectsStore.getState().projects[0].terminals).toHaveLength(panes)
   }
 
   it('opens evidence only inside the checkouts, never asking the disk about another path', async () => {
-    useUiStore.setState({ linkViewerUrl: null })
+    useUiStore.setState({
+      linkViewerUrl: null,
+      rightSidebarMarkdown: null,
+      rightSidebarMarkdownTabs: [],
+    })
     fs.files.set(REGISTRY, JSON.stringify(exemplo))
     fs.files.set(
       `${NIGHTS}\\2026-10-03.json`,
@@ -1714,7 +1720,11 @@ describe('Night card', () => {
   })
 
   it('refuses a rooted path without a drive, which Windows would resolve on the current drive', async () => {
-    useUiStore.setState({ linkViewerUrl: null })
+    useUiStore.setState({
+      linkViewerUrl: null,
+      rightSidebarMarkdown: null,
+      rightSidebarMarkdownTabs: [],
+    })
     fs.files.set(REGISTRY, JSON.stringify(exemplo))
     fs.files.set(
       `${NIGHTS}\\2026-10-03.json`,
@@ -1732,7 +1742,11 @@ describe('Night card', () => {
   })
 
   it('looks evidence up when clicked: one removed since the card showed it opens nothing', async () => {
-    useUiStore.setState({ linkViewerUrl: null })
+    useUiStore.setState({
+      linkViewerUrl: null,
+      rightSidebarMarkdown: null,
+      rightSidebarMarkdownTabs: [],
+    })
     fs.files.set(REGISTRY, JSON.stringify(exemplo))
     fs.files.set(
       `${NIGHTS}\\2026-10-03.json`,
@@ -1753,7 +1767,13 @@ describe('Night card', () => {
   })
 
   it('opens a folder through its report, else in the file explorer, and names evidence found nowhere', async () => {
-    useUiStore.setState({ toasts: [], notifications: [], linkViewerUrl: null })
+    useUiStore.setState({
+      toasts: [],
+      notifications: [],
+      linkViewerUrl: null,
+      rightSidebarMarkdown: null,
+      rightSidebarMarkdownTabs: [],
+    })
     fs.files.set(REGISTRY, JSON.stringify(exemplo))
     // Each folder and its files; the report is the first of relatorio.md, README.md and
     // handoff.md, else its only Markdown file.
@@ -1781,7 +1801,7 @@ describe('Night card', () => {
     )
     render(<TodoSidebar />)
     fireEvent.click(await screen.findByRole('button', { name: /^Night of/ }))
-    const viewer = () => useUiStore.getState().linkViewerUrl
+    const viewer = () => useUiStore.getState().rightSidebarMarkdown?.path ?? null
     const link = async (evidence: string) =>
       fireEvent.click(await screen.findByRole('button', { name: evidence }))
     const panes = () => useProjectsStore.getState().projects[0].terminals.length
@@ -1825,7 +1845,13 @@ describe('Night card', () => {
     }
 
     beforeEach(() => {
-      useUiStore.setState({ toasts: [], notifications: [], linkViewerUrl: null })
+      useUiStore.setState({
+        toasts: [],
+        notifications: [],
+        linkViewerUrl: null,
+        rightSidebarMarkdown: null,
+        rightSidebarMarkdownTabs: [],
+      })
       useTodosStore.setState({ tab: 'tasks' })
     })
 
@@ -2003,7 +2029,9 @@ describe('Night card', () => {
       // Markdown opens in the viewer, any other file in a pane, as from a terminal link.
       await choose('OITO-07', 'Open evidence')
       await waitFor(() =>
-        expect(useUiStore.getState().linkViewerUrl).toBe('C:\\repo-feature\\docs\\oito.md'),
+        expect(useUiStore.getState().rightSidebarMarkdown?.path ?? null).toBe(
+          'C:\\repo-feature\\docs\\oito.md',
+        ),
       )
       await choose('PARADA-01', 'Open evidence')
       await waitFor(() =>
@@ -2315,7 +2343,11 @@ describe('Todo sections', () => {
         ? new Promise((resolve) => (release = resolve))
         : Promise.resolve(`${cwd}\\${path.replace(/\//g, '\\')}`),
     )
-    useUiStore.setState({ linkViewerUrl: null })
+    useUiStore.setState({
+      linkViewerUrl: null,
+      rightSidebarMarkdown: null,
+      rightSidebarMarkdownTabs: [],
+    })
     try {
       render(<TodoSidebar />)
       await waitFor(() => expect(gate2Rows()).toEqual(['OITO-07']))
@@ -2328,10 +2360,12 @@ describe('Todo sections', () => {
       fireEvent.click(within(gate2()!).getByRole('button', { name: /^OITO-07 / }))
       fireEvent.click(screen.getByRole('menuitem', { name: 'Open evidence' }))
       await act(async () => {})
-      expect(useUiStore.getState().linkViewerUrl).toBeNull()
+      expect(useUiStore.getState().rightSidebarMarkdown?.path ?? null).toBeNull()
       await act(async () => release('C:\\repo-feature\\docs\\report.md'))
       await waitFor(() =>
-        expect(useUiStore.getState().linkViewerUrl).toBe('C:\\repo-feature\\docs\\report.md'),
+        expect(useUiStore.getState().rightSidebarMarkdown?.path ?? null).toBe(
+          'C:\\repo-feature\\docs\\report.md',
+        ),
       )
       expect(lookup).toHaveBeenLastCalledWith('C:\\repo-feature', 'docs/report.md')
     } finally {
@@ -2347,7 +2381,11 @@ describe('Todo sections', () => {
     fs.files.set(REGISTRY, JSON.stringify(data))
     fs.found.set('docs/oito.md', 'C:\\repo\\docs\\oito.md')
     const tagged = openTerminal('C:\\repo', 'claude', 'PARADA')
-    useUiStore.setState({ linkViewerUrl: null })
+    useUiStore.setState({
+      linkViewerUrl: null,
+      rightSidebarMarkdown: null,
+      rightSidebarMarkdownTabs: [],
+    })
     render(<TodoSidebar />)
     await waitFor(() => expect(gate2Rows()).toEqual(['OITO-07', 'NOTURNA-01', 'PARADA-01']))
     const trigger = (id: string) =>
@@ -2370,7 +2408,11 @@ describe('Todo sections', () => {
     fireEvent.click(trigger('OITO-07'))
     fireEvent.click(screen.getByRole('menuitem', { name: 'Open evidence' }))
     expect(trigger('OITO-07')).toHaveFocus()
-    await waitFor(() => expect(useUiStore.getState().linkViewerUrl).toBe('C:\\repo\\docs\\oito.md'))
+    await waitFor(() =>
+      expect(useUiStore.getState().rightSidebarMarkdown?.path ?? null).toBe(
+        'C:\\repo\\docs\\oito.md',
+      ),
+    )
 
     // No evidence, no Open evidence; Continue goes to the campaign's tab.
     fireEvent.click(trigger('PARADA-01'))
@@ -2644,7 +2686,15 @@ describe('Task detail', () => {
     useTodosStore.setState({ activeCampaigns: { [projectId()]: 'OITO' } })
   }
 
-  beforeEach(() => useUiStore.setState({ toasts: [], notifications: [], linkViewerUrl: null }))
+  beforeEach(() =>
+    useUiStore.setState({
+      toasts: [],
+      notifications: [],
+      linkViewerUrl: null,
+      rightSidebarMarkdown: null,
+      rightSidebarMarkdownTabs: [],
+    }),
+  )
 
   it('expands a task row into its result, evidence, waits, workers, night and findings', async () => {
     seed()
@@ -2712,7 +2762,9 @@ describe('Task detail', () => {
 
     fireEvent.click(open)
     await waitFor(() =>
-      expect(useUiStore.getState().linkViewerUrl).toBe('C:\\repo\\docs\\oito-02.md'),
+      expect(useUiStore.getState().rightSidebarMarkdown?.path ?? null).toBe(
+        'C:\\repo\\docs\\oito-02.md',
+      ),
     )
     expect(findRelativePath).toHaveBeenCalledWith('C:\\repo', 'docs/oito-02.md')
 
@@ -4147,4 +4199,32 @@ it('preserves a dependency draft when an unrelated task update reloads the regis
     JSON.parse(fs.files.get(REGISTRY)!).campanhas.find((item: { id: string }) => item.id === 'OITO')
       .depende_de,
   ).not.toContain('PARADA')
+})
+
+describe('Night campaign access and blocking indicators', () => {
+  it('opens the full campaign session flow from Night without a diary', async () => {
+    fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    useTodosStore.setState({ tab: 'night' })
+    render(<TodoSidebar />)
+    await expandSection()
+    fireEvent.click(screen.getByRole('button', { name: 'Open campaign OITO' }))
+    expect(useUiStore.getState().openModal).toBe('newTerminal')
+    await confirmSession('codex')
+    expect(agentTerminals()[0].tabs[0]).toMatchObject({ type: 'codex', campaignId: 'OITO' })
+  })
+  it('updates the blocked indicator when the registry releases a prerequisite', async () => {
+    const data = structuredClone(exemplo)
+    const dependent = data.campanhas.find((c) => c.id === 'NOTURNA')!
+    dependent.depende_de = ['OITO']
+    dependent.tarefas.forEach(task => { task.estado = 'pronta'; task.depende_de = [] })
+    fs.files.set(REGISTRY, JSON.stringify(data))
+    render(<Section />)
+    await expandSection()
+    const row = () => screen.getByText('NOTURNA').closest('[data-blocked]')
+    expect(row()).toHaveAttribute('data-blocked', 'true')
+    dependent.depende_de = []
+    fs.files.set(REGISTRY, JSON.stringify(data))
+    act(() => fs.onChange?.(REGISTRY))
+    await waitFor(() => expect(row()).toHaveAttribute('data-blocked', 'false'))
+  })
 })

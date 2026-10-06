@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import controls from '../../components/modals/controls.module.css'
 import {
   type Campaign,
+  campaignPrerequisites,
   type CampaignSituation,
   campaignWorkers,
   type RegistryError,
@@ -17,7 +18,6 @@ import {
   type CampaignEdits,
   type CampaignLive,
   type CampaignView,
-  continueCampaign,
   requestCampaignSession,
   STATE_KEYS,
   TASK_LANES,
@@ -133,7 +133,6 @@ export function CampaignsSection({
       campaigns={registry.campaigns}
       edits={edits}
       source={registry.text}
-      onContinue={() => continueCampaign(projectId, campaign)}
     />
   )
 
@@ -198,7 +197,6 @@ function CampaignRow({
   live,
   workers,
   onOpen,
-  onContinue,
   campaigns,
   edits,
   source,
@@ -215,11 +213,10 @@ function CampaignRow({
   campaigns: Campaign[]
   edits: CampaignEdits
   source: string
-  /** Focuses the campaign's open tab; false when it has none. */
-  onContinue: () => boolean
 }) {
   const t = useT()
   const [expanded, setExpanded] = useState(false)
+  const prerequisites = campaignPrerequisites(campaign, campaigns)
   const inPending = campaign.tasks.filter((task) => pending.has(task.id)).length
 
   return (
@@ -249,16 +246,19 @@ function CampaignRow({
           </span>
           {live ? <span>{t(LIVE_KEYS[live])}</span> : null}
           <span className={styles.situation}>{situationLabel(t, campaign.situation)}</span>
+          {prerequisites.length > 0 ? (
+            <span className={styles.situation}>
+              {t('todo.campaigns.prerequisites', { ids: prerequisites.join(', ') })}
+            </span>
+          ) : null}
           {workers ? <span className={styles.workers}>{workers}</span> : null}
         </span>
       </button>
-      {/* Existing sessions are focused; new ones always use the shared dialog. */}
+      {/* Campaign launch choices always use the shared dialog. */}
       <button
         type="button"
         className={styles.openButton}
-        onClick={() => {
-          if (!onContinue()) onOpen()
-        }}
+        onClick={onOpen}
         aria-label={t(active ? 'todo.campaigns.continueLabel' : 'todo.campaigns.openLabel', {
           id: campaign.id,
         })}

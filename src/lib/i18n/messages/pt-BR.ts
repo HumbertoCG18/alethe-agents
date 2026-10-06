@@ -670,6 +670,7 @@ export const ptBR: Record<MessageKey, string> = {
   'todo.tabs.night': 'Noturno',
   'todo.progressAll': 'Todas as campanhas',
   'todo.noRegistry': 'Este projeto não tem registro de campanhas (.workflow/campanhas.json).',
+  'todo.selectProject': 'Selecione um projeto para ver as campanhas.',
   'todo.registryError': 'Não foi possível ler o registro de campanhas: {reason}',
   'todo.registryNotRegistry': 'não é um registro de campanhas',
   'todo.registryNoMain': 'o repositório não tem checkout principal',

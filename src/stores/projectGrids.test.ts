@@ -166,6 +166,65 @@ describe('named project grids', () => {
     expect(project(p.id).activeGridId).toBe(backend)
   })
 
+  it('keeps a project without terminals active when its tab is opened again', () => {
+    const p = store().createProject({ name: 'App' })
+    const terminal = createTerminal(p.id, 'Shell')
+    store().openProjectWorkspace(p.id)
+    store().deleteTerminal(p.id, terminal.id)
+    // Sidebar click on the project row.
+    store().openProjectWorkspace(p.id)
+    const tabId = store().workspace.activeTabId!
+    expect(store().workspace.tabs.find((tab) => tab.id === tabId)).toMatchObject({
+      kind: 'project',
+      sourceId: p.id,
+    })
+    expect(store().activeProjectId).toBe(p.id)
+    // Title bar click and history navigation restore the same tab.
+    store().activateWorkspaceTab(tabId)
+    expect(store().activeProjectId).toBe(p.id)
+    store().navigateWorkspaceHistory(-1)
+    store().navigateWorkspaceHistory(1)
+    expect(store().activeProjectId).toBe(p.id)
+  })
+
+  it('activates its own project from a saved project tab whose snapshot lost it', () => {
+    const a = store().createProject({ name: 'A' })
+    createTerminal(a.id, 'Shell')
+    store().openProjectWorkspace(a.id)
+    const tabA = store().workspace.activeTabId!
+    const b = store().createProject({ name: 'B' })
+    const snapshot = {
+      ...store().workspace.tabs[0].snapshot,
+      containers: [],
+      activeProjectId: null,
+    }
+    useProjectsStore.setState({
+      workspace: {
+        ...store().workspace,
+        tabs: [
+          ...store().workspace.tabs,
+          {
+            id: 'tab-b',
+            kind: 'project',
+            sourceId: b.id,
+            label: 'B',
+            snapshot,
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        ],
+      },
+    })
+    // Title bar click on the saved tab, then Back to it from another tab.
+    store().activateWorkspaceTab('tab-b')
+    expect(store().activeProjectId).toBe(b.id)
+    store().activateWorkspaceTab(tabA)
+    expect(store().activeProjectId).toBe(a.id)
+    store().navigateWorkspaceHistory(-1)
+    expect(store().workspace.activeTabId).toBe('tab-b')
+    expect(store().activeProjectId).toBe(b.id)
+  })
+
   it('opens a group using the latest selected grid of each project', () => {
     const group = store().createGroup('Work')
     const p = store().createProject({ name: 'App', groupId: group.id })

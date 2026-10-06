@@ -480,10 +480,30 @@ export function migrate(parsed: any): ProjectsFile {
     (tab: WorkspaceTab) => tab.id === base.workspace.activeTabId,
   )
   const scoped = (tab?: WorkspaceTab) => tab?.kind === 'project' || tab?.kind === 'group'
+  // A project tab saved without an active project (#97) gets its own one back.
+  const migrateTab = (tab: WorkspaceTab): WorkspaceTab => ({
+    ...tab,
+    snapshot: migrateSnapshot(
+      {
+        ...tab.snapshot,
+        activeProjectId:
+          tab.snapshot.activeProjectId ?? (tab.kind === 'project' ? tab.sourceId : null) ?? null,
+      },
+      scoped(tab),
+    ),
+  })
+  // Files saved while a project tab was active with no project selected (#97) get it back.
+  const activeProjectId =
+    [
+      base.activeProjectId,
+      activeTab?.kind === 'project' ? activeTab.sourceId : null,
+      activeTab?.snapshot?.activeProjectId,
+    ].find((id) => !!id && projects.some((project: Project) => project.id === id)) ?? null
   return {
     ...base,
     version: 9,
     projects,
+    activeProjectId,
     workspace: {
       ...base.workspace,
       containers: migrateSnapshot(
@@ -498,14 +518,8 @@ export function migrate(parsed: any): ProjectsFile {
         },
         scoped(activeTab),
       ).containers,
-      tabs: base.workspace.tabs.map((tab: WorkspaceTab) => ({
-        ...tab,
-        snapshot: migrateSnapshot(tab.snapshot, scoped(tab)),
-      })),
-      closedTabs: (base.workspace.closedTabs ?? []).map((tab: WorkspaceTab) => ({
-        ...tab,
-        snapshot: migrateSnapshot(tab.snapshot, scoped(tab)),
-      })),
+      tabs: base.workspace.tabs.map(migrateTab),
+      closedTabs: (base.workspace.closedTabs ?? []).map(migrateTab),
       history: base.workspace.history.map(
         (entry: ProjectsFile['workspace']['history'][number]) => ({
           ...entry,

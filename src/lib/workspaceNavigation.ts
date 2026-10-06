@@ -88,13 +88,16 @@ export function sanitizeWorkspaceSnapshot(
   })
   const visibleTerminalIds = new Set(containers.flatMap((container) => container.paneIds))
   const visibleProjectIds = new Set(containers.map((container) => container.projectId))
+  const activeProjectId = snapshot.activeProjectId
+  // A project with no visible panes (no terminals yet) stays active when nothing else is shown.
+  const keepsActiveProject =
+    !!activeProjectId &&
+    (visibleProjectIds.has(activeProjectId) ||
+      (containers.length === 0 && projectsById.has(activeProjectId)))
   return {
     ...cloneWorkspaceSnapshot(snapshot),
     containers,
-    activeProjectId:
-      snapshot.activeProjectId && visibleProjectIds.has(snapshot.activeProjectId)
-        ? snapshot.activeProjectId
-        : (containers[0]?.projectId ?? null),
+    activeProjectId: keepsActiveProject ? activeProjectId : (containers[0]?.projectId ?? null),
     focusedTerminalId:
       snapshot.focusedTerminalId && visibleTerminalIds.has(snapshot.focusedTerminalId)
         ? snapshot.focusedTerminalId
@@ -104,6 +107,19 @@ export function sanitizeWorkspaceSnapshot(
         ? snapshot.fullscreenContainerId
         : null,
   }
+}
+
+/** The project a tab activates: a project tab's own one while it exists, else its snapshot's. */
+export function tabActiveProjectId(
+  tab: WorkspaceTab,
+  snapshot: WorkspaceViewSnapshot,
+  projects: Project[],
+): string | null {
+  return tab.kind === 'project' &&
+    tab.sourceId &&
+    projects.some((project) => project.id === tab.sourceId)
+    ? tab.sourceId
+    : snapshot.activeProjectId
 }
 
 export function compositionLabel(snapshot: WorkspaceViewSnapshot, projects: Project[]): string {

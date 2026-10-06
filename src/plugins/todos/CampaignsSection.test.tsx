@@ -285,6 +285,21 @@ describe('CampaignsSection', () => {
     expect(screen.queryByRole('button', { name: /^Campaigns/ })).toBeNull()
   })
 
+  it('asks for a project in Overview and Night when none is active; Personal needs none', () => {
+    useProjectsStore.setState({ activeProjectId: null })
+    render(<TodoSidebar />)
+    const hint = 'Select a project to see its campaigns.'
+    expect(screen.getByText(hint)).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('tab', { name: /^Night/ }))
+    expect(screen.getByText(hint)).toBeInTheDocument()
+    expect(screen.queryByText('No night diary yet.')).toBeNull()
+
+    fireEvent.click(screen.getByRole('tab', { name: /^Personal/ }))
+    expect(screen.getByText('Nothing on your list')).toBeInTheDocument()
+    expect(screen.queryByText(hint)).toBeNull()
+  })
+
   it('puts the campaign of the focused terminal first, highlighted, and follows the focus', async () => {
     const registry = structuredClone(exemplo)
     Object.assign(registry.campanhas[4], { worktrees: ['repo-feature'] })

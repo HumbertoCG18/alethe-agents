@@ -395,4 +395,95 @@ describe('projects file migration', () => {
 
     expect(migrated.projects[0].terminals[0].remoteShared).toBe(true)
   })
+
+  it('restores the active project from the active project tab', () => {
+    const snapshot = {
+      containers: [
+        {
+          projectId: 'project',
+          paneIds: [],
+          size: 0,
+          internalLayout: 'auto',
+          collapsed: false,
+        },
+      ],
+      activeProjectId: 'project',
+      activeGroupId: null,
+      focusedTerminalId: null,
+      workspaceFlat: false,
+      fullscreenContainerId: null,
+    }
+    const saved = (tab: object, activeProjectId: string | null = null) => ({
+      ...EMPTY_PROJECTS_FILE,
+      version: 9,
+      projects: [{ id: 'project', name: 'GPT Tutor', terminals: [] }],
+      activeProjectId,
+      workspace: {
+        ...EMPTY_PROJECTS_FILE.workspace,
+        containers: [],
+        activeTabId: 'tab',
+        tabs: [
+          { id: 'tab', kind: 'project', sourceId: 'project', label: 'GPT Tutor', snapshot, ...tab },
+        ],
+      },
+    })
+
+    expect(migrate(saved({})).activeProjectId).toBe('project')
+    expect(migrate(saved({}, 'deleted')).activeProjectId).toBe('project')
+    expect(migrate(saved({ sourceId: 'deleted' })).activeProjectId).toBe('project')
+    expect(migrate(saved({ kind: 'composition', sourceId: undefined })).activeProjectId).toBe(
+      'project',
+    )
+    expect(
+      migrate(saved({ sourceId: 'deleted', snapshot: { ...snapshot, activeProjectId: null } }))
+        .activeProjectId,
+    ).toBeNull()
+  })
+
+  it('gives every saved project tab its own project back', () => {
+    const lost = {
+      containers: [],
+      activeProjectId: null,
+      activeGroupId: null,
+      focusedTerminalId: null,
+      workspaceFlat: false,
+      fullscreenContainerId: null,
+    }
+    const tab = (id: string, kind: string, sourceId?: string) => ({
+      id,
+      kind,
+      sourceId,
+      label: id,
+      snapshot: lost,
+    })
+    const migrated = migrate({
+      ...EMPTY_PROJECTS_FILE,
+      version: 9,
+      projects: [
+        { id: 'a', name: 'A', terminals: [] },
+        { id: 'b', name: 'B', terminals: [] },
+      ],
+      workspace: {
+        ...EMPTY_PROJECTS_FILE.workspace,
+        activeTabId: 'tab-a',
+        tabs: [
+          tab('tab-a', 'project', 'a'),
+          tab('tab-b', 'project', 'b'),
+          tab('tab-gone', 'project', 'deleted'),
+          tab('tab-mix', 'composition'),
+        ],
+        closedTabs: [tab('closed-b', 'project', 'b')],
+      },
+    })
+    const active = (tabs: { id: string; snapshot: { activeProjectId: string | null } }[]) =>
+      Object.fromEntries(tabs.map((item) => [item.id, item.snapshot.activeProjectId]))
+
+    expect(active(migrated.workspace.tabs)).toEqual({
+      'tab-a': 'a',
+      'tab-b': 'b',
+      'tab-gone': null,
+      'tab-mix': null,
+    })
+    expect(active(migrated.workspace.closedTabs ?? [])).toEqual({ 'closed-b': 'b' })
+  })
 })

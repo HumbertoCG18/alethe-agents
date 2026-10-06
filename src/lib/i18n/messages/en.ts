@@ -658,6 +658,7 @@ export const en = {
   'todo.tabs.night': 'Night',
   'todo.progressAll': 'All campaigns',
   'todo.noRegistry': 'This project has no campaign registry (.workflow/campanhas.json).',
+  'todo.selectProject': 'Select a project to see its campaigns.',
   'todo.registryError': 'Could not read the campaign registry: {reason}',
   'todo.registryNotRegistry': 'it is not a campaign registry',
   'todo.registryNoMain': 'the repository has no main checkout',

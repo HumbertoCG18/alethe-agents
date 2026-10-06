@@ -767,7 +767,9 @@ export function TodoSidebar() {
         </div>
       ) : view.problem?.kind === 'missing' ? (
         <p className={styles.sectionEmpty}>{t('todo.noRegistry')}</p>
-      ) : null}
+      ) : view.projectId ? null : (
+        <p className={styles.sectionEmpty}>{t('todo.selectProject')}</p>
+      )}
     </>
   )
 
@@ -777,7 +779,9 @@ export function TodoSidebar() {
       {view.registry && diary ? (
         <NightCard registry={view.registry} diary={diary} edits={edits} />
       ) : (
-        <p className={styles.sectionEmpty}>{t('todo.night.empty')}</p>
+        <p className={styles.sectionEmpty}>
+          {t(view.projectId ? 'todo.night.empty' : 'todo.selectProject')}
+        </p>
       )}
     </>
   )

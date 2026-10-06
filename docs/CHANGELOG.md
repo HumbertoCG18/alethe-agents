@@ -346,6 +346,10 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ### Fixed
 
+- **A project without terminals stays selected when you open it.** Clicking it in the sidebar,
+  its tab, or Back/Forward left no active project, so the Todo panel and the Markdown tab stayed
+  blank; files saved in that state get the project back on load. With no project, the Todo
+  Overview and Night tabs now ask you to select one.
 - **Continue campaign** no longer loses the resume prompt of the Claude Code tab it opens: the
   tab's pane is moved next to its Orchestration board right after it starts, and the prompt was
   dropped with the first pane. It is now part of the launch; a first prompt that is still typed

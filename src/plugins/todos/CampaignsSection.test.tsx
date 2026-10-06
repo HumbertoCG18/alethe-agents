@@ -213,19 +213,25 @@ const agentTerminals = () =>
 async function confirmSession(agent: 'claude' | 'codex' = 'claude') {
   const context = useUiStore.getState().modalContext as {
     cwd: string
-    onCreate: (creation: {
-      name: string
-      cwd: string
-      firstTab: { type: string; cwd: string }
-    }) => Promise<boolean>
+    onCreate: (
+      creation: {
+        name: string
+        cwd: string
+        firstTab: { type: string; cwd: string }
+      },
+      mode: 'terminal' | 'orchestration',
+    ) => Promise<boolean>
   }
   expect(useUiStore.getState().openModal).toBe('newTerminal')
   await act(async () => {
-    const ok = await context.onCreate({
-      name: agent,
-      cwd: context.cwd,
-      firstTab: { type: agent, cwd: context.cwd },
-    })
+    const ok = await context.onCreate(
+      {
+        name: agent,
+        cwd: context.cwd,
+        firstTab: { type: agent, cwd: context.cwd },
+      },
+      'orchestration',
+    )
     if (ok) useUiStore.getState().closeModal()
   })
 }
@@ -529,7 +535,7 @@ describe('CampaignsSection', () => {
     expect(screen.queryByText('PARADA')).toBeNull()
   })
 
-  it('goes to a campaign tab in a disabled terminal of another grid, from Home', async () => {
+  it('offers a new session instead of reactivating a disabled campaign tab', async () => {
     fs.files.set(REGISTRY, JSON.stringify(exemplo))
     const projectId = useProjectsStore.getState().projects[0].id
     const tagged = openTerminal('C:\\repo', 'claude', 'PARADA')
@@ -551,10 +557,11 @@ describe('CampaignsSection', () => {
 
     fireEvent.click(within(parada).getByRole('button', { name: 'Go to tab' }))
     await confirmSession()
-    await waitFor(() => expect(agentTerminals()[0].disabled).toBe(false))
-    expect(agentTerminals()).toHaveLength(1)
-    expect(useUiStore.getState().activeTerminal?.terminalId).toBe(tagged.id)
-    expect(visible()).toBe(true)
+    await waitFor(() => expect(agentTerminals()).toHaveLength(2))
+    expect(agentTerminals()[0].disabled).toBe(true)
+    expect(agentTerminals()[1].tabs[0].campaignId).toBe('PARADA')
+    expect(useUiStore.getState().activeTerminal?.terminalId).toBe(agentTerminals()[1].id)
+    expect(visible()).toBe(false)
     expect(useUiStore.getState().activeView).toBe('workspace')
   })
 
@@ -681,6 +688,32 @@ describe('Campaign prerequisites and session confirmation', () => {
       },
     }
   }
+  it('shows unfinished campaign prerequisites without expanding the row', async () => {
+    registry()
+    render(<Section />)
+    await expandSection()
+    expect(screen.getByText('Blocked until completed: OITO')).toBeInTheDocument()
+  })
+  it('creates an individual campaign session without an orchestration board', async () => {
+    const view = registry()
+    const campaign = view.campaigns.find((item) => item.id === 'OITO')!
+    await openCampaign(
+      projectId(),
+      campaign,
+      'claude',
+      view,
+      undefined,
+      undefined,
+      { cwd: 'C:\\repo', firstTab: { type: 'claude' } },
+      'terminal',
+    )
+    expect(agentTerminals()).toHaveLength(1)
+    expect(
+      useProjectsStore
+        .getState()
+        .projects[0].terminals.some((item) => item.kind === 'orchestrator'),
+    ).toBe(false)
+  })
   it('blocks an unfinished prerequisite without any open terminal', async () => {
     const view = registry()
     const dependent = view.campaigns.find((item) => item.id === 'NOTURNA')!

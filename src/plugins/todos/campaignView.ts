@@ -442,7 +442,10 @@ export function requestCampaignSession(
     projectId,
     cwd,
     only: [...AGENTS],
-    onCreate: async (creation: TerminalCreationPreset) => {
+    onCreate: async (
+      creation: TerminalCreationPreset,
+      mode: 'terminal' | 'orchestration' = 'terminal',
+    ) => {
       try {
         if (!AGENTS.includes(creation.firstTab.type as CampaignAgent)) return false
         const text = await readTextFile(registry.path)
@@ -462,6 +465,7 @@ export function requestCampaignSession(
           undefined,
           task,
           creation,
+          mode,
         )
         if (opened) useTodosStore.getState().rememberCampaign(projectId, current.id)
         return opened !== null
@@ -484,6 +488,7 @@ export async function openCampaign(
   nightTask?: CampaignTask,
   resumeFrom?: CampaignTask,
   creation?: TerminalCreationPreset,
+  mode: 'terminal' | 'orchestration' = 'orchestration',
 ): Promise<string | null> {
   const cwd = creation?.cwd ?? campaignCwd(campaign, registry.checkouts)
   if (!cwd || !useProjectsStore.getState().projects.some((item) => item.id === projectId)) {
@@ -509,12 +514,12 @@ export async function openCampaign(
   // the agent chosen.
   const running = (tab: SubTab) =>
     !nightTask && (resumeFrom !== undefined || tab.type === agent) && tab.campaignId === campaign.id
-  let terminalId = activateTab(projectId, running)
+  let terminalId = creation ? null : activateTab(projectId, running)
   if (!terminalId) {
     const handoff = await findHandoff(campaign, registry)
     // Checked again: the tab, or one of a campaign it may not run beside, may have been opened
     // while the handoff was looked up.
-    terminalId = activateTab(projectId, running)
+    terminalId = creation ? null : activateTab(projectId, running)
     if (!terminalId && refused()) return null
     if (!terminalId) {
       if (creation) {
@@ -550,9 +555,12 @@ export async function openCampaign(
               : resumePrompt(campaign, registry.path, handoff, resumeFrom),
           },
         })
-      // The user's tab is a planner with its own board; the night's stays a plain tab.
-      terminalId = (nightTask ? create() : await createOrchestratedTerminal(projectId, cwd, create))
-        .id
+      // Attach a board only when selected; unattended night sessions remain individual.
+      terminalId = (
+        nightTask || mode === 'terminal'
+          ? create()
+          : await createOrchestratedTerminal(projectId, cwd, create)
+      ).id
     }
   }
   focusTerminal(projectId, terminalId, !nightTask)

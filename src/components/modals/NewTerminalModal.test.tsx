@@ -150,3 +150,20 @@ it('keeps the dialog open during pending confirmation and does not close a newer
   await act(async () => finish(true))
   expect(useUiStore.getState().openModal).toBe('newProject')
 })
+
+it('offers orchestration in a campaign session and passes the selected mode', async () => {
+  const onCreate = vi.fn(async () => true)
+  act(() =>
+    useUiStore.getState().openModal_('newTerminal', {
+      projectId,
+      cwd: 'D:\\campaign',
+      only: ['claude', 'codex'],
+      onCreate,
+    }),
+  )
+  choose('Open as', 'orchestration')
+  fireEvent.click(screen.getByRole('button', { name: /Create orchestration/ }))
+  await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1))
+  expect(onCreate.mock.calls[0][1]).toBe('orchestration')
+  expect(createAgentTerminal).not.toHaveBeenCalled()
+})

@@ -60,7 +60,7 @@ export function NewTerminalModal() {
     projectId?: string
     gridId?: string
     cwd?: string
-    onCreate?: (creation: TerminalCreationPreset) => Promise<boolean>
+    onCreate?: (creation: TerminalCreationPreset, mode: SessionMode) => Promise<boolean>
     // Callers that need a particular kind of terminal narrow the choice rather than opening a
     // second modal that would drift from this one.
     only?: AgentType[]
@@ -97,7 +97,7 @@ export function NewTerminalModal() {
     (agent) => isAgentEnabled(enabled, agent.type) && (!only || only.includes(agent.type)),
   )
   const plannerAgents = visibleAgents.filter((a) => PLANNER_AGENTS.includes(a.type))
-  const canOrchestrate = !context?.onCreate && !isPlannerContext && plannerAgents.length > 0
+  const canOrchestrate = !isPlannerContext && plannerAgents.length > 0
   const orchestrating = canOrchestrate && mode === 'orchestration'
   const modeAgents = orchestrating ? plannerAgents : visibleAgents
   const defaultType =
@@ -240,7 +240,7 @@ export function NewTerminalModal() {
       }
       if (!finalCwd) return
       if (context.onCreate) {
-        if (!(await context.onCreate(creation))) return
+        if (!(await context.onCreate(creation, mode))) return
         if (
           useUiStore.getState().openModal === 'newTerminal' &&
           useUiStore.getState().modalContext === context

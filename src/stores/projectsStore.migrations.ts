@@ -86,6 +86,14 @@ function normalizeViewPlacements(
   return placements
 }
 
+/** Icon ids only; a file saved before the setting gets the default order with nothing hidden. */
+function normalizeSidebarIcons(raw: unknown): Preferences['sidebarIcons'] {
+  const stored = (raw ?? {}) as Record<string, unknown>
+  const ids = (value: unknown) =>
+    Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string') : []
+  return { left: ids(stored.left), right: ids(stored.right), hidden: ids(stored.hidden) }
+}
+
 export function normalizePreferences(raw: LegacyPreferences | undefined): Preferences {
   // Git Control became a plugin; its old toggle is handed to the plugin host.
   recordLegacyGitFlag(legacyGitFeatureFlag(raw))
@@ -136,6 +144,7 @@ export function normalizePreferences(raw: LegacyPreferences | undefined): Prefer
     accountCreated: legacyAccountCreated,
     topbarStyle: preferences.topbarStyle === 'three-areas' ? 'three-areas' : 'classic',
     viewPlacements: normalizeViewPlacements(preferences),
+    sidebarIcons: normalizeSidebarIcons(raw?.sidebarIcons),
     mcpDefaultScope: preferences.mcpDefaultScope === 'project' ? 'project' : 'global',
     mcpOnboardingSeen: Boolean(preferences.mcpOnboardingSeen),
     setupWalkthrough: {

@@ -3,7 +3,7 @@ import { GitBranch } from 'lucide-react'
 import { EmptyState } from '../../components/EmptyState'
 import { useT } from '../../lib/i18n'
 import type { SidebarTabProps } from '../../lib/plugins'
-import { useProjectsStore } from '../../stores/projectsStore'
+import { getProjectDefaultCwd, useProjectsStore } from '../../stores/projectsStore'
 import { useUiStore } from '../../stores/uiStore'
 import { GitControl } from './GitControl'
 import styles from './GitTabs.module.css'
@@ -18,7 +18,7 @@ export function GitTab({ projectId, cwd, ptyId, terminalName }: SidebarTabProps)
 
   // Source Control follows the selected project rather than requiring an open
   // terminal, so a project with no terminal still reports its git status.
-  const resolvedCwd = cwd || project?.defaultCwd
+  const resolvedCwd = cwd || getProjectDefaultCwd(project)
   const resolvedName = terminalName || project?.name || ''
 
   if (!project || !resolvedCwd) {

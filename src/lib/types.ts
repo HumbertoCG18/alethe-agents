@@ -378,6 +378,9 @@ export type Project = {
   groupId: string | null
 
   defaultCwd?: string
+  /** Checkout new terminals start in and the Markdown tab reads, from the worktree picker. Absent:
+   *  the repository's main checkout when `defaultCwd` is a checkout's root, else `defaultCwd`. */
+  checkoutPath?: string
   terminals: Terminal[]
   /** Blocos visuais criados selecionando panes com Shift. */
   paneGroups?: PaneGroup[]
@@ -630,6 +633,8 @@ export type Preferences = {
   gitControlPlacement?: 'left' | 'right'
   /** Sidebar a contributed view sits in, overriding the container its manifest declares. */
   viewPlacements: Record<string, 'left' | 'right'>
+  /** Each sidebar's icon order (empty: the default order) and the icons the user hid. */
+  sidebarIcons: { left: string[]; right: string[]; hidden: string[] }
 
   /** Credenciais locais do Spotify Developer Dashboard para Now Playing. */
   spotifyClientId: string
@@ -815,6 +820,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   lastTerminalCreation: null,
   topbarStyle: 'classic',
   viewPlacements: {},
+  sidebarIcons: { left: [], right: [], hidden: [] },
   spotifyClientId: '',
   spotifyClientSecret: '',
   discordRichPresenceEnabled: false,

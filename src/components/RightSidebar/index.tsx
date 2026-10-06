@@ -33,7 +33,13 @@ import { hasFileDragPayload, readFileDragPayload } from '../../lib/fileDrag'
 import { useT } from '../../lib/i18n'
 import { isMarkdownPath } from '../../lib/markdownSidebarHistory'
 import { basename } from '../../lib/paths'
-import { sidebarTabLabel, sidebarTabPanelLabel } from '../../lib/plugins'
+import {
+  type SidebarTabContribution,
+  sidebarTabLabel,
+  sidebarTabPanelLabel,
+} from '../../lib/plugins'
+import { resolveProjectCheckout } from '../../lib/projectCheckout'
+import { sidebarIconIds, useVisibleSidebarIcons } from '../../lib/sidebarIcons'
 import {
   listProjectPlans,
   type PlanningStatus,
@@ -101,99 +107,65 @@ export function RightSidebar() {
     openMarkdown()
   }, [contributedTabs, gsdSyncAvailable, mcpEnabled, prsEnabled, mode, openMarkdown])
 
+  type Tab = {
+    label: string
+    title?: string
+    Icon: SidebarTabContribution['icon']
+    open: () => void
+  }
+  const tabs: Record<string, Tab> = {
+    markdown: { label: t('rightSidebar.markdownTab'), Icon: FileText, open: openMarkdown },
+    gsdSync: { label: t('rightSidebar.gsdSyncTab'), Icon: Sparkles, open: showGsdSyncSidebar },
+    mcp: { label: t('mcp.tab'), Icon: Plug, open: showMcp },
+    jev: {
+      label: 'Jev',
+      title: t('voice.history.tabTitle'),
+      Icon: Mic,
+      open: () => setRightSidebarMode('jev'),
+    },
+    prs: { label: t('rightSidebar.prsTab'), Icon: GitPullRequest, open: showPrs },
+    plugins: {
+      label: t('pluginsTab.title'),
+      Icon: Blocks,
+      open: () => setRightSidebarMode('plugins'),
+    },
+  }
+  for (const tab of contributedTabs) {
+    tabs[tab.id] = {
+      label: sidebarTabLabel(t, tab),
+      Icon: tab.icon,
+      open: () => setRightSidebarMode(tab.id),
+    }
+  }
+  const tabIds = useVisibleSidebarIcons(
+    'right',
+    sidebarIconIds(
+      'right',
+      contributedTabs.map((tab) => tab.id),
+      { gsdSync: gsdSyncAvailable, mcp: mcpEnabled, prs: prsEnabled },
+    ),
+  )
+
   return (
     <aside className={styles.sidebar} aria-label={t('rightSidebar.navigation')}>
       <div className={styles.sidebarTabs} role="tablist" aria-label={t('rightSidebar.navigation')}>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={mode === 'markdown'}
-          className={`${styles.sidebarTab} ${mode === 'markdown' ? styles.sidebarTabActive : ''}`}
-          onClick={openMarkdown}
-          title={t('rightSidebar.markdownTab')}
-        >
-          <FileText size={14} />
-          <span>{t('rightSidebar.markdownTab')}</span>
-        </button>
-        {gsdSyncAvailable ? (
-          <button
-            type="button"
-            role="tab"
-            aria-selected={mode === 'gsdSync'}
-            className={`${styles.sidebarTab} ${mode === 'gsdSync' ? styles.sidebarTabActive : ''}`}
-            onClick={showGsdSyncSidebar}
-            title={t('rightSidebar.gsdSyncTab')}
-          >
-            <Sparkles size={14} />
-            <span>{t('rightSidebar.gsdSyncTab')}</span>
-          </button>
-        ) : null}
-        {contributedTabs.map((tab) => {
-          const TabIcon = tab.icon
-          const label = sidebarTabLabel(t, tab)
+        {tabIds.map((id) => {
+          const { label, title, Icon, open } = tabs[id]
           return (
             <button
-              key={tab.id}
+              key={id}
               type="button"
               role="tab"
-              aria-selected={mode === tab.id}
-              className={`${styles.sidebarTab} ${mode === tab.id ? styles.sidebarTabActive : ''}`}
-              onClick={() => setRightSidebarMode(tab.id)}
-              title={label}
+              aria-selected={mode === id}
+              className={`${styles.sidebarTab} ${mode === id ? styles.sidebarTabActive : ''}`}
+              onClick={open}
+              title={title ?? label}
             >
-              <TabIcon size={14} />
+              <Icon size={14} />
               <span>{label}</span>
             </button>
           )
         })}
-        {mcpEnabled ? (
-          <button
-            type="button"
-            role="tab"
-            aria-selected={mode === 'mcp'}
-            className={`${styles.sidebarTab} ${mode === 'mcp' ? styles.sidebarTabActive : ''}`}
-            onClick={showMcp}
-            title={t('mcp.tab')}
-          >
-            <Plug size={14} />
-            <span>{t('mcp.tab')}</span>
-          </button>
-        ) : null}
-        <button
-          type="button"
-          role="tab"
-          aria-selected={mode === 'jev'}
-          className={`${styles.sidebarTab} ${mode === 'jev' ? styles.sidebarTabActive : ''}`}
-          onClick={() => setRightSidebarMode('jev')}
-          title={t('voice.history.tabTitle')}
-        >
-          <Mic size={14} />
-          <span>Jev</span>
-        </button>
-        {prsEnabled ? (
-          <button
-            type="button"
-            role="tab"
-            aria-selected={mode === 'prs'}
-            className={`${styles.sidebarTab} ${mode === 'prs' ? styles.sidebarTabActive : ''}`}
-            onClick={showPrs}
-            title={t('rightSidebar.prsTab')}
-          >
-            <GitPullRequest size={14} />
-            <span>{t('rightSidebar.prsTab')}</span>
-          </button>
-        ) : null}
-        <button
-          type="button"
-          role="tab"
-          aria-selected={mode === 'plugins'}
-          className={`${styles.sidebarTab} ${mode === 'plugins' ? styles.sidebarTabActive : ''}`}
-          onClick={() => setRightSidebarMode('plugins')}
-          title={t('pluginsTab.title')}
-        >
-          <Blocks size={14} />
-          <span>{t('pluginsTab.title')}</span>
-        </button>
         <span className={styles.toolbarSpacer} />
         {mode === 'mcp' && mcpEnabled ? (
           <button
@@ -368,10 +340,27 @@ function MarkdownSidebarViewer() {
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const markdownRef = useRef<HTMLDivElement | null>(null)
   const [plans, setPlans] = useState<Array<{ path: string; title: string }>>([])
+  const checkoutKey = useProjectsStore((state) => {
+    const project = state.projects.find((item) => item.id === state.activeProjectId)
+    return `${project?.checkoutPath ?? ''}\n${project?.defaultCwd ?? ''}`
+  })
+  // Plans come from the checkout the project uses: the picked worktree, the main one by default.
+  const [planRoot, setPlanRoot] = useState<{ projectId: string; root: string } | null>(null)
+
+  useEffect(() => {
+    if (!activeProjectId) return
+    let cancelled = false
+    void resolveProjectCheckout(activeProjectId).then(({ root }) => {
+      if (!cancelled) setPlanRoot({ projectId: activeProjectId, root })
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [activeProjectId, checkoutKey])
 
   useEffect(() => {
     const project = projects.find((item) => item.id === activeProjectId)
-    const projectPath = project?.defaultCwd
+    const projectPath = planRoot?.projectId === project?.id ? planRoot?.root : undefined
     if (!projectPath || !project?.id) {
       setPlans([])
       return
@@ -389,7 +378,7 @@ function MarkdownSidebarViewer() {
     return () => {
       cancelled = true
     }
-  }, [activeProjectId, projects])
+  }, [activeProjectId, planRoot, projects])
 
   const readmeTabs = useMemo(() => {
     const project = projects.find((item) => item.id === activeProjectId)

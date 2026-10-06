@@ -3,7 +3,7 @@ import { FileText, Globe2, Workflow } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
 import { useT } from '../../lib/i18n'
-import { useProjectsStore } from '../../stores/projectsStore'
+import { getProjectDefaultCwd, useProjectsStore } from '../../stores/projectsStore'
 import { useUiStore } from '../../stores/uiStore'
 import styles from './AddContentModal.module.css'
 import controls from './controls.module.css'
@@ -28,8 +28,8 @@ export function AddContentModal() {
     (state) => state.preferences.enabledFeatures.orchestrator,
   )
   const createOrchestratorPane = useProjectsStore((state) => state.createOrchestratorPane)
-  const projectCwd = useProjectsStore(
-    (state) => state.projects.find((project) => project.id === projectId)?.defaultCwd ?? '',
+  const projectCwd = useProjectsStore((state) =>
+    getProjectDefaultCwd(state.projects.find((project) => project.id === projectId)),
   )
   const [kind, setKind] = useState<AddKind>(null)
 

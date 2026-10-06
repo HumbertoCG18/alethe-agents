@@ -10,7 +10,7 @@ import type { AgentType, McpAgent, McpAgentSnapshot, McpScope } from '../../lib/
 import { agentLabel } from '../../lib/agentProviders'
 import { AGENT_TYPE_LABELS, MCP_AGENTS } from '../../lib/types'
 import { useMcpStore } from '../../stores/mcpStore'
-import { useProjectsStore } from '../../stores/projectsStore'
+import { getProjectDefaultCwd, useProjectsStore } from '../../stores/projectsStore'
 import { useUiStore } from '../../stores/uiStore'
 import { EmptyState } from '../EmptyState'
 import { AgentIcon } from '../icons/AgentIcons'
@@ -46,9 +46,7 @@ export function McpPanel() {
   const repo = useMemo(() => {
     const project = projects.find((item) => item.id === activeProjectId) ?? projects[0]
     if (!project) return null
-    const fromProject = project.defaultCwd?.trim()
-    if (fromProject) return fromProject
-    return project.terminals.find((terminal) => terminal.cwd)?.cwd ?? null
+    return getProjectDefaultCwd(project) || null
   }, [projects, activeProjectId])
 
   const bootScopeRef = useRef<McpScope>(defaultScope)

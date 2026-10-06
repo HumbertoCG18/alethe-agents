@@ -21,6 +21,21 @@ describe('preference normalization', () => {
     })
   })
 
+  it('gives a file saved before the sidebar icon settings their defaults and drops junk', () => {
+    const empty = { left: [], right: [], hidden: [] }
+    expect(normalizePreferences(undefined).sidebarIcons).toEqual(empty)
+    const saved = { ...DEFAULT_PREFERENCES } as Partial<typeof DEFAULT_PREFERENCES>
+    delete saved.sidebarIcons
+    expect(normalizePreferences(saved as typeof DEFAULT_PREFERENCES).sidebarIcons).toEqual(empty)
+    const junk = { left: ['files', 3], right: 'jev', hidden: ['jev', null] }
+    expect(
+      normalizePreferences({
+        ...DEFAULT_PREFERENCES,
+        sidebarIcons: junk as unknown as typeof DEFAULT_PREFERENCES.sidebarIcons,
+      }).sidebarIcons,
+    ).toEqual({ left: ['files'], right: [], hidden: ['jev'] })
+  })
+
   it('disables legacy automatic parking preferences', () => {
     const preferences = normalizePreferences({
       ...DEFAULT_PREFERENCES,

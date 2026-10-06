@@ -8,7 +8,7 @@ import {
   Workflow,
   Zap,
 } from 'lucide-react'
-import { type KeyboardEvent, useEffect, useMemo, useState } from 'react'
+import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react'
 
 import { useRouter9Runtime } from '../../hooks/useRouter9Runtime'
 import {
@@ -25,6 +25,7 @@ import { formatShortcut } from '../../lib/platform'
 import { DEFAULT_GRID_ID } from '../../lib/projectGrids'
 import { router9SupportsAgent } from '../../lib/router9'
 import { isShellAgentType, type AgentRuntimeProfile, type AgentType } from '../../lib/types'
+import { anchoredCwd } from '../../lib/projectCheckout'
 import { getProjectDefaultCwd, useProjectsStore } from '../../stores/projectsStore'
 import { useUiStore } from '../../stores/uiStore'
 import { AgentIcon } from '../icons/AgentIcons'
@@ -118,9 +119,24 @@ export function NewTerminalModal() {
     return [...folders.values()].sort((a, b) => b.lastUsedAt - a.lastUsedAt).slice(0, 4)
   }, [projects])
 
+  /** The folder last offered. While the field still holds it, the field follows the project's
+   *  folder (its anchor may land with the modal open); a folder the user chose stays. */
+  const offeredCwd = useRef('')
+  const wasOpen = useRef(false)
+  useEffect(() => {
+    if (!open) {
+      wasOpen.current = false
+      return
+    }
+    const opening = !wasOpen.current
+    const offered = offeredCwd.current
+    wasOpen.current = true
+    offeredCwd.current = inheritedCwd
+    setCwd((current) => (opening || current === offered ? inheritedCwd : current))
+  }, [open, inheritedCwd])
+
   useEffect(() => {
     if (!open) return
-    setCwd(inheritedCwd)
     setType(defaultType)
     setMode('terminal')
     setGoal('')
@@ -145,7 +161,6 @@ export function NewTerminalModal() {
     open,
     context?.projectId,
     context?.gridId,
-    inheritedCwd,
     defaultType,
     alwaysStartUnrestricted,
     router9.config.defaultForNewAgents,
@@ -187,7 +202,10 @@ export function NewTerminalModal() {
   const submit = async () => {
     if (!context?.projectId) return
     const finalName = selectedAgent.label
-    const finalCwd = cwd.trim() || inheritedCwd
+    const finalCwd = await anchoredCwd(context.projectId, {
+      typed: cwd,
+      offered: offeredCwd.current,
+    })
     const flag = resolveUnrestrictedFlag(type)
     const extraArgs = unrestricted[type] && flag ? [flag] : undefined
     const trimmedGoal = goal.trim()

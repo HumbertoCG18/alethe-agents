@@ -12,6 +12,21 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ### Added
 
+- **Worktree picker, with projects on their main checkout by default.** **Worktrees…** in a
+  project's menu lists the repository's worktrees with their branch and last commit, marks the main
+  checkout, and marks a worktree stale when its branch is already merged into the main checkout's
+  branch or behind it with no commits of its own, and nothing in it is uncommitted; a worktree with
+  uncommitted work shows how many changes it holds instead. The one you choose is where new
+  terminals start and what the right sidebar's Markdown tab reads; the main checkout is the
+  default, so a project that sat on an old worktree now reads its main checkout. Open terminals
+  stay where they are. A stale or detached worktree can be removed from the picker after a
+  confirmation; it is refused while it has uncommitted changes or while a terminal or an
+  orchestration worker is still in it, and a linked `node_modules` inside it is unlinked without
+  touching what it points at.
+- **Sidebar section in Preferences.** Lists the icons of both sidebars: show or hide each one with
+  a switch, and drag them, or use the arrow keys on their handle, to reorder each bar. Home,
+  Projects and Markdown always stay visible so the app stays reachable. New views appear in their
+  default place; choosing which sidebar a plugin panel opens in stays in Appearance.
 - **Campaigns in the Todo List tab.** When the active project's main checkout has
   `.workflow/campanhas.json`, a collapsed Campaigns section below your todos lists each campaign
   with its progress, situation (in progress, ready, waiting on another campaign or task, blocked,

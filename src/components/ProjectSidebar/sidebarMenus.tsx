@@ -5,6 +5,7 @@ import {
   EyeOff,
   FileText,
   FolderOpen,
+  GitBranch,
   Globe2,
   Layout,
   MoveRight,
@@ -31,7 +32,7 @@ import {
   writeTextFile,
 } from '../../lib/tauri'
 import type { Group, Project, Terminal } from '../../lib/types'
-import { useProjectsStore } from '../../stores/projectsStore'
+import { getProjectDefaultCwd, useProjectsStore } from '../../stores/projectsStore'
 import { useUiStore } from '../../stores/uiStore'
 import { type MenuItem } from './ContextMenu'
 import { collectDescendants } from './GroupNode'
@@ -144,6 +145,16 @@ export function createSidebarMenus(deps: SidebarMenuDeps) {
       icon: <Pencil size={14} />,
       onClick: () => openModal('editProject', { projectId: project.id }),
     },
+    ...(project.mode !== 'agentSandbox'
+      ? [
+          {
+            kind: 'item' as const,
+            label: t('ui.sidebar.worktrees'),
+            icon: <GitBranch size={14} />,
+            onClick: () => openModal('worktreePicker', { projectId: project.id }),
+          },
+        ]
+      : []),
     {
       kind: 'item',
       label: t('ui.sidebar.exportProjectConfig'),
@@ -224,10 +235,7 @@ export function createSidebarMenus(deps: SidebarMenuDeps) {
             label: t('menu.addOrchestrator'),
             icon: <Workflow size={14} />,
             onClick: () => {
-              actions.createOrchestratorPane(
-                project.id,
-                project.defaultCwd ?? project.terminals[0]?.cwd ?? '',
-              )
+              actions.createOrchestratorPane(project.id, getProjectDefaultCwd(project))
               setActiveView('workspace')
             },
           },

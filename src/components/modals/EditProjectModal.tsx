@@ -13,7 +13,11 @@ import {
   worktreeRemove,
 } from '../../lib/tauri'
 import { type AgentType, GROUP_COLORS } from '../../lib/types'
-import { getProjectRepoRoot, useProjectsStore } from '../../stores/projectsStore'
+import {
+  getProjectDefaultCwd,
+  getProjectRepoRoot,
+  useProjectsStore,
+} from '../../stores/projectsStore'
 import { useMergeStore } from '../../stores/mergeStore'
 import { useUiStore } from '../../stores/uiStore'
 import { Dropdown } from '../ui/Dropdown'
@@ -465,7 +469,7 @@ export function EditProjectModal() {
             <div>
               <EditProjectAgentSettings
                 projectId={project.id}
-                cwd={project.terminals[0]?.cwd ?? project.defaultCwd ?? ''}
+                cwd={project.terminals[0]?.cwd ?? getProjectDefaultCwd(project)}
                 worktreeMode={worktreeMode}
                 onWorktreeModeChange={setWorktreeModeState}
                 validationCommandsStr={validationCommandsStr}

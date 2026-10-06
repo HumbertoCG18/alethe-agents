@@ -9,7 +9,7 @@ import {
   prepareAgentHandoff,
 } from '../../lib/tauri'
 import { AGENT_TYPE_LABELS, UNRESTRICTED_FLAG } from '../../lib/types'
-import { useProjectsStore } from '../../stores/projectsStore'
+import { getProjectDefaultCwd, useProjectsStore } from '../../stores/projectsStore'
 import { useUiStore } from '../../stores/uiStore'
 import styles from './HandoffModal.module.css'
 import { Modal } from './Modal'
@@ -47,7 +47,7 @@ export function HandoffModal() {
   const terminal = project?.terminals.find((entry) => entry.id === terminalId) ?? null
   const activeTab =
     terminal?.tabs.find((entry) => entry.id === terminal.activeTabId) ?? terminal?.tabs[0]
-  const cwd = activeTab?.cwd || terminal?.cwd || project?.defaultCwd || ''
+  const cwd = activeTab?.cwd || terminal?.cwd || getProjectDefaultCwd(project)
   const sourceSessionId = requestedSessionId || activeTab?.sessionId
   const byteCount = useMemo(() => new TextEncoder().encode(content).length, [content])
   const warnings = draft

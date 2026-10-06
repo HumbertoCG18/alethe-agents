@@ -53,6 +53,7 @@ type ModalKind =
   | 'handoff'
   | 'mcpManager'
   | 'mcpIntro'
+  | 'worktreePicker'
   /** Open on purpose: plugins contribute their own modals at runtime. */
   | (string & {})
   | null

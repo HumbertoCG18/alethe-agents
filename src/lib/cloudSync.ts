@@ -1,3 +1,4 @@
+import { normalizePreferences } from '../stores/projectsStore.migrations'
 import { pluginSetEnabled, pluginsList } from './tauri'
 import type { Preferences } from './types'
 
@@ -23,6 +24,7 @@ const SYNCED_PREFERENCE_KEYS = [
   'alwaysStartUnrestricted',
   'topbarStyle',
   'viewPlacements',
+  'sidebarIcons',
   'discordRichPresenceEnabled',
   'topbarShowClaudeUsage',
   'topbarShowCodexUsage',
@@ -84,7 +86,19 @@ export async function applyCloudPayload(
   for (const key of SYNCED_PREFERENCE_KEYS) {
     if (remotePrefs[key] !== undefined) patch[key] = remotePrefs[key]
   }
-  if (Object.keys(patch).length > 0) setPreferences(patch as Partial<Preferences>)
+  if (Object.keys(patch).length > 0) {
+    // Another device or version may send a partial or older shape: it is filled in as a loaded
+    // file is, and only the synced keys are applied.
+    const normalized = normalizePreferences(patch as Partial<Preferences>) as Record<
+      string,
+      unknown
+    >
+    setPreferences(
+      Object.fromEntries(
+        Object.keys(patch).map((key) => [key, normalized[key]]),
+      ) as Partial<Preferences>,
+    )
+  }
 
   const enabled = new Set(Array.isArray(payload.plugins?.enabled) ? payload.plugins.enabled : [])
   const disabled = new Set(Array.isArray(payload.plugins?.disabled) ? payload.plugins.disabled : [])

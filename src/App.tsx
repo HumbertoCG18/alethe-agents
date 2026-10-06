@@ -20,6 +20,7 @@ import { AiUsageModal } from './components/modals/AiUsageModal'
 import { AuditModal } from './components/modals/AuditModal'
 import { EditGroupModal } from './components/modals/EditGroupModal'
 import { EditProjectModal } from './components/modals/EditProjectModal'
+import { WorktreePickerModal } from './components/modals/WorktreePickerModal'
 import { FindJumpModal } from './components/modals/FindJumpModal'
 import { FsBrowserModal } from './components/modals/FsBrowserModal'
 import { HandoffModal } from './components/modals/HandoffModal'
@@ -66,6 +67,7 @@ import { APP_SHELL_ID } from './lib/appShell'
 import { AGENT_SANDBOX_ENABLED } from './lib/featureFlags'
 import { intlLocale, translate, useT } from './lib/i18n'
 import { applyLegacyPluginMigrations } from './lib/plugins'
+import { useProjectCheckoutAnchors } from './lib/projectCheckout'
 import { visibilityFromPanelResize, widthFromPanelResize } from './lib/sidebarPanelState'
 import { setMaxConcurrentSpawns } from './lib/spawnQueue'
 import { ghosttyKillAll, setWindowOpacity } from './lib/tauri'
@@ -205,6 +207,7 @@ export default function App() {
   useAgentBrowserOffers(playwrightEnabled)
   useAgentHookBridge()
   useCliOpenRequests(hydrated)
+  useProjectCheckoutAnchors(hydrated)
 
   useEffect(() => {
     void hydrate()
@@ -639,6 +642,7 @@ export default function App() {
         <NewGroupModal />
         <EditGroupModal />
         <EditProjectModal />
+        <WorktreePickerModal />
         <NewTerminalModal />
         <AddContentModal />
         <AddBrowserModal />

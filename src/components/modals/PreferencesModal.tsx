@@ -87,12 +87,6 @@ export function PreferencesModal() {
   const categories = useMemo<Category[]>(
     () => [
       {
-        id: 'markdown',
-        label: t('markdown.settings'),
-        description: t('markdown.settingsDesc'),
-        Icon: PanelLeft,
-      },
-      {
         id: 'account',
         label: t('prefs.categoryAccount'),
         description: t('prefs.categoryAccountDesc'),
@@ -140,6 +134,13 @@ export function PreferencesModal() {
         description: t('prefs.categoryTerminalDesc'),
         Icon: TerminalSquare,
       },
+      {
+        id: 'markdown',
+        label: t('markdown.settings'),
+        description: t('markdown.settingsDesc'),
+        Icon: PanelLeft,
+      },
+
       {
         id: 'integrations',
         label: t('prefs.categoryIntegrations'),
@@ -271,11 +272,18 @@ export function PreferencesModal() {
           'plugin install instalar manifest manifesto json folder pasta uninstall desinstalar trust confiar',
       },
       {
-        category: 'appearance',
-        target: 'terminal-theme',
-        label: t('prefs.terminalTheme'),
-        description: t('prefs.terminalThemeDesc'),
-        keywords: 'terminal theme tema colors cores',
+        category: 'terminal',
+        target: 'terminal-font',
+        label: t('prefs.terminalFont'),
+        description: t('prefs.terminalFontDesc'),
+        keywords: 'terminal font fonte family monospace',
+      },
+      {
+        category: 'terminal',
+        target: 'default-shell',
+        label: t('prefs.defaultShell'),
+        description: t('prefs.defaultShellDesc'),
+        keywords: 'shell path powershell pwsh bash cmd zsh',
       },
       {
         category: 'terminal',
@@ -461,6 +469,10 @@ export function PreferencesModal() {
           ref={dialogRef}
           className={styles.dialog}
           aria-describedby={undefined}
+          onEscapeKeyDown={(event) => {
+            if (dialogRef.current?.querySelector('[data-alethe-dropdown-menu]'))
+              event.preventDefault()
+          }}
           onOpenAutoFocus={(event) => {
             event.preventDefault()
             const input =

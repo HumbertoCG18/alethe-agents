@@ -12,6 +12,23 @@ export const en = {
   'markdown.reader': 'Markdown reader',
   'markdown.selectionTooLarge': 'Select up to 24,000 characters to ask a question.',
   'markdown.openFull': 'Read full document',
+  'markdown.modelSearch': 'Search or enter a model ID',
+  'markdown.modelsLoading': 'Loading model catalog…',
+  'markdown.modelsError': 'Catalog unavailable. Use the agent default or enter a model ID.',
+  'prefs.defaultShell': 'Default shell',
+  'prefs.defaultShellDesc':
+    'Choose a shell found on PATH for new Shell sessions. Agent launchers keep their required shell.',
+  'prefs.shellAutomatic': 'Platform default',
+  'prefs.shellSearch': 'Search shells',
+  'prefs.shellDiscoveryError': 'Could not discover shells. The platform default remains available.',
+  'prefs.shellMissing': 'Saved shell is unavailable. New sessions use the platform default.',
+  'prefs.terminalFont': 'Terminal font',
+  'prefs.terminalFontDesc':
+    'Installed font families. Changes apply to open terminals; the bundled font is the fallback.',
+  'prefs.fontSearch': 'Search installed fonts',
+  'prefs.terminalDiscoveryLoading': 'Loading local shells and fonts…',
+  'prefs.fontDiscoveryError': 'Could not list installed fonts. The bundled font remains available.',
+  'prefs.fontMissing': 'Saved font is unavailable. The bundled font is used instead.',
   'markdown.settings': 'Markdown',
   'markdown.settingsDesc':
     'Choose the agent and model used for document summaries, including night reports.',

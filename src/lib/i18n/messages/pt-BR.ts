@@ -15,6 +15,26 @@ export const ptBR: Record<MessageKey, string> = {
   'markdown.reader': 'Leitor Markdown',
   'markdown.selectionTooLarge': 'Selecione até 24.000 caracteres para fazer uma pergunta.',
   'markdown.openFull': 'Ler documento completo',
+  'markdown.modelSearch': 'Buscar ou digitar um ID de modelo',
+  'markdown.modelsLoading': 'Carregando catálogo de modelos…',
+  'markdown.modelsError':
+    'Catálogo indisponível. Use o padrão do agente ou digite um ID de modelo.',
+  'prefs.defaultShell': 'Shell padrão',
+  'prefs.defaultShellDesc':
+    'Escolha um shell do PATH para novas sessões Shell. Os agentes mantêm o shell necessário ao launcher.',
+  'prefs.shellAutomatic': 'Padrão do sistema',
+  'prefs.shellSearch': 'Buscar shells',
+  'prefs.shellDiscoveryError':
+    'Não foi possível listar shells. O padrão do sistema continua disponível.',
+  'prefs.shellMissing': 'Shell salvo indisponível. Novas sessões usam o padrão do sistema.',
+  'prefs.terminalFont': 'Fonte do terminal',
+  'prefs.terminalFontDesc':
+    'Fontes instaladas. Alterações se aplicam aos terminais abertos; a fonte incluída é usada como alternativa.',
+  'prefs.fontSearch': 'Buscar fontes instaladas',
+  'prefs.terminalDiscoveryLoading': 'Carregando shells e fontes locais…',
+  'prefs.fontDiscoveryError':
+    'Não foi possível listar fontes instaladas. A fonte incluída continua disponível.',
+  'prefs.fontMissing': 'Fonte salva indisponível. A fonte incluída será utilizada.',
   'markdown.settings': 'Markdown',
   'markdown.settingsDesc':
     'Escolha o agente e modelo dos resumos de documentos, incluindo relatórios noturnos.',

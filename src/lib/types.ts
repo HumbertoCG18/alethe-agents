@@ -612,6 +612,9 @@ export type Preferences = {
 
   windowOpacity: number
   terminalTheme: Theme | null
+  /** Machine-local choices; null follows platform/bundled defaults. */
+  defaultShell?: string | null
+  terminalFontFamily?: string | null
   enabledAgents: Record<AgentType, boolean>
   onboardingDone: boolean
 
@@ -799,6 +802,8 @@ export const DEFAULT_PREFERENCES: Preferences = {
   uiZoom: 1,
   windowOpacity: 1,
   terminalTheme: null,
+  defaultShell: null,
+  terminalFontFamily: null,
   enabledAgents: {
     shell: true,
     wsl: true,

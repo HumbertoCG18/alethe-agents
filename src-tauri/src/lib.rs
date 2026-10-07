@@ -78,6 +78,7 @@ mod spotify;
 mod stats;
 mod supervisor;
 mod telemetry;
+mod terminal_settings;
 mod validation;
 mod webview_media;
 mod window_style;
@@ -364,6 +365,7 @@ pub fn run() {
             pty::set_pty_visible,
             pty::set_pty_priority,
             ghostty_bridge::ghostty_spawn,
+            ghostty_bridge::ghostty_set_font,
             ghostty_bridge::ghostty_sync_frame,
             ghostty_bridge::ghostty_set_hidden,
             ghostty_bridge::ghostty_kill,
@@ -377,6 +379,8 @@ pub fn run() {
             projects::save_projects,
             projects::clone_github_repo,
             cli_resolver::discover_provider_models,
+            terminal_settings::discover_shells,
+            terminal_settings::installed_font_families,
             profiles::list_profiles,
             profiles::list_profile_summaries,
             profiles::get_active_profile,

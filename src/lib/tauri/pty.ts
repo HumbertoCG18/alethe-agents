@@ -10,6 +10,8 @@ export type SpawnPtyArgs = {
   extraArgs?: string[]
   /** Path absoluto pro launcher (override do auto-detect). */
   launcherOverride?: string
+  /** Validated PATH shell for a plain terminal, ignored by agent launches. */
+  shell?: string
 
   env?: Record<string, string>
 }
@@ -23,6 +25,7 @@ export async function spawnPty(args: SpawnPtyArgs): Promise<{ id: string }> {
     cwd: args.cwd,
     extraArgs: args.extraArgs,
     launcherOverride: args.launcherOverride,
+    shell: args.shell,
     env: args.env,
   })
 }
@@ -90,6 +93,7 @@ export async function restartPty(args: SpawnPtyArgs & { id: string }): Promise<{
     cwd: args.cwd,
     extraArgs: args.extraArgs,
     launcherOverride: args.launcherOverride,
+    shell: args.shell,
     env: args.env,
   })
 }
@@ -113,6 +117,8 @@ export type GhosttySpawnArgs = {
   cwd?: string
 
   command?: string
+  shell?: string
+  fontFamily?: string | null
 }
 
 export async function ghosttySpawn(args: GhosttySpawnArgs): Promise<GhosttySurfaceResponse> {
@@ -120,7 +126,13 @@ export async function ghosttySpawn(args: GhosttySpawnArgs): Promise<GhosttySurfa
     id: args.id,
     cwd: args.cwd,
     command: args.command,
+    shell: args.shell,
+    fontFamily: args.fontFamily,
   })
+}
+
+export async function ghosttySetFont(id: string, fontFamily: string | null): Promise<void> {
+  await invoke('ghostty_set_font', { id, fontFamily })
 }
 
 export async function ghosttySyncFrame(id: string, rect: WebRect, scale: number): Promise<void> {

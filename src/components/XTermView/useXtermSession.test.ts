@@ -50,6 +50,7 @@ vi.mock('@xterm/xterm', () => ({
     attachCustomKeyEventHandler() {}
     onData() {}
     dispose() {}
+    refresh() {}
     writeln() {}
   },
 }))
@@ -188,6 +189,35 @@ describe('plannerLabelFor', () => {
 })
 
 describe('Claude terminal session lifecycle', () => {
+  it('changes the open terminal font without replacing its renderer or spawning again', async () => {
+    const input = params()
+    const view = renderHook(() => useXtermSession(input))
+    await waitFor(() => expect(input.setBootPhase).toHaveBeenCalledWith('ready'))
+    const renderer = input.terminalRef.current
+    act(() =>
+      useProjectsStore.setState((state) => ({
+        preferences: { ...state.preferences, terminalFontFamily: 'Consolas' },
+      })),
+    )
+    expect(input.terminalRef.current).toBe(renderer)
+    expect(renderer?.options.fontFamily).toContain('Consolas')
+    expect(tauri.spawnPty).toHaveBeenCalledTimes(1)
+    view.unmount()
+  })
+  it('passes the saved shell only to a new plain-shell terminal', async () => {
+    useProjectsStore.setState((state) => ({
+      preferences: { ...state.preferences, defaultShell: '/bin/bash' },
+    }))
+    const input = params()
+    input.command = null
+    input.sessionId = undefined
+    const view = renderHook(() => useXtermSession(input))
+    await waitFor(() => expect(tauri.spawnPty).toHaveBeenCalled())
+    expect(tauri.spawnPty).toHaveBeenLastCalledWith(
+      expect.objectContaining({ command: undefined, shell: '/bin/bash' }),
+    )
+    view.unmount()
+  })
   it.each(['frontend', 'backend'])(
     'tracks /new after attaching a live PTY found in the %s',
     async (source) => {

@@ -1,15 +1,22 @@
 import { Activity, Minus, Plus, RotateCcw } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 import { cliPathMatchesAgent } from '../../../lib/agentCliPath'
 import { askConfirm, pickFile } from '../../../lib/dialog'
 import { useT, useTDynamic } from '../../../lib/i18n'
 import { isMacOS } from '../../../lib/platform'
 import { countLiveResumablePanes, resetLastSession } from '../../../lib/resetLastSession'
-import { agentCliCommand, isShellAgentType, type AgentType } from '../../../lib/types'
+import {
+  discoverShells,
+  installedFontFamilies,
+  type ShellOption,
+} from '../../../lib/tauri/terminalSettings'
+import { BUNDLED_TERMINAL_FONT } from '../../../lib/terminalPreferences'
+import { agentCliCommand, type AgentType,isShellAgentType } from '../../../lib/types'
 import { SPAWN_CONCURRENCY_LIMITS, useProjectsStore } from '../../../stores/projectsStore'
 import { useUiStore } from '../../../stores/uiStore'
 import { AgentIcon } from '../../icons/AgentIcons'
+import { Dropdown } from '../../ui/Dropdown'
 import styles from '../PreferencesModal.module.css'
 import { SettingsSection } from './primitives'
 
@@ -41,6 +48,35 @@ export function TerminalPage({ enabledCount }: { enabledCount: number }) {
   const pushToast = useUiStore((state) => state.pushToast)
   const openModal = useUiStore((state) => state.openModal_)
   const [resetting, setResetting] = useState(false)
+  const [shells, setShells] = useState<ShellOption[]>([])
+  const [fonts, setFonts] = useState<string[]>([])
+  const [shellError, setShellError] = useState(false)
+  const [fontError, setFontError] = useState(false)
+  const [loading, setLoading] = useState(true)
+  useEffect(() => {
+    let active = true
+    void Promise.all([
+      discoverShells()
+        .then((items) => {
+          if (active) setShells(items)
+        })
+        .catch(() => {
+          if (active) setShellError(true)
+        }),
+      installedFontFamilies()
+        .then((items) => {
+          if (active) setFonts(items)
+        })
+        .catch(() => {
+          if (active) setFontError(true)
+        }),
+    ]).finally(() => {
+      if (active) setLoading(false)
+    })
+    return () => {
+      active = false
+    }
+  }, [])
   const concurrency = preferences.spawnConcurrency
   const setConcurrency = (n: number) =>
     setPreferences({
@@ -98,6 +134,68 @@ export function TerminalPage({ enabledCount }: { enabledCount: number }) {
 
   return (
     <>
+      <SettingsSection
+        id="default-shell"
+        title={t('prefs.defaultShell')}
+        description={t('prefs.defaultShellDesc')}
+      >
+        <Dropdown
+          className={styles.select}
+          value={preferences.defaultShell ?? ''}
+          ariaLabel={t('prefs.defaultShell')}
+          searchable
+          searchPlaceholder={t('prefs.shellSearch')}
+          onChange={(shell) => setPreferences({ defaultShell: shell || null })}
+          displayValue={
+            shells.find((item) => item.id === preferences.defaultShell)?.label ??
+            preferences.defaultShell ??
+            t('prefs.shellAutomatic')
+          }
+          options={[
+            { value: '', label: t('prefs.shellAutomatic') },
+            ...shells.map((item) => ({
+              value: item.id,
+              label: item.label,
+              searchText: `${item.label} ${item.id}`,
+            })),
+          ]}
+        />
+        {shellError ? <p role="alert">{t('prefs.shellDiscoveryError')}</p> : null}
+        {!loading &&
+        preferences.defaultShell &&
+        !shells.some((item) => item.id === preferences.defaultShell) ? (
+          <p role="alert">{t('prefs.shellMissing')}</p>
+        ) : null}
+      </SettingsSection>
+      <SettingsSection
+        id="terminal-font"
+        title={t('prefs.terminalFont')}
+        description={t('prefs.terminalFontDesc')}
+      >
+        <Dropdown
+          className={styles.select}
+          value={preferences.terminalFontFamily ?? ''}
+          ariaLabel={t('prefs.terminalFont')}
+          searchable
+          searchPlaceholder={t('prefs.fontSearch')}
+          displayValue={preferences.terminalFontFamily || BUNDLED_TERMINAL_FONT}
+          onChange={(family) => setPreferences({ terminalFontFamily: family || null })}
+          options={[
+            { value: '', label: BUNDLED_TERMINAL_FONT },
+            ...fonts
+              .filter((family) => family !== BUNDLED_TERMINAL_FONT)
+              .map((family) => ({ value: family, label: family })),
+          ]}
+        />
+        {loading ? <p role="status">{t('prefs.terminalDiscoveryLoading')}</p> : null}
+        {fontError ? <p role="alert">{t('prefs.fontDiscoveryError')}</p> : null}
+        {!loading &&
+        preferences.terminalFontFamily &&
+        preferences.terminalFontFamily !== BUNDLED_TERMINAL_FONT &&
+        !fonts.includes(preferences.terminalFontFamily) ? (
+          <p role="alert">{t('prefs.fontMissing')}</p>
+        ) : null}
+      </SettingsSection>
       <SettingsSection
         id="resource-policy"
         title={t('prefs.resourcePolicy')}

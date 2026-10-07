@@ -71,6 +71,7 @@ import {
   writeClipboardText,
   writePty,
 } from '../../lib/tauri'
+import { terminalFontStack } from '../../lib/terminalPreferences'
 import {
   type AgentRuntimeProfile,
   type AgentType,
@@ -514,7 +515,7 @@ export function useXtermSession(params: {
       // Match the Windows ConPTY backend when configuring terminal repaint behavior.
 
       ...(isWindows() ? { windowsPty: { backend: 'conpty' as const, buildNumber: 22000 } } : {}),
-      fontFamily: 'Cascadia Mono, Consolas, "Courier New", monospace',
+      fontFamily: terminalFontStack(useProjectsStore.getState().preferences.terminalFontFamily),
       fontSize: 14,
       theme: getXtermTheme(terminalTheme),
     })
@@ -1494,6 +1495,9 @@ export function useXtermSession(params: {
             cwd: cwd ?? undefined,
             extraArgs: spawnArgs,
             launcherOverride,
+            shell: command
+              ? undefined
+              : (useProjectsStore.getState().preferences.defaultShell ?? undefined),
             env: launchEnv,
           })
         } finally {
@@ -1822,4 +1826,12 @@ export function useXtermSession(params: {
       if (resyncTimer !== null) window.clearTimeout(resyncTimer)
     }
   }, [ptyId, isPanelVisible])
+  const fontFamily = useProjectsStore((state) => state.preferences.terminalFontFamily)
+  useEffect(() => {
+    const terminal = terminalRef.current
+    if (!terminal) return
+    terminal.options.fontFamily = terminalFontStack(fontFamily)
+    terminal.refresh(0, terminal.rows - 1)
+    window.dispatchEvent(new CustomEvent('alethe:terminal-resize-request', { detail: { ptyId } }))
+  }, [fontFamily, terminalRef, ptyId])
 }

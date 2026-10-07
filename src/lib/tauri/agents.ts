@@ -102,8 +102,17 @@ export async function uninstallAgent(folder: string, name: string, force = true)
 
 export type DiscoveredModel = { id: string; label: string }
 
-export async function discoverProviderModels(provider: string): Promise<DiscoveredModel[]> {
-  return invoke<DiscoveredModel[]>('discover_provider_models', { provider })
+const modelCatalogs = new Map<string, { expires: number; promise: Promise<DiscoveredModel[]> }>()
+
+export function discoverProviderModels(provider: string): Promise<DiscoveredModel[]> {
+  const cached = modelCatalogs.get(provider)
+  if (cached && cached.expires > Date.now()) return cached.promise
+  const promise = invoke<DiscoveredModel[]>('discover_provider_models', { provider }).catch((error) => {
+    modelCatalogs.delete(provider)
+    throw error
+  })
+  modelCatalogs.set(provider, { expires: Date.now() + 5 * 60_000, promise })
+  return promise
 }
 
 export type OpenCodeBridgeStatus = {

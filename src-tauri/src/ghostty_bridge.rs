@@ -487,6 +487,98 @@ mod imp {
         Ok(())
     }
 
+    pub fn set_font(
+        app: &tauri::AppHandle,
+        state: &State<'_, GhosttyState>,
+        id: String,
+        family: Option<String>,
+    ) -> Result<(), String> {
+        let _mtm = MainThreadMarker::new().ok_or("Font updates need the main thread")?;
+        let family = family
+            .as_deref()
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or("Caskaydia Cove Nerd Font Mono");
+        // The web font-face alias differs from the family stored in the bundled TTF.
+        let family = if family == "Caskaydia Cove Nerd Font Mono" {
+            "CaskaydiaCove Nerd Font Mono"
+        } else {
+            family
+        };
+        if family.len() > 160 || family.chars().any(char::is_control) {
+            return Err("Invalid font family".into());
+        }
+        let views = state
+            .views
+            .lock()
+            .map_err(|_| "Font surface lock poisoned")?;
+        let Some(entry) = views.get(&id) else {
+            return Ok(());
+        };
+        #[cfg(ghostty_linked)]
+        {
+            use std::ffi::CString;
+            let directory = app
+                .path()
+                .app_cache_dir()
+                .map_err(|e| e.to_string())?
+                .join("terminal-fonts");
+            std::fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
+            for (name, bytes) in [
+                (
+                    "Regular",
+                    include_bytes!("../../src/assets/fonts/CaskaydiaCoveNerdFontMono-Regular.ttf")
+                        .as_slice(),
+                ),
+                (
+                    "Bold",
+                    include_bytes!("../../src/assets/fonts/CaskaydiaCoveNerdFontMono-Bold.ttf")
+                        .as_slice(),
+                ),
+                (
+                    "Italic",
+                    include_bytes!("../../src/assets/fonts/CaskaydiaCoveNerdFontMono-Italic.ttf")
+                        .as_slice(),
+                ),
+                (
+                    "BoldItalic",
+                    include_bytes!(
+                        "../../src/assets/fonts/CaskaydiaCoveNerdFontMono-BoldItalic.ttf"
+                    )
+                    .as_slice(),
+                ),
+            ] {
+                let path = directory.join(format!("{name}.ttf"));
+                if std::fs::read(&path).ok().as_deref() != Some(bytes) {
+                    std::fs::write(path, bytes).map_err(|e| e.to_string())?;
+                }
+            }
+            let config = directory.join(format!("{}.conf", nanoid::nanoid!()));
+            std::fs::write(
+                &config,
+                format!("font-family = {family}\nfont-family = CaskaydiaCove Nerd Font Mono\nfont-family = CaskaydiaCove NFM\n"),
+            )
+            .map_err(|e| e.to_string())?;
+            let path =
+                CString::new(config.to_string_lossy().as_bytes()).map_err(|e| e.to_string())?;
+            let fonts =
+                CString::new(directory.to_string_lossy().as_bytes()).map_err(|e| e.to_string())?;
+            let success = unsafe {
+                crate::ghostty_ffi::alethe_ghostty_surface_set_font(
+                    entry.surface,
+                    path.as_ptr(),
+                    fonts.as_ptr(),
+                )
+            };
+            let _ = std::fs::remove_file(config);
+            if !success {
+                return Err("Could not update native terminal font".into());
+            }
+        }
+        #[cfg(not(ghostty_linked))]
+        let _ = (app, entry, family);
+        Ok(())
+    }
+
     pub fn process_exited(state: &State<'_, GhosttyState>, id: String) -> Result<bool, String> {
         let _mtm = MainThreadMarker::new()
             .ok_or_else(|| "ghostty_process_exited precisa rodar na main thread".to_string())?;
@@ -970,6 +1062,14 @@ mod imp {
     ) -> Result<GhosttySurfaceResponse, String> {
         Err(UNSUPPORTED.into())
     }
+    pub fn set_font(
+        _: &tauri::AppHandle,
+        _: &State<'_, GhosttyState>,
+        _: String,
+        _: Option<String>,
+    ) -> Result<(), String> {
+        Err(UNSUPPORTED.into())
+    }
     pub fn sync_frame(
         _app: &tauri::AppHandle,
         _state: &State<'_, GhosttyState>,
@@ -1017,8 +1117,26 @@ pub fn ghostty_spawn(
     id: String,
     cwd: Option<String>,
     command: Option<String>,
+    shell: Option<String>,
+    font_family: Option<String>,
 ) -> Result<GhosttySurfaceResponse, String> {
-    imp::spawn(&app, &state, id, cwd, command)
+    let command = command.or_else(|| {
+        crate::terminal_settings::resolve_shell(shell.as_deref())
+            .map(|path| format!("'{}'", path.replace('\'', "'\\''")))
+    });
+    let response = imp::spawn(&app, &state, id.clone(), cwd, command)?;
+    imp::set_font(&app, &state, id, font_family)?;
+    Ok(response)
+}
+
+#[tauri::command]
+pub fn ghostty_set_font(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, GhosttyState>,
+    id: String,
+    font_family: Option<String>,
+) -> Result<(), String> {
+    imp::set_font(&app, &state, id, font_family)
 }
 
 #[tauri::command]

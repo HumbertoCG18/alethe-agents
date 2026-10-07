@@ -256,6 +256,7 @@ pub async fn spawn_pty(
     extra_args: Option<Vec<String>>,
     // launcher_override: path absoluto que supersede o auto-detect. Frontend
     launcher_override: Option<String>,
+    shell: Option<String>,
 
     // canvas) — nunca polui o ambiente global nem outros terminais.
     env: Option<std::collections::HashMap<String, String>>,
@@ -322,6 +323,7 @@ pub async fn spawn_pty(
             requested_command.as_deref(),
             resolved_launcher.as_deref(),
             &extras,
+            shell.as_deref(),
         );
         if let Some(extra_env) = env.as_ref() {
             for (key, value) in extra_env {
@@ -782,6 +784,7 @@ pub async fn restart_pty(
     cwd: Option<String>,
     extra_args: Option<Vec<String>>,
     launcher_override: Option<String>,
+    shell: Option<String>,
     env: Option<HashMap<String, String>>,
 ) -> Result<SpawnPtyResponse, String> {
     // apagar o scrollback antigo rodava direto no corpo async, fora de
@@ -819,6 +822,7 @@ pub async fn restart_pty(
         cwd,
         extra_args,
         launcher_override,
+        shell,
         env,
     )
     .await

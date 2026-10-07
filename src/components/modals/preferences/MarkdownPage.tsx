@@ -5,7 +5,9 @@ import { DEFAULT_MARKDOWN_SUMMARY } from '../../../lib/markdownSummary'
 import { type DiscoveredModel, discoverProviderModels } from '../../../lib/tauri/agents'
 import type { MarkdownSummarySettings } from '../../../lib/types'
 import { useProjectsStore } from '../../../stores/projectsStore'
+import { Dropdown } from '../../ui/Dropdown'
 import controls from '../controls.module.css'
+import styles from '../PreferencesModal.module.css'
 import { SettingsSection } from './primitives'
 
 export function MarkdownPage() {
@@ -14,18 +16,21 @@ export function MarkdownPage() {
     useProjectsStore((s) => s.preferences.markdownSummary) ?? DEFAULT_MARKDOWN_SUMMARY
   const setPreferences = useProjectsStore((s) => s.setPreferences)
   const [models, setModels] = useState<DiscoveredModel[]>([])
-  const [model, setModel] = useState(settings.model)
-  useEffect(() => {
-    setModel(settings.model)
-  }, [settings.model])
+  const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
   useEffect(() => {
     let active = true
     setModels([])
+    setStatus('loading')
     void discoverProviderModels(settings.agent)
       .then((items) => {
-        if (active) setModels(items)
+        if (active) {
+          setModels(items)
+          setStatus('ready')
+        }
       })
-      .catch(() => {})
+      .catch(() => {
+        if (active) setStatus('error')
+      })
     return () => {
       active = false
     }
@@ -47,56 +52,57 @@ export function MarkdownPage() {
         {t('markdown.enabled')}
       </label>
       <p>{t('markdown.privacy')}</p>
-      <label className={controls.label}>
+      <div className={controls.label}>
         {t('markdown.agent')}
-        <select
-          className={controls.input}
+        <Dropdown
+          className={styles.select}
           value={settings.agent}
-          onChange={(e) =>
-            save({ agent: e.target.value as MarkdownSummarySettings['agent'], model: '' })
+          ariaLabel={t('markdown.agent')}
+          onChange={(agent) =>
+            save({ agent: agent as MarkdownSummarySettings['agent'], model: '' })
           }
-        >
-          <option value="antigravity" disabled>
-            {t('markdown.agyUnavailable')}
-          </option>
-          <option value="claude">Claude Code</option>
-          <option value="codex">Codex</option>
-        </select>
-      </label>
-      <label className={controls.label}>
-        {t('markdown.model')}
-        <input
-          className={controls.input}
-          list="markdown-models"
-          value={model}
-          maxLength={160}
-          placeholder={t('markdown.defaultModel')}
-          onChange={(e) => setModel(e.target.value)}
-          onBlur={() => save({ model: model.trim() })}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') e.currentTarget.blur()
-          }}
+          options={[
+            { value: 'antigravity', label: t('markdown.agyUnavailable'), disabled: true },
+            { value: 'claude', label: 'Claude Code' },
+            { value: 'codex', label: 'Codex' },
+          ]}
         />
-      </label>
-      <datalist id="markdown-models">
-        {models.map((item) => (
-          <option key={item.id} value={item.id}>
-            {item.label}
-          </option>
-        ))}
-      </datalist>
-      <label className={controls.label}>
+      </div>
+      <div className={controls.label}>
+        {t('markdown.model')}
+        <Dropdown
+          className={styles.select}
+          value={settings.model}
+          displayValue={
+            models.find((item) => item.id === settings.model)?.label ??
+            (settings.model || t('markdown.defaultModel'))
+          }
+          ariaLabel={t('markdown.model')}
+          searchable
+          allowCustomValue
+          searchPlaceholder={t('markdown.modelSearch')}
+          onChange={(model) => save({ model: model.trim().slice(0, 160) })}
+          options={[
+            { value: '', label: t('markdown.defaultModel') },
+            ...models.map((item) => ({ value: item.id, label: item.label })),
+          ]}
+        />
+        {status === 'loading' ? <span role="status">{t('markdown.modelsLoading')}</span> : null}
+        {status === 'error' ? <span role="alert">{t('markdown.modelsError')}</span> : null}
+      </div>
+      <div className={controls.label}>
         {t('markdown.style')}
-        <select
-          className={controls.input}
+        <Dropdown
+          className={styles.select}
           value={settings.style}
-          onChange={(e) => save({ style: e.target.value as MarkdownSummarySettings['style'] })}
-        >
-          <option value="caveman">{t('markdown.caveman')}</option>
-          <option value="medium">{t('markdown.medium')}</option>
-          <option value="detailed">{t('markdown.detailed')}</option>
-        </select>
-      </label>
+          ariaLabel={t('markdown.style')}
+          onChange={(style) => save({ style: style as MarkdownSummarySettings['style'] })}
+          options={(['caveman', 'medium', 'detailed'] as const).map((style) => ({
+            value: style,
+            label: t(`markdown.${style}`),
+          }))}
+        />
+      </div>
     </SettingsSection>
   )
 }

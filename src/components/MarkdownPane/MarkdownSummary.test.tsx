@@ -67,14 +67,19 @@ it('regenerates from style, provider and model settings and never displays the s
     </>,
   )
   await waitFor(() => expect(late).toBeTypeOf('function'))
-  fireEvent.change(screen.getByLabelText('Summary style'), { target: { value: 'caveman' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Summary style' }))
+  fireEvent.click(screen.getByRole('option', { name: 'Caveman' }))
   expect(await screen.findByText('caveman/codex/')).toBeInTheDocument()
   await act(async () => late('obsolete'))
   expect(screen.queryByText('obsolete')).toBeNull()
-  fireEvent.change(screen.getByLabelText('Summary agent'), { target: { value: 'claude' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Summary agent' }))
+  fireEvent.click(screen.getByRole('option', { name: 'Claude Code' }))
   expect(await screen.findByText('caveman/claude/')).toBeInTheDocument()
-  fireEvent.change(screen.getByLabelText('Model'), { target: { value: 'chosen-model' } })
-  fireEvent.blur(screen.getByLabelText('Model'))
+  fireEvent.click(screen.getByRole('button', { name: 'Model' }))
+  fireEvent.change(screen.getByRole('textbox', { name: 'Search or enter a model ID' }), {
+    target: { value: 'chosen-model' },
+  })
+  fireEvent.click(screen.getByRole('option', { name: 'chosen-model' }))
   expect(await screen.findByText('caveman/claude/chosen-model')).toBeInTheDocument()
   const calls = vi.mocked(generateMarkdown).mock.calls.length
   summary.unmount()

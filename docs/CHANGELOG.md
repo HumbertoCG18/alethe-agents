@@ -10,6 +10,11 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ## [Unreleased]
 
+- Markdown summary settings use themed searchable selectors, current Claude aliases and the installed Codex model catalog. Background discovery is shared, bounded and hidden on Windows; opening settings no longer starts an interactive agent or flashes a Node probe console.
+- Terminal settings offer shells discovered on PATH and installed font families, with persistent local choices and visible fallback notices. Font changes apply to open xterm and native macOS terminals without restarting their processes. Markdown settings now follow Terminal and agents in the navigation.
+- Terminal font selection replaces the separate terminal palette picker; existing saved palettes remain compatible.
+- Searchable option menus stay within their settings dialog, preserving focus, arrow-key navigation and mouse-wheel scrolling. Escape closes the menu before the Preferences window.
+
 - Night campaigns use compact expandable cards containing only night tasks. Campaign progress stays out of Personal and requires a running selected campaign in Overview or Night.
 - Campaign dependencies use compact app controls with saving, success and failure feedback. Registry tasks left in progress show no active execution when their campaign has no running terminal or worker.
 - The Markdown sidebar lists expandable campaign, report and other document groups from the open project's checkouts, with active campaign documents first. Missing files can be closed individually or recovered through the existing worktree path resolver.

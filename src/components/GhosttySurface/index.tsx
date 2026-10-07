@@ -4,12 +4,14 @@ import { isOverlayPresent, subscribeOverlayPresence } from '../../lib/overlayPre
 import { surfaceRectsEqual, visibleRectOf } from '../../lib/surfaceGeometry'
 import {
   ghosttySetFocus,
+  ghosttySetFont,
   ghosttySetHidden,
   ghosttySpawn,
   ghosttySurfaceExited,
   ghosttySyncFrame,
   type WebRect,
 } from '../../lib/tauri'
+import { useProjectsStore } from '../../stores/projectsStore'
 
 const EXIT_POLL_MS = 2500
 
@@ -38,6 +40,15 @@ export function GhosttySurface({
   const lastRectRef = useRef<WebRect | null>(null)
   const rafRef = useRef<number | null>(null)
   const spawnedRef = useRef(false)
+  const fontFamily = useProjectsStore((state) => state.preferences.terminalFontFamily ?? null)
+  const fontRef = useRef(fontFamily)
+  fontRef.current = fontFamily
+  useEffect(() => {
+    if (spawnedRef.current)
+      void ghosttySetFont(surfaceId, fontFamily).catch((error) =>
+        console.error('Could not update native terminal font', error),
+      )
+  }, [fontFamily, surfaceId])
 
   const spawnArgsRef = useRef({ cwd, command })
 
@@ -93,15 +104,25 @@ export function GhosttySurface({
     const start = async () => {
       try {
         const { cwd, command } = spawnArgsRef.current
-        const res = await ghosttySpawn({ id: surfaceId, cwd, command })
+        const requestedFont = fontRef.current
+        const res = await ghosttySpawn({
+          id: surfaceId,
+          cwd,
+          command,
+          shell: command
+            ? undefined
+            : (useProjectsStore.getState().preferences.defaultShell ?? undefined),
+          fontFamily: requestedFont,
+        })
         if (disposed) return
         spawnedRef.current = true
+        if (fontRef.current !== requestedFont) await ghosttySetFont(surfaceId, fontRef.current)
         onSpawnedRef.current?.(res.id)
 
         pushFrameNow()
         window.setTimeout(() => pushFrameNow(), 50)
       } catch (err) {
-        console.error('ghostty_spawn falhou', err)
+        console.error('Could not spawn native terminal', err)
       }
     }
     void start()

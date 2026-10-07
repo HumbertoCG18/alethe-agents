@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { pathInside } from '../../lib/campaigns'
 import { useT } from '../../lib/i18n'
 import { isMarkdownPath } from '../../lib/markdownSidebarHistory'
+import { normalizeMarkdownMaxAge } from '../../lib/markdownSummary'
 import { basename, normalizeCwd } from '../../lib/paths'
 import { resolveProjectCheckout } from '../../lib/projectCheckout'
 import { readScopedStorage, writeScopedStorage } from '../../lib/storageNamespace'
@@ -274,20 +275,29 @@ export function useMarkdownCatalog() {
     }
   }, [projectId, profileId, folder, key, stored, registry, revision, timeoutMessage])
   const current = result.key === key ? result : stored
-  const sections = useMemo(() => {
+  const maxAge = normalizeMarkdownMaxAge(
+    useProjectsStore((s) => s.preferences.markdownCatalogMaxAgeDays),
+  )
+  const { sections, hidden } = useMemo(() => {
     const docs = new Map(current.documents.map((d) => [normalizeCwd(d.relative), d]))
     const concluded = new Set(
       registry?.campaigns.filter((c) => c.situation.kind === 'done').map((c) => c.id),
     )
+    const cutoff = maxAge ? Date.now() - maxAge * 86_400_000 : null
     const grouped: Record<(typeof groups)[number], Document[]> = {
       active: [],
       campaigns: [],
       reports: [],
       other: [],
     }
+    let hidden = 0
     for (const doc of docs.values()) {
-      if (!showCompleted && doc.campaigns.length && doc.campaigns.every((id) => concluded.has(id)))
+      const openCampaign = doc.campaigns.some((id) => !concluded.has(id))
+      const old = cutoff !== null && !openCampaign && pathDate(doc.relative) < cutoff
+      if (!showCompleted && (old || (doc.campaigns.length > 0 && !openCampaign))) {
+        hidden++
         continue
+      }
       const group =
         activeId && doc.campaigns.includes(activeId)
           ? 'active'
@@ -298,7 +308,7 @@ export function useMarkdownCatalog() {
               : 'other'
       grouped[group].push(doc)
     }
-    return groups
+    const sections = groups
       .map((id) => ({
         id,
         documents: grouped[id].sort(
@@ -306,6 +316,15 @@ export function useMarkdownCatalog() {
         ),
       }))
       .filter((g) => g.documents.length)
-  }, [current, activeId, registry, showCompleted])
-  return { ...current, sections, loading, reload, showCompleted, setShowCompleted }
+    return { sections, hidden }
+  }, [current, activeId, registry, showCompleted, maxAge])
+  return { ...current, sections, hidden, loading, reload, showCompleted, setShowCompleted }
+}
+
+/** Newest YYYY-MM-DD in a document path, as a timestamp; undated paths never count as old. */
+function pathDate(relative: string): number {
+  const dates = [...relative.matchAll(/(?<!\d)(20\d\d-[01]\d-[0-3]\d)(?!\d)/g)]
+    .map((m) => Date.parse(m[1]))
+    .filter((time) => !Number.isNaN(time))
+  return dates.length ? Math.max(...dates) : Infinity
 }

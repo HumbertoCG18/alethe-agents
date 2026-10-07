@@ -5,7 +5,7 @@ import {
   legacyTodosFeatureFlag,
   normalizeEnabledFeatures,
 } from '../lib/features'
-import { normalizeMarkdownSummary } from '../lib/markdownSummary'
+import { normalizeMarkdownMaxAge, normalizeMarkdownSummary } from '../lib/markdownSummary'
 import { normalizeOrchestrationSettings } from '../lib/orchestrationSettings'
 import { recordLegacyGitFlag, recordLegacyTodosFlag } from '../lib/plugins/legacyMigration'
 import { normalizeProjectGrids, projectGridContainer } from '../lib/projectGrids'
@@ -148,6 +148,7 @@ export function normalizePreferences(raw: LegacyPreferences | undefined): Prefer
     viewPlacements: normalizeViewPlacements(preferences),
     sidebarIcons: normalizeSidebarIcons(raw?.sidebarIcons),
     markdownSummary: normalizeMarkdownSummary(raw?.markdownSummary),
+    markdownCatalogMaxAgeDays: normalizeMarkdownMaxAge(raw?.markdownCatalogMaxAgeDays),
     defaultShell: normalizeTerminalChoice(raw?.defaultShell, 4096),
     terminalFontFamily: normalizeTerminalChoice(raw?.terminalFontFamily, 160),
     mcpDefaultScope: preferences.mcpDefaultScope === 'project' ? 'project' : 'global',

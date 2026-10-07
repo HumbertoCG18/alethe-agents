@@ -124,6 +124,39 @@ it('hides documents belonging only to concluded campaigns until requested', asyn
   expect(filter).toHaveAttribute('aria-pressed', 'true')
   expect(screen.getByText('campaign.md')).toBeInTheDocument()
 })
+it('hides documents dated beyond the age window unless an open campaign uses them', async () => {
+  const today = new Date().toISOString().slice(0, 10)
+  const data = structuredClone(example)
+  data.campanhas.find((c) => c.id === 'OITO')!.handoff = 'docs/2020-01-01-handoff.md'
+  state.registry = { ...parseCampaigns(JSON.stringify(data)), main: 'C:/repo' }
+  state.files.mockImplementation(async (root: string) =>
+    root === 'C:/repo'
+      ? [
+          'C:/repo/docs/reports/_harness-2020-01-01/old.md',
+          `C:/repo/docs/reports/${today}-new.md`,
+          'C:/repo/docs/reports/undated.md',
+        ]
+      : [],
+  )
+  state.find.mockImplementation(async (_root: string, path: string) =>
+    path === 'docs/2020-01-01-handoff.md' ? 'C:/repo/docs/2020-01-01-handoff.md' : null,
+  )
+  render(<Catalog />)
+  await screen.findByText(`${today}-new.md`)
+  expect(await screen.findByText('2020-01-01-handoff.md')).toBeInTheDocument()
+  expect(screen.getByText('undated.md')).toBeInTheDocument()
+  expect(screen.queryByText('old.md')).toBeNull()
+  const filter = screen.getByRole('button', { name: /\(1 hidden\)/ })
+  fireEvent.click(filter)
+  expect(screen.getByText('old.md')).toBeInTheDocument()
+  fireEvent.click(filter)
+  act(() =>
+    useProjectsStore.setState((s) => ({
+      preferences: { ...s.preferences, markdownCatalogMaxAgeDays: 0 },
+    })),
+  )
+  expect(screen.getByText('old.md')).toBeInTheDocument()
+})
 it('collapses a section through its header', async () => {
   render(<Catalog />)
   await screen.findByText('report.md')

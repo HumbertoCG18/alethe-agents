@@ -32,7 +32,13 @@ import { TerminalPage } from './TerminalPage'
 beforeEach(() => {
   mocks.state.preferences = { ...DEFAULT_PREFERENCES }
   mocks.state.setPreferences.mockReset()
-  mocks.shells.mockReset().mockResolvedValue([{ id: '/bin/bash', label: 'bash — /bin/bash' }])
+  mocks.shells.mockReset().mockResolvedValue([
+    { id: 'C:/Program Files/PowerShell/7/pwsh.exe', kind: 'pwsh', isDefault: true },
+    { id: 'C:/Users/me/AppData/Local/Microsoft/WindowsApps/pwsh.exe', kind: 'pwshStore' },
+    { id: 'C:/WINDOWS/System32/WindowsPowerShell/v1.0/powershell.exe', kind: 'powershell' },
+    { id: 'C:/Program Files/Git/bin/bash.exe', kind: 'gitBash' },
+    { id: '/bin/bash', kind: 'bash' },
+  ])
   mocks.fonts.mockReset().mockResolvedValue(['Consolas'])
 })
 
@@ -44,7 +50,14 @@ it('offers actual local shells and fonts and saves the choices', async () => {
     </Modal>,
   )
   fireEvent.click(screen.getByRole('button', { name: 'Default shell' }))
-  fireEvent.click(await screen.findByRole('option', { name: 'bash — /bin/bash' }))
+  expect(
+    await screen.findByRole('option', { name: 'Platform default (PowerShell 7)' }),
+  ).toBeInTheDocument()
+  expect(screen.getByRole('option', { name: /^PowerShell 7 \(Microsoft Store\).*WindowsApps/ }))
+    .toBeInTheDocument()
+  expect(screen.getByRole('option', { name: /^Windows PowerShell.*v1\.0/ })).toBeInTheDocument()
+  expect(screen.getByRole('option', { name: /^Git Bash.*Git\/bin/ })).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('option', { name: /^bash.*\/bin\/bash/ }))
   expect(mocks.state.setPreferences).toHaveBeenCalledWith({ defaultShell: '/bin/bash' })
   fireEvent.click(screen.getByRole('button', { name: 'Terminal font' }))
   fireEvent.click(await screen.findByRole('option', { name: 'Consolas' }))

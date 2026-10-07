@@ -598,6 +598,8 @@ export type MarkdownSummarySettings = {
 
 export type Preferences = {
   markdownSummary?: MarkdownSummarySettings
+  /** Hides catalog documents whose path date is older than this many days; 0 never hides. */
+  markdownCatalogMaxAgeDays?: number
   /** Idioma da UI. Default 'en'. */
   language: Locale
   uiTheme: Theme
@@ -804,6 +806,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   terminalTheme: null,
   defaultShell: null,
   terminalFontFamily: null,
+  markdownCatalogMaxAgeDays: 30,
   enabledAgents: {
     shell: true,
     wsl: true,

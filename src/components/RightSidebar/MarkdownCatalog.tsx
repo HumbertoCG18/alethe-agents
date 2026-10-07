@@ -43,8 +43,8 @@ export function MarkdownCatalog({ catalog }: { catalog: ReturnType<typeof useMar
           type="button"
           className={styles.headerAction}
           aria-pressed={catalog.showCompleted}
-          aria-label={t('rightSidebar.catalog.completed')}
-          title={t('rightSidebar.catalog.completed')}
+          aria-label={t('rightSidebar.catalog.completed', { count: catalog.hidden })}
+          title={t('rightSidebar.catalog.completed', { count: catalog.hidden })}
           onClick={() => catalog.setShowCompleted(!catalog.showCompleted)}
         >
           <ListChecks size={14} />

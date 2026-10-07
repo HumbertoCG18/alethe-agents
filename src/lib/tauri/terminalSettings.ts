@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 
-export type ShellOption = { id: string; label: string }
+/** `kind` names the shell family (pwsh, pwshStore, powershell, cmd, wsl, gitBash, or the executable). */
+export type ShellOption = { id: string; kind: string; isDefault?: boolean }
 
 export function discoverShells(): Promise<ShellOption[]> {
   return invoke('discover_shells')

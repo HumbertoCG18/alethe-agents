@@ -32,6 +32,16 @@ it('uses themed selectors and saves a discovered model without blur', async () =
   expect(document.querySelector('datalist')).toBeNull()
 })
 
+it('gives each setting its own section and saves the document age window', async () => {
+  render(<MarkdownPage />)
+  const headings = screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)
+  expect(headings).toEqual(['AI summaries', 'Summary agent', 'Model', 'Summary style', 'Older documents'])
+  expect(screen.getByRole('checkbox', { name: 'Generate AI summaries' })).toBeChecked()
+  fireEvent.click(screen.getByRole('button', { name: 'Older documents' }))
+  fireEvent.click(await screen.findByRole('option', { name: 'Older than 14 days' }))
+  expect(mocks.state.setPreferences).toHaveBeenCalledWith({ markdownCatalogMaxAgeDays: 14 })
+})
+
 it('shows a discovery error while keeping the default/custom model choices usable', async () => {
   mocks.discover.mockRejectedValue(new Error('unavailable'))
   render(<MarkdownPage />)

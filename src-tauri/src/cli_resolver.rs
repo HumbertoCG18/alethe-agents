@@ -101,6 +101,10 @@ pub fn command_builder_for_terminal(
                 })
             {
                 builder.arg("-NoLogo");
+            } else if crate::terminal_settings::is_git_bash(&shell) {
+                // Same as Windows Terminal's Git Bash profile: interactive login shell.
+                builder.arg("-i");
+                builder.arg("-l");
             }
             builder
         }

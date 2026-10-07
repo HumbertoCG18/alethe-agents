@@ -37,6 +37,9 @@ const AGENTS: { id: AgentType; label: string }[] = [
   { id: 'codewhale', label: 'Codewhale' },
 ]
 
+/** Shell families with a translated name; other shells show their executable name. */
+const SHELL_KINDS = ['pwsh', 'pwshStore', 'powershell', 'cmd', 'wsl', 'gitBash']
+
 export function TerminalPage({ enabledCount }: { enabledCount: number }) {
   const t = useT()
   const tDynamic = useTDynamic()
@@ -77,6 +80,12 @@ export function TerminalPage({ enabledCount }: { enabledCount: number }) {
       active = false
     }
   }, [])
+  const shellName = (kind: string) =>
+    SHELL_KINDS.includes(kind) ? tDynamic(`prefs.shellKind.${kind}`) : kind
+  const defaultShell = shells.find((item) => item.isDefault)
+  const automaticShell = defaultShell
+    ? t('prefs.shellAutomaticNamed', { name: shellName(defaultShell.kind) })
+    : t('prefs.shellAutomatic')
   const concurrency = preferences.spawnConcurrency
   const setConcurrency = (n: number) =>
     setPreferences({
@@ -146,17 +155,21 @@ export function TerminalPage({ enabledCount }: { enabledCount: number }) {
           searchable
           searchPlaceholder={t('prefs.shellSearch')}
           onChange={(shell) => setPreferences({ defaultShell: shell || null })}
-          displayValue={
-            shells.find((item) => item.id === preferences.defaultShell)?.label ??
-            preferences.defaultShell ??
-            t('prefs.shellAutomatic')
-          }
+          displayValue={(() => {
+            const saved = shells.find((item) => item.id === preferences.defaultShell)
+            return saved ? shellName(saved.kind) : (preferences.defaultShell ?? automaticShell)
+          })()}
           options={[
-            { value: '', label: t('prefs.shellAutomatic') },
+            { value: '', label: automaticShell },
             ...shells.map((item) => ({
               value: item.id,
-              label: item.label,
-              searchText: `${item.label} ${item.id}`,
+              label: (
+                <>
+                  {shellName(item.kind)}
+                  <small className={styles.shellPath}>{item.id}</small>
+                </>
+              ),
+              searchText: `${shellName(item.kind)} ${item.id}`,
             })),
           ]}
         />

@@ -1,9 +1,84 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[derive(serde::Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct ShellOption {
     pub id: String,
-    pub label: String,
+    /// Shell family the UI names: pwsh, pwshStore, powershell, cmd, wsl, gitBash, or the executable.
+    pub kind: String,
+    /// The shell used when no choice is saved.
+    pub is_default: bool,
+}
+
+fn under(path: &str, dir: &str) -> bool {
+    path.to_lowercase()
+        .replace('/', "\\")
+        .contains(&format!("\\{dir}\\"))
+}
+
+/// Git for Windows' bash, which needs a login shell to load its profile.
+pub(crate) fn is_git_bash(path: &str) -> bool {
+    cfg!(windows)
+        && Path::new(path)
+            .file_stem()
+            .is_some_and(|stem| stem.eq_ignore_ascii_case("bash"))
+        && under(path, "git")
+}
+
+fn shell_kind(name: &str, id: &str) -> String {
+    if cfg!(windows) {
+        if name == "pwsh" && under(id, "windowsapps") {
+            return "pwshStore".into();
+        }
+        if name == "bash" && under(id, "system32") {
+            return "wsl".into();
+        }
+        if is_git_bash(id) {
+            return "gitBash".into();
+        }
+    }
+    name.into()
+}
+
+fn push_shell(shells: &mut Vec<ShellOption>, binary: PathBuf, name: &str) {
+    let id = crate::cli_launch::strip_verbatim_prefix(binary)
+        .to_string_lossy()
+        .into_owned();
+    if shells.iter().any(|item| {
+        if cfg!(windows) {
+            item.id.eq_ignore_ascii_case(&id)
+        } else {
+            item.id == id
+        }
+    }) {
+        return;
+    }
+    shells.push(ShellOption {
+        kind: shell_kind(name, &id),
+        id,
+        is_default: false,
+    });
+}
+
+/// Git Bash usually lives outside PATH: only `Git\cmd` is added by its installer.
+#[cfg(windows)]
+fn git_bash_candidates(path: &str, cwd: &Path) -> Vec<PathBuf> {
+    let mut candidates: Vec<PathBuf> = ["ProgramFiles", "ProgramW6432", "ProgramFiles(x86)"]
+        .iter()
+        .filter_map(|var| std::env::var(var).ok())
+        .map(|root| PathBuf::from(root).join(r"Git\bin\bash.exe"))
+        .collect();
+    if let Ok(local) = std::env::var("LOCALAPPDATA") {
+        candidates.push(PathBuf::from(local).join(r"Programs\Git\bin\bash.exe"));
+    }
+    // git.exe sits in <root>\cmd; the matching bash is <root>\bin\bash.exe.
+    if let Some(root) = which::which_in("git", Some(path), cwd)
+        .ok()
+        .and_then(|git| git.parent()?.parent().map(Path::to_path_buf))
+    {
+        candidates.push(root.join(r"bin\bash.exe"));
+    }
+    candidates
 }
 
 fn shells_on_path() -> Vec<ShellOption> {
@@ -27,19 +102,30 @@ fn shells_on_path() -> Vec<ShellOption> {
         "nu",
         "elvish",
     ] {
-        let Ok(binary) = which::which_in(name, Some(&path), &cwd) else {
+        // Every install, e.g. PowerShell 7 from both the MSI and the Microsoft Store.
+        let Ok(found) = which::which_in_all(name, Some(&path), &cwd) else {
             continue;
         };
-        let id = crate::cli_launch::strip_verbatim_prefix(binary)
+        for binary in found {
+            push_shell(&mut shells, binary, name);
+        }
+    }
+    #[cfg(windows)]
+    for candidate in git_bash_candidates(&path, &cwd) {
+        if candidate.is_file() {
+            push_shell(&mut shells, candidate, "bash");
+        }
+    }
+    if let Ok(default) = which::which_in(crate::cli_resolver::default_shell(), Some(&path), &cwd) {
+        let default = crate::cli_launch::strip_verbatim_prefix(default)
             .to_string_lossy()
             .into_owned();
-        if shells.iter().any(|item: &ShellOption| item.id == id) {
-            continue;
+        if let Some(item) = shells
+            .iter_mut()
+            .find(|item| item.id.eq_ignore_ascii_case(&default))
+        {
+            item.is_default = true;
         }
-        shells.push(ShellOption {
-            label: format!("{name} — {id}"),
-            id,
-        });
     }
     shells
 }
@@ -199,6 +285,40 @@ mod tests {
             agent.get_argv()[0].to_string_lossy(),
             crate::cli_resolver::default_shell()
         );
+    }
+    #[cfg(windows)]
+    #[test]
+    fn names_windows_shell_families_by_location() {
+        let kind = |name, id| shell_kind(name, id);
+        assert_eq!(kind("pwsh", r"C:\Program Files\PowerShell\7\pwsh.exe"), "pwsh");
+        assert_eq!(
+            kind("pwsh", r"C:\Users\me\AppData\Local\Microsoft\WindowsApps\pwsh.exe"),
+            "pwshStore"
+        );
+        assert_eq!(
+            kind("powershell", r"C:\WINDOWS\System32\WindowsPowerShell\v1.0\powershell.exe"),
+            "powershell"
+        );
+        assert_eq!(kind("cmd", r"C:\WINDOWS\system32\cmd.exe"), "cmd");
+        assert_eq!(kind("bash", r"C:\WINDOWS\system32\bash.exe"), "wsl");
+        assert_eq!(kind("bash", r"C:\Program Files\Git\bin\bash.exe"), "gitBash");
+        assert_eq!(kind("bash", r"C:\msys64\usr\bin\bash.exe"), "bash");
+        let git_bash = crate::cli_resolver::command_builder_for_terminal(
+            None,
+            None,
+            &[],
+            shells_on_path()
+                .iter()
+                .find(|s| s.kind == "gitBash")
+                .map(|s| s.id.as_str()),
+        );
+        if git_bash.get_argv()[0].to_string_lossy().ends_with("bash.exe") {
+            let args: Vec<_> = git_bash.get_argv()[1..]
+                .iter()
+                .map(|a| a.to_string_lossy().into_owned())
+                .collect();
+            assert_eq!(args, ["-i", "-l"]);
+        }
     }
     #[test]
     fn families_are_trimmed_sorted_deduplicated_and_skip_vertical_faces() {

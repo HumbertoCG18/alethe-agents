@@ -10,6 +10,8 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ## [Unreleased]
 
+- Markdown settings follow the Preferences layout with one section per option, and add an age window (30 days by default) that hides dated documents from the sidebar index. Undated documents and those of open campaigns stay visible; the toolbar toggle shows how many completed or older documents are hidden.
+- The default shell picker names each shell (PowerShell 7, its Microsoft Store install, Windows PowerShell, Command Prompt, WSL, Git Bash) with its path, lists every PowerShell 7 install, finds Git Bash outside PATH and names the platform default. Git Bash opens as an interactive login shell.
 - The project Markdown index respects Git ignores and discovers development documentation instead of tutor content or generated corpora. Shared discovery, persistent project/profile indexes, searchable paged groups and lazy collapsed sections keep the sidebar responsive; returning to the window refreshes the index at most once a minute.
 - Campaign document counts follow registry associations, with completed campaigns hidden by default and shown through a toolbar toggle; groups use the same collapsible headers as the Todo sidebar. Worktree copies are grouped while alternative versions remain accessible; obsolete report paths can recover through unambiguous project index matches.
 - The full Markdown reader uses a responsive document and question layout with the app's themed agent selector. Summary actions and typography match the compact sidebar.

@@ -27,6 +27,13 @@ type Summary = {
   users: number
   settled: boolean
 }
+/** Catalog age windows offered in settings; 0 keeps every dated document visible. */
+export const MARKDOWN_MAX_AGE_OPTIONS = [7, 14, 30, 60, 0] as const
+
+export function normalizeMarkdownMaxAge(raw: unknown): number {
+  return (MARKDOWN_MAX_AGE_OPTIONS as readonly unknown[]).includes(raw) ? (raw as number) : 30
+}
+
 const summaries = new Map<string, Summary>()
 
 /** Share a request until its last reader leaves; cancelled entries are never reused. */

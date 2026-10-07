@@ -1,12 +1,15 @@
 import { useEffect, useState } from 'react'
 
 import { useT } from '../../../lib/i18n'
-import { DEFAULT_MARKDOWN_SUMMARY } from '../../../lib/markdownSummary'
+import {
+  DEFAULT_MARKDOWN_SUMMARY,
+  MARKDOWN_MAX_AGE_OPTIONS,
+  normalizeMarkdownMaxAge,
+} from '../../../lib/markdownSummary'
 import { type DiscoveredModel, discoverProviderModels } from '../../../lib/tauri/agents'
 import type { MarkdownSummarySettings } from '../../../lib/types'
 import { useProjectsStore } from '../../../stores/projectsStore'
 import { Dropdown } from '../../ui/Dropdown'
-import controls from '../controls.module.css'
 import styles from '../PreferencesModal.module.css'
 import { SettingsSection } from './primitives'
 
@@ -14,6 +17,9 @@ export function MarkdownPage() {
   const t = useT()
   const settings =
     useProjectsStore((s) => s.preferences.markdownSummary) ?? DEFAULT_MARKDOWN_SUMMARY
+  const maxAge = normalizeMarkdownMaxAge(
+    useProjectsStore((s) => s.preferences.markdownCatalogMaxAgeDays),
+  )
   const setPreferences = useProjectsStore((s) => s.setPreferences)
   const [models, setModels] = useState<DiscoveredModel[]>([])
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
@@ -37,23 +43,29 @@ export function MarkdownPage() {
   }, [settings.agent])
   const save = (patch: Partial<MarkdownSummarySettings>) =>
     setPreferences({ markdownSummary: { ...settings, ...patch } })
+  const ageLabel = (days: number) =>
+    days ? t('markdown.maxAgeDays', { count: days }) : t('markdown.maxAgeNever')
   return (
-    <SettingsSection
-      id="markdown"
-      title={t('markdown.settings')}
-      description={t('markdown.settingsDesc')}
-    >
-      <label>
-        <input
-          type="checkbox"
-          checked={settings.enabled}
-          onChange={(e) => save({ enabled: e.target.checked })}
-        />{' '}
-        {t('markdown.enabled')}
-      </label>
-      <p>{t('markdown.privacy')}</p>
-      <div className={controls.label}>
-        {t('markdown.agent')}
+    <>
+      <SettingsSection
+        id="markdown-summaries"
+        title={t('markdown.summaries')}
+        description={t('markdown.privacy')}
+      >
+        <label className={styles.checkboxCard}>
+          <input
+            type="checkbox"
+            checked={settings.enabled}
+            onChange={(e) => save({ enabled: e.target.checked })}
+          />
+          <span>{t('markdown.enabled')}</span>
+        </label>
+      </SettingsSection>
+      <SettingsSection
+        id="markdown-agent"
+        title={t('markdown.agent')}
+        description={t('markdown.agentDesc')}
+      >
         <Dropdown
           className={styles.select}
           value={settings.agent}
@@ -67,9 +79,12 @@ export function MarkdownPage() {
             { value: 'codex', label: 'Codex' },
           ]}
         />
-      </div>
-      <div className={controls.label}>
-        {t('markdown.model')}
+      </SettingsSection>
+      <SettingsSection
+        id="markdown-model"
+        title={t('markdown.model')}
+        description={t('markdown.modelDesc')}
+      >
         <Dropdown
           className={styles.select}
           value={settings.model}
@@ -87,11 +102,22 @@ export function MarkdownPage() {
             ...models.map((item) => ({ value: item.id, label: item.label })),
           ]}
         />
-        {status === 'loading' ? <span role="status">{t('markdown.modelsLoading')}</span> : null}
-        {status === 'error' ? <span role="alert">{t('markdown.modelsError')}</span> : null}
-      </div>
-      <div className={controls.label}>
-        {t('markdown.style')}
+        {status === 'loading' ? (
+          <p className={styles.resourceHint} role="status">
+            {t('markdown.modelsLoading')}
+          </p>
+        ) : null}
+        {status === 'error' ? (
+          <p className={styles.resourceHint} role="alert">
+            {t('markdown.modelsError')}
+          </p>
+        ) : null}
+      </SettingsSection>
+      <SettingsSection
+        id="markdown-style"
+        title={t('markdown.style')}
+        description={t('markdown.styleDesc')}
+      >
         <Dropdown
           className={styles.select}
           value={settings.style}
@@ -102,7 +128,24 @@ export function MarkdownPage() {
             label: t(`markdown.${style}`),
           }))}
         />
-      </div>
-    </SettingsSection>
+      </SettingsSection>
+      <SettingsSection
+        id="markdown-max-age"
+        title={t('markdown.maxAge')}
+        description={t('markdown.maxAgeDesc')}
+      >
+        <Dropdown
+          className={styles.select}
+          value={String(maxAge)}
+          ariaLabel={t('markdown.maxAge')}
+          displayValue={ageLabel(maxAge)}
+          onChange={(days) => setPreferences({ markdownCatalogMaxAgeDays: Number(days) })}
+          options={MARKDOWN_MAX_AGE_OPTIONS.map((days) => ({
+            value: String(days),
+            label: ageLabel(days),
+          }))}
+        />
+      </SettingsSection>
+    </>
   )
 }

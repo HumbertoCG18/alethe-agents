@@ -60,9 +60,8 @@ it('opens the full source and asks the chosen individual agent with file, quote 
   render(<MarkdownReaderWindow path="C:/project/report.md" />)
   expect(screen.getByRole('button', { name: 'Ask agent' })).toBeDisabled()
   await selectPassage()
-  fireEvent.change(screen.getByLabelText('Answering agent or worker'), {
-    target: { value: 'codex' },
-  })
+  fireEvent.click(screen.getByRole('button', { name: 'Answering agent or worker' }))
+  fireEvent.click(screen.getByRole('option', { name: 'Codex' }))
   fireEvent.click(screen.getByRole('button', { name: 'Ask agent' }))
   expect(await screen.findByText('Individual answer')).toBeInTheDocument()
   expect(generateMarkdown).toHaveBeenCalledWith(
@@ -92,10 +91,8 @@ it('sends selected text to an orchestration worker through the existing worker m
   } as never)
   render(<MarkdownReaderWindow path="C:/project/night-report.md" />)
   await selectPassage()
-  await screen.findByRole('option', { name: /NIGHT-01/ })
-  fireEvent.change(screen.getByLabelText('Answering agent or worker'), {
-    target: { value: 'worker:night-1' },
-  })
+  fireEvent.click(screen.getByRole('button', { name: 'Answering agent or worker' }))
+  fireEvent.click(await screen.findByRole('option', { name: /NIGHT-01/ }))
   fireEvent.click(screen.getByRole('button', { name: 'Ask agent' }))
   await waitFor(() =>
     expect(orchestratorMessage).toHaveBeenCalledWith(
@@ -154,10 +151,8 @@ it('uses the existing individual night session created by openCampaign and rejec
   const before = JSON.stringify(useProjectsStore.getState().projects)
   render(<MarkdownReaderWindow path="C:/project/night.md" />)
   await selectPassage()
-  await screen.findByRole('option', { name: /OITO-08/ })
-  fireEvent.change(screen.getByLabelText('Answering agent or worker'), {
-    target: { value: `session:${terminal.tabs[0].id}` },
-  })
+  fireEvent.click(screen.getByRole('button', { name: 'Answering agent or worker' }))
+  fireEvent.click(await screen.findByRole('option', { name: /OITO-08/ }))
   fireEvent.click(screen.getByRole('button', { name: 'Ask agent' }))
   await waitFor(() => expect(writePty).toHaveBeenCalledWith('night-pty', '\r'))
   expect(writePty).toHaveBeenCalledWith(

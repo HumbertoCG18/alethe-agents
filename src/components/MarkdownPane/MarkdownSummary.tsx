@@ -1,3 +1,4 @@
+import { BookOpen, Settings2 } from 'lucide-react'
 import { lazy, Suspense, useEffect, useState } from 'react'
 
 import { useT } from '../../lib/i18n'
@@ -53,18 +54,25 @@ export function MarkdownSummary({
     <div className={styles.root}>
       <div className={styles.actions}>
         <button
+          type="button"
+          className={styles.readButton}
           onClick={() =>
             void openMarkdownReader(path).catch((error) =>
               useUiStore.getState().pushToast({ title: t('markdown.reader'), body: String(error) }),
             )
           }
         >
+          <BookOpen size={14} />
           {t('markdown.openFull')}
         </button>
         <button
+          type="button"
+          className={styles.settingsButton}
+          title={t('markdown.settings')}
+          aria-label={t('markdown.settings')}
           onClick={() => useUiStore.getState().openModal_('preferences', { category: 'markdown' })}
         >
-          {t('markdown.settings')}
+          <Settings2 size={14} />
         </button>
       </div>
       {settings.enabled ? (

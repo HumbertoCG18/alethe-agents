@@ -31,19 +31,97 @@ const TODO_TEMPLATE: &str = r#"// Alethe Todo template
 }
 "#;
 
-/// Enumerates Markdown within one checkout without following links or dependency/build trees.
+/// Automatic discovery is development documentation, never a recursive content browser.
+fn development_markdown(path: &Path) -> bool {
+    let parts: Vec<_> = path.components().collect();
+    if parts.iter().any(|p| !matches!(p, Component::Normal(_))) {
+        return false;
+    }
+    if !path.extension().is_some_and(|e| {
+        matches!(
+            e.to_string_lossy().to_lowercase().as_str(),
+            "md" | "markdown" | "mdx"
+        )
+    }) {
+        return false;
+    }
+    if parts.len() == 1 {
+        return true;
+    }
+    matches!(
+        parts[0]
+            .as_os_str()
+            .to_string_lossy()
+            .to_lowercase()
+            .as_str(),
+        "docs"
+            | "doc"
+            | "documentation"
+            | ".workflow"
+            | ".mex"
+            | ".github"
+            | ".agents"
+            | ".alethe"
+            | ".superpowers"
+            | ".planning"
+            | "campaigns"
+            | "campanhas"
+            | "reports"
+            | "relatorios"
+            | "handoffs"
+            | "planning"
+    ) && !parts[..parts.len() - 1].iter().any(|p| {
+        matches!(
+            p.as_os_str().to_string_lossy().to_lowercase().as_str(),
+            ".git"
+                | "node_modules"
+                | "target"
+                | "dist"
+                | "build"
+                | ".venv"
+                | "venv"
+                | "__pycache__"
+        )
+    })
+}
+
+fn plain_catalog_file(root: &Path, path: &Path) -> bool {
+    let Ok(metadata) = fs::symlink_metadata(path) else {
+        return false;
+    };
+    if !metadata.is_file() || metadata.file_type().is_symlink() {
+        return false;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        if metadata.file_attributes() & 0x400 != 0 {
+            return false;
+        }
+    }
+    path.canonicalize().is_ok_and(|p| p.starts_with(root))
+}
+
+/// Bounded fallback for folders outside Git: only conventional development-document roots.
 fn project_markdown_paths(root: &Path) -> Result<Vec<String>, String> {
+    let canonical = root.canonicalize().map_err(|_| "directory not found")?;
     if !root.is_dir() {
         return Err("directory not found".into());
     }
+    let started = std::time::Instant::now();
     let mut pending = vec![root.to_path_buf()];
     let mut paths = Vec::new();
+    let mut entries = 0;
     while let Some(directory) = pending.pop() {
         for entry in
-            fs::read_dir(&directory).map_err(|error| format!("{}: {error}", directory.display()))?
+            fs::read_dir(&directory).map_err(|e| format!("{}: {e}", directory.display()))?
         {
-            let entry = entry.map_err(|error| error.to_string())?;
-            let kind = entry.file_type().map_err(|error| error.to_string())?;
+            entries += 1;
+            if entries > 25_000 || started.elapsed() > std::time::Duration::from_secs(2) {
+                return Err("Development documentation scan exceeded its limit; open specific documents manually".into());
+            }
+            let entry = entry.map_err(|e| e.to_string())?;
+            let kind = entry.file_type().map_err(|e| e.to_string())?;
             if kind.is_symlink() {
                 continue;
             }
@@ -52,7 +130,7 @@ fn project_markdown_paths(root: &Path) -> Result<Vec<String>, String> {
                 use std::os::windows::fs::MetadataExt;
                 if entry
                     .metadata()
-                    .map_err(|error| error.to_string())?
+                    .map_err(|e| e.to_string())?
                     .file_attributes()
                     & 0x400
                     != 0
@@ -61,33 +139,15 @@ fn project_markdown_paths(root: &Path) -> Result<Vec<String>, String> {
                 }
             }
             let path = entry.path();
+            let relative = path.strip_prefix(root).map_err(|e| e.to_string())?;
             if kind.is_dir() {
-                let name = entry.file_name().to_string_lossy().to_lowercase();
-                if matches!(
-                    name.as_str(),
-                    ".git"
-                        | "node_modules"
-                        | "target"
-                        | "dist"
-                        | "build"
-                        | ".venv"
-                        | "venv"
-                        | "__pycache__"
-                        | ".next"
-                        | ".cache"
-                ) || path.join(".git").exists()
+                // A hypothetical document identifies whether this directory belongs to the index.
+                if development_markdown(&relative.join("document.md"))
+                    && !path.join(".git").exists()
                 {
-                    continue;
+                    pending.push(path);
                 }
-                pending.push(path);
-            } else if kind.is_file()
-                && path.extension().is_some_and(|ext| {
-                    matches!(
-                        ext.to_string_lossy().to_lowercase().as_str(),
-                        "md" | "markdown" | "mdx"
-                    )
-                })
-            {
+            } else if development_markdown(relative) && plain_catalog_file(&canonical, &path) {
                 paths.push(path.to_string_lossy().into_owned());
             }
         }
@@ -98,9 +158,55 @@ fn project_markdown_paths(root: &Path) -> Result<Vec<String>, String> {
 
 #[tauri::command]
 pub async fn list_project_markdown(path: String) -> Result<Vec<String>, String> {
-    tauri::async_runtime::spawn_blocking(move || project_markdown_paths(Path::new(path.trim())))
+    let root = PathBuf::from(path.trim());
+    if !root.is_dir() {
+        return Err("directory not found".into());
+    }
+    let output = crate::cli_resolver::background_output(
+        Path::new("git"),
+        &[
+            "-C",
+            root.to_string_lossy().as_ref(),
+            "ls-files",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+            "-z",
+            "--",
+            ":(icase)*.md",
+            ":(icase)*.markdown",
+            ":(icase)*.mdx",
+        ],
+        std::time::Duration::from_secs(8),
+    )
+    .await;
+    if let Ok(output) = output {
+        return tauri::async_runtime::spawn_blocking(move || {
+            let canonical = root.canonicalize().map_err(|e| e.to_string())?;
+            let mut paths: Vec<String> = output
+                .stdout
+                .split(|b| *b == 0)
+                .filter(|p| !p.is_empty())
+                .filter_map(|bytes| {
+                    let relative = PathBuf::from(String::from_utf8_lossy(bytes).as_ref());
+                    let file = root.join(&relative);
+                    (development_markdown(&relative) && plain_catalog_file(&canonical, &file))
+                        .then(|| file.to_string_lossy().into_owned())
+                })
+                .collect();
+            paths.sort();
+            paths.dedup();
+            Ok(paths)
+        })
         .await
-        .map_err(|error| error.to_string())?
+        .map_err(|e| e.to_string())?;
+    }
+    if root.join(".git").exists() {
+        return Err("Could not index development documents with Git; retry discovery".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || project_markdown_paths(&root))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[derive(Serialize)]
@@ -677,6 +783,48 @@ mod tests {
         assert!(found.iter().any(|p| p.ends_with("run.md")));
         assert!(project_markdown_paths(&root.join("missing")).is_err());
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn catalog_excludes_ignored_artifacts_and_tutor_content() {
+        let root = scratch("development-catalog");
+        checked_output(&root, &["init"]).unwrap();
+        fs::write(root.join(".gitignore"), ".frzero/\n").unwrap();
+        for name in [
+            "docs/reports/real.md",
+            ".workflow/campaigns/open.md",
+            ".frzero/tutor.md",
+            "tutors/student.md",
+        ] {
+            let file = root.join(name);
+            fs::create_dir_all(file.parent().unwrap()).unwrap();
+            fs::write(file, "test").unwrap();
+        }
+        checked_output(&root, &["add", "."]).unwrap();
+        let paths = list_project_markdown(root.to_string_lossy().into_owned())
+            .await
+            .unwrap();
+        assert_eq!(paths.len(), 2, "{paths:?}");
+        assert!(paths.iter().any(|p| p.ends_with("real.md")));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore = "Requires an explicit local development repository"]
+    async fn measure_development_catalog() {
+        let root =
+            std::env::var("ALETHE_CATALOG_BENCH_ROOT").expect("Provide the repository to measure");
+        let start = std::time::Instant::now();
+        let files = list_project_markdown(root).await.unwrap();
+        println!(
+            "Development catalog: {} files in {:.3} seconds",
+            files.len(),
+            start.elapsed().as_secs_f64()
+        );
+        assert!(!files.is_empty());
+        assert!(files
+            .iter()
+            .all(|p| !p.replace('\\', "/").contains("/.frzero/")));
     }
 
     #[test]

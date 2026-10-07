@@ -623,10 +623,9 @@
   padding: calc(var(--space-2) / 2) 0;
   font-weight: 500;
 }
-.markdownCatalog summary span {
-  color: var(--fg-faint);
-}
-.markdownCatalog button {
+/* Scoped to rows so section headers and toolbar buttons keep their shared styles. */
+.catalogRow button,
+.catalogPaging button {
   display: block;
   width: 100%;
   min-width: 0;
@@ -640,12 +639,85 @@
   color: var(--fg-muted);
   cursor: pointer;
 }
-.markdownCatalog button:hover,
-.markdownCatalog button[aria-current] {
+.catalogRow button:hover,
+.catalogRow button[aria-current],
+.catalogPaging button:hover {
   color: var(--fg);
   background: var(--panel-hover);
 }
 .markdownCatalog [role='alert'] {
   color: var(--status-offline);
   overflow-wrap: anywhere;
+}
+
+.catalogSearch {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: calc(var(--space-2) / 2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-sunken);
+}
+.catalogSearch input {
+  min-width: 0;
+  width: 100%;
+  background: transparent;
+  color: var(--fg);
+  border: 0;
+  outline: 0;
+  font: inherit;
+}
+.catalogToolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+.catalogToolbar .catalogSearch {
+  flex: 1;
+  min-width: 0;
+}
+.headerAction[aria-pressed='true'] {
+  color: var(--accent);
+  background: var(--panel-hover);
+}
+.catalogRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.catalogRow > button:first-child {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 1;
+  min-width: 0;
+}
+.catalogRow > button:first-child span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.catalogRow > button.catalogVersions {
+  width: auto;
+  display: flex;
+  gap: calc(var(--space-2) / 2);
+  align-items: center;
+  color: var(--fg-faint);
+}
+.catalogVariantList {
+  width: 100%;
+  padding-left: var(--space-4);
+}
+.catalogPaging {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  color: var(--fg-faint);
+}
+.catalogPaging button {
+  width: auto;
+  color: var(--accent);
 }

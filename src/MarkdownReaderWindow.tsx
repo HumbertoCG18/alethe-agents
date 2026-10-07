@@ -1,10 +1,13 @@
 import { listen } from '@tauri-apps/api/event'
+import { FileText, RefreshCw, Send } from 'lucide-react'
 import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 
+import { Dropdown } from './components/ui/Dropdown'
 import { writePtyChunked, writePtyWithTimeout } from './components/XTermView/terminalWrite'
 import { useMarkdownFile } from './hooks/useMarkdownFile'
 import { useT } from './lib/i18n'
 import { DEFAULT_MARKDOWN_SUMMARY, markdownQuestion } from './lib/markdownSummary'
+import { basename } from './lib/paths'
 import { ptyExists } from './lib/tauri'
 import { generateMarkdown } from './lib/tauri/markdown'
 import {
@@ -159,85 +162,107 @@ export function MarkdownReaderWindow({ path }: { path: string }) {
   return (
     <main className={styles.root}>
       <header className={styles.header}>
-        <strong>{t('markdown.reader')}</strong>
-        <span title={path}>{path}</span>
-        <button onClick={() => void reload()}>{t('ui.markdown.refresh')}</button>
-      </header>
-      <div ref={documentRef} className={styles.document}>
-        {error ? (
-          <p role="alert">
-            {t('markdown.readError')} {error}
-          </p>
-        ) : content === null ? (
-          <p>{t('ui.markdown.loading')}</p>
-        ) : (
-          <Suspense fallback={t('ui.markdown.loading')}>
-            <MarkdownRenderer content={content} dark={!isLightTheme(theme)} />
-          </Suspense>
-        )}
-      </div>
-      <section className={styles.questions} aria-label={t('markdown.ask')}>
-        <label>
-          {t('markdown.quote')}
-          <textarea readOnly value={quote} placeholder={t('markdown.selectText')} rows={2} />
-        </label>
-        {quote.length > 24_000 ? <p role="alert">{t('markdown.selectionTooLarge')}</p> : null}
-        <label>
-          {t('markdown.question')}
-          <textarea
-            value={question}
-            maxLength={6000}
-            onChange={(e) => setQuestion(e.target.value)}
-            rows={2}
-          />
-        </label>
-        <div className={styles.actions}>
-          <label>
-            {t('markdown.target')}
-            <select value={chosen} onChange={(e) => setTarget(e.target.value)}>
-              <option value="antigravity" disabled>
-                {t('markdown.agyUnavailable')}
-              </option>
-              <option value="claude">Claude Code</option>
-              <option value="codex">Codex</option>
-              {sessions.map(({ tab, label }) => (
-                <option key={tab.id} value={`session:${tab.id}`}>
-                  {t('markdown.session')} / {label}
-                </option>
-              ))}
-              {workers.map((job) => (
-                <option key={job.id} value={`worker:${job.id}`}>
-                  {t(job.task ? 'markdown.nightWorker' : 'markdown.worker')} · {job.agent} ·{' '}
-                  {job.task || job.id} · {job.cwd}
-                </option>
-              ))}
-            </select>
-          </label>
-          <button
-            disabled={
-              busy ||
-              chosen === 'antigravity' ||
-              !quote.trim() ||
-              !question.trim() ||
-              quote.length > 24_000
-            }
-            onClick={() => void send()}
-          >
-            {t(busy ? 'markdown.asking' : 'markdown.ask')}
-          </button>
+        <FileText size={18} />
+        <div className={styles.identity}>
+          <strong>{basename(path)}</strong>
+          <span title={path}>{path}</span>
         </div>
-        {sendError ? <p role="alert">{sendError}</p> : null}
-        {answer ? (
-          <div aria-label={t('markdown.answer')}>
-            <p>{submitted.target}</p>
-            <blockquote>{submitted.quote}</blockquote>
-            <p>{submitted.question}</p>
+        <button
+          type="button"
+          className={styles.toolbarButton}
+          onClick={() => void reload()}
+          aria-label={t('ui.markdown.refresh')}
+        >
+          <RefreshCw size={14} />
+          <span>{t('ui.markdown.refresh')}</span>
+        </button>
+      </header>
+      <div className={styles.workspace}>
+        <div ref={documentRef} className={styles.document}>
+          {error ? (
+            <p role="alert">
+              {t('markdown.readError')} {error}
+            </p>
+          ) : content === null ? (
+            <p>{t('ui.markdown.loading')}</p>
+          ) : (
             <Suspense fallback={t('ui.markdown.loading')}>
-              <MarkdownRenderer content={answer} dark={!isLightTheme(theme)} />
+              <MarkdownRenderer content={content} dark={!isLightTheme(theme)} />
             </Suspense>
+          )}
+        </div>
+        <section className={styles.questions} aria-label={t('markdown.ask')}>
+          <div className={styles.questionHeading}>
+            <strong>{t('markdown.ask')}</strong>
+            <p>{t('markdown.selectText')}</p>
           </div>
-        ) : null}
-      </section>
+          <label>
+            {t('markdown.quote')}
+            <textarea readOnly value={quote} placeholder={t('markdown.selectText')} rows={2} />
+          </label>
+          {quote.length > 24_000 ? <p role="alert">{t('markdown.selectionTooLarge')}</p> : null}
+          <label>
+            {t('markdown.question')}
+            <textarea
+              value={question}
+              maxLength={6000}
+              onChange={(e) => setQuestion(e.target.value)}
+              rows={2}
+            />
+          </label>
+          <div className={styles.actions}>
+            <label>
+              {t('markdown.target')}
+              <Dropdown
+                value={chosen}
+                onChange={setTarget}
+                ariaLabel={t('markdown.target')}
+                searchable
+                searchPlaceholder={t('rightSidebar.catalog.search')}
+                options={[
+                  { value: 'antigravity', label: t('markdown.agyUnavailable'), disabled: true },
+                  { value: 'claude', label: 'Claude Code' },
+                  { value: 'codex', label: 'Codex' },
+                  ...sessions.map(({ tab, label }) => ({
+                    value: `session:${tab.id}`,
+                    label: `${t('markdown.session')} / ${label}`,
+                  })),
+                  ...workers.map((job) => ({
+                    value: `worker:${job.id}`,
+                    label: `${t(job.task ? 'markdown.nightWorker' : 'markdown.worker')} · ${job.agent} · ${job.task || job.id} · ${job.cwd}`,
+                  })),
+                ]}
+              />
+            </label>
+            <button
+              type="button"
+              className={styles.sendButton}
+              disabled={
+                busy ||
+                chosen === 'antigravity' ||
+                !quote.trim() ||
+                !question.trim() ||
+                quote.length > 24_000
+              }
+              onClick={() => void send()}
+            >
+              <Send size={14} />
+              {t(busy ? 'markdown.asking' : 'markdown.ask')}
+            </button>
+          </div>
+          {sendError ? <p role="alert">{sendError}</p> : null}
+          {answer ? (
+            <div className={styles.answer} aria-label={t('markdown.answer')}>
+              <p>{submitted.target}</p>
+              <blockquote>{submitted.quote}</blockquote>
+              <p>{submitted.question}</p>
+              <Suspense fallback={t('ui.markdown.loading')}>
+                <MarkdownRenderer content={answer} dark={!isLightTheme(theme)} />
+              </Suspense>
+            </div>
+          ) : null}
+        </section>
+      </div>
     </main>
   )
 }

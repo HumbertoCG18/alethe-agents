@@ -10,6 +10,10 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ## [Unreleased]
 
+- The project Markdown index respects Git ignores and discovers development documentation instead of tutor content or generated corpora. Shared discovery, persistent project/profile indexes, searchable paged groups and lazy collapsed sections keep the sidebar responsive; returning to the window refreshes the index at most once a minute.
+- Campaign document counts follow registry associations, with completed campaigns hidden by default and shown through a toolbar toggle; groups use the same collapsible headers as the Todo sidebar. Worktree copies are grouped while alternative versions remain accessible; obsolete report paths can recover through unambiguous project index matches.
+- The full Markdown reader uses a responsive document and question layout with the app's themed agent selector. Summary actions and typography match the compact sidebar.
+
 - Markdown summary settings use themed searchable selectors, current Claude aliases and the installed Codex model catalog. Background discovery is shared, bounded and hidden on Windows; opening settings no longer starts an interactive agent or flashes a Node probe console.
 - Terminal settings offer shells discovered on PATH and installed font families, with persistent local choices and visible fallback notices. Font changes apply to open xterm and native macOS terminals without restarting their processes. Markdown settings now follow Terminal and agents in the navigation.
 - Terminal font selection replaces the separate terminal palette picker; existing saved palettes remain compatible.

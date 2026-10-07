@@ -52,7 +52,7 @@ import { DotmCircular2 } from '../ui/dotm-circular-2'
 import { VoiceHistoryPanel } from '../VoiceHistoryPanel'
 import { MarkdownCatalog } from './MarkdownCatalog'
 import styles from './RightSidebar.module.css'
-import { useMarkdownCatalog } from './useMarkdownCatalog'
+import { recoverCatalogPath, useMarkdownCatalog } from './useMarkdownCatalog'
 
 const markdownScrollPositions = new Map<string, number>()
 
@@ -361,7 +361,10 @@ function MarkdownSidebarViewer() {
     let cancelled = false
     const path = selected.path
     void findRelativePath(root, path)
-      .then((found) => {
+      .then((resolved) => {
+        const found =
+          resolved ??
+          (!catalog.loading ? recoverCatalogPath(path, catalog.roots, catalog.documents) : null)
         if (
           !cancelled &&
           found &&
@@ -376,7 +379,16 @@ function MarkdownSidebarViewer() {
     return () => {
       cancelled = true
     }
-  }, [error, selected?.path, root, closeMarkdownSidebarTab, openMarkdownSidebar])
+  }, [
+    error,
+    selected?.path,
+    root,
+    catalog.loading,
+    catalog.roots,
+    catalog.documents,
+    closeMarkdownSidebarTab,
+    openMarkdownSidebar,
+  ])
 
   const openDroppedMarkdownPaths = useCallback(
     (paths: string[]) => {

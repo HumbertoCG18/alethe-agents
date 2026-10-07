@@ -1,7 +1,7 @@
 import { act, cleanup, configure, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest'
 
-import { readTextFile, writeClipboardText } from '../../lib/tauri'
+import { findRelativePath, readTextFile, writeClipboardText } from '../../lib/tauri'
 import { EMPTY_PROJECTS_FILE } from '../../lib/types'
 import { useProjectsStore } from '../../stores/projectsStore'
 import { useUiStore } from '../../stores/uiStore'
@@ -27,6 +27,9 @@ vi.mock('../../lib/tauri', async (importOriginal) => ({
   listenFileChanged: vi.fn(async () => () => {}),
   writeClipboardText: vi.fn(async () => {}),
   listProjectPlans: vi.fn(async () => []),
+  listProjectMarkdown: vi.fn(async () => []),
+  findRelativePath: vi.fn(async () => null),
+  recordFrontendError: vi.fn(async () => {}),
   readPlanningStatus: vi.fn(async () => null),
   worktreeCheckouts: vi.fn(async () => {
     throw new Error('not_a_git_repository')
@@ -89,4 +92,33 @@ it('keeps the newly selected document when the previous read finishes late', asy
   await act(async () => finish('# Old document'))
   expect(screen.getByRole('heading', { name: 'New document' })).toBeInTheDocument()
   expect(screen.queryByRole('heading', { name: 'Old document' })).toBeNull()
+})
+
+it('lets the user close the only missing document and return to the catalog', async () => {
+  vi.mocked(readTextFile).mockRejectedValue(new Error('file not found'))
+  useUiStore.getState().openMarkdownSidebar('C:/missing.md', 'Missing')
+  render(<RightSidebar />)
+  expect(await screen.findByText(/file not found/)).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'Close Markdown tab' }))
+  expect(useUiStore.getState().rightSidebarMarkdown).toBeNull()
+  expect(screen.queryByText(/file not found/)).toBeNull()
+})
+
+it('recovers a missing project document through the existing worktree resolver', async () => {
+  const project = useProjectsStore
+    .getState()
+    .createProject({ name: 'Project', defaultCwd: 'C:/repo' })
+  useProjectsStore.setState({ activeProjectId: project.id })
+  vi.mocked(findRelativePath).mockResolvedValue('C:/repo/docs/recovered.md')
+  vi.mocked(readTextFile).mockImplementation(async (path) => {
+    if (path === 'C:/repo/docs/recovered.md') return '# Recovered document'
+    throw new Error('file not found')
+  })
+  useUiStore.getState().openMarkdownSidebar('C:/repo/docs/missing.md', 'Missing')
+  render(<RightSidebar />)
+  expect(await screen.findByRole('heading', { name: 'Recovered document' })).toBeInTheDocument()
+  expect(findRelativePath).toHaveBeenCalledWith('C:/repo', 'C:/repo/docs/missing.md')
+  expect(
+    useUiStore.getState().rightSidebarMarkdownTabs.some((tab) => tab.path.endsWith('missing.md')),
+  ).toBe(false)
 })

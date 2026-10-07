@@ -36,14 +36,20 @@ export function nightDay(iso: string, locale: Locale): string {
 }
 
 /** A campaign's situation, as its row and its Active details say it. */
-export function situationLabel(t: TFunction, situation: CampaignSituation): string {
+export function situationLabel(
+  t: TFunction,
+  situation: CampaignSituation,
+  working = false,
+): string {
   switch (situation.kind) {
     case 'done':
       return t('todo.campaigns.done')
     case 'waits':
       return t('todo.campaigns.waits', { ids: situation.waits.join(', ') })
     case 'running':
-      return t('todo.campaigns.running', { count: situation.ready })
+      return t(working ? 'todo.campaigns.running' : 'todo.campaigns.inactive', {
+        count: situation.ready,
+      })
     case 'ready':
       return t('todo.campaigns.ready', { count: situation.ready })
     case 'blocked':

@@ -1,6 +1,13 @@
 import type { MessageKey } from './en'
 
 export const ptBR: Record<MessageKey, string> = {
+  'todo.campaigns.nightTitle': 'Campanhas noturnas',
+  'todo.campaigns.inactive': 'Sem execução ativa, {count} pronta(s)',
+  'todo.campaigns.inactiveTask': 'Sem execução ativa',
+  'todo.campaigns.savingDependencies': 'Salvando…',
+  'todo.campaigns.savedDependencies': 'Dependências salvas',
+  'todo.campaigns.failedDependencies':
+    'Não foi possível salvar as dependências. Confira a notificação de erro.',
   'markdown.agyUnavailable': 'AGY indisponível: isolamento das ferramentas do CLI não verificado',
   'markdown.session': 'Sessão de agente existente',
   'markdown.sentSession': 'Pergunta enviada à sessão existente. Leia a resposta no terminal.',
@@ -1321,7 +1328,6 @@ export const ptBR: Record<MessageKey, string> = {
   'terminalInspector.tabs': 'Tabs',
   'rightSidebar.openMarkdown': 'Abrir na sidebar direita',
   'rightSidebar.markdownViewer': 'Viewer Markdown',
-  'rightSidebar.markdownTabs': 'Arquivos Markdown abertos',
   'rightSidebar.closeMarkdownTab': 'Fechar aba Markdown',
   'rightSidebar.dropMarkdown': 'Solte arquivos Markdown para abri-los aqui',
   'whatsNew.button': 'Novidades',
@@ -1415,6 +1421,14 @@ export const ptBR: Record<MessageKey, string> = {
   'whatsNew.v130.note8':
     'Controle experimental de opacidade da janela, para enxergar o desktop através do Alethe.',
   'rightSidebar.backToTodo': 'Voltar para Tarefas',
+  'rightSidebar.catalog.title': 'Documentos do projeto',
+  'rightSidebar.catalog.active': 'Campanha ativa',
+  'rightSidebar.catalog.campaigns': 'Campanhas',
+  'rightSidebar.catalog.reports': 'Relatórios',
+  'rightSidebar.catalog.other': 'Outros Markdown',
+  'rightSidebar.catalog.error': 'Não foi possível listar alguns documentos.',
+  'rightSidebar.catalog.details': 'Detalhes',
+  'rightSidebar.catalog.choose': 'Escolha um documento acima ou arraste um Markdown para cá.',
   'rightSidebar.markdownError': 'Não foi possível carregar o Markdown',
   'rightSidebar.navigation': 'Navegação da sidebar direita',
   'rightSidebar.todoTab': 'Tarefas',
@@ -1426,8 +1440,6 @@ export const ptBR: Record<MessageKey, string> = {
     'Ligue o monitoramento GSD de um projeto pra ver as sessões-filha aqui.',
   'plans.title': 'Documentos de planejamento',
   'rightSidebar.markdownEmptyTitle': 'Nenhum Markdown selecionado',
-  'rightSidebar.markdownEmptyDesc':
-    'Abra um arquivo Markdown na sidebar de projetos para visualizá-lo aqui.',
   'rightSidebar.commentsToggle': 'Mostrar comentários',
   'rightSidebar.commentsTitle': 'Comentários da aplicação',
   'rightSidebar.commentsEmpty': 'Selecione um trecho do Markdown para adicionar um comentário.',

@@ -285,7 +285,7 @@ describe('CampaignsSection', () => {
     await expandSection()
     expect(screen.getByText('OITO')).toBeInTheDocument()
     expect(screen.getByText('1/8 · 13%')).toBeInTheDocument()
-    expect(screen.getByText('In progress, 4 ready')).toBeInTheDocument()
+    expect(screen.getByText('Not running, 4 ready')).toBeInTheDocument()
     expect(screen.getByText('1/1+? · 100%')).toBeInTheDocument()
     expect(screen.getByText('Waits for ABERTA')).toBeInTheDocument()
 
@@ -462,7 +462,7 @@ describe('CampaignsSection', () => {
     const oito = screen.getByText('OITO').closest('[data-lane]')
     expect(oito).toHaveAttribute('data-lane', 'interrupted')
     expect(oito).not.toHaveAttribute('data-status')
-    expect(oito).toHaveTextContent('In progress, 4 ready')
+    expect(oito).toHaveTextContent('Not running, 4 ready')
     useTerminalsStore.getState().reset()
   })
 
@@ -3152,7 +3152,7 @@ describe('Todo tabs', () => {
     expect(tab(/^Personal/)).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByText('Personal one')).toBeInTheDocument()
     expect(screen.getByPlaceholderText('Add a task…')).toBeInTheDocument()
-    expect(screen.getByRole('progressbar')).toHaveTextContent('0 / 1')
+    expect(screen.queryByRole('progressbar')).toBeNull()
     expect(header(/^Campaigns/)).toBeNull()
     expect(useTodosStore.getState().tab).toBe('personal')
 
@@ -3236,7 +3236,7 @@ describe('Todo tabs', () => {
       within(oito)
         .getByRole('button', { name: /^OITO ·/ })
         .getAttribute('title'),
-    ).toMatch(/^Assisted · .* · In progress, 4 ready$/)
+    ).toMatch(/^Assisted · .* · Not running, 4 ready$/)
 
     // Each add field writes to its own campaign.
     fireEvent.click(
@@ -3512,7 +3512,7 @@ describe('Active campaign step', () => {
     const oito = active('OITO')!
     const head = within(oito).getByRole('button', { name: /^OITO ·/ })
     expect(head.getAttribute('title')).toContain('Assisted')
-    expect(head.getAttribute('title')).toContain('In progress, 4 ready')
+    expect(head.getAttribute('title')).toContain('Not running, 4 ready')
     await waitFor(() => expect(head).toHaveTextContent('1 queued'))
     expect(within(oito).queryByRole('button', { name: 'Details' })).toBeNull()
     expect(screen.queryByRole('button', { name: /the add field$/ })).toBeNull()
@@ -3532,7 +3532,7 @@ describe('Active campaign step', () => {
     expect(field()).toBeNull()
   })
 
-  it('fills the Night tab bar with the latest night tasks done now, over their count', async () => {
+  it('hides the Night tab bar when the diary exists but no campaign is running', async () => {
     fs.files.set(REGISTRY, JSON.stringify(exemplo))
     // OITO-01 is done in the registry; OITO-03 is listed twice; MOTOR-09 is not in it.
     night(['OITO-01', 'ok'], ['OITO-03', 'falhou'], ['OITO-03', 'aguarda-voce'], ['MOTOR-09', 'ok'])
@@ -3540,8 +3540,8 @@ describe('Active campaign step', () => {
     useTodosStore.setState({ tab: 'night' })
     render(<TodoSidebar />)
     const bar = () => screen.queryByRole('progressbar')
-    await waitFor(() => expect(bar()).toHaveTextContent('1 / 3'))
-    expect(bar()!.querySelector('[title]')).toHaveAttribute('title', 'Night of 10/03 · 1/3')
+    await screen.findByText('OITO', { exact: true })
+    expect(bar()).toBeNull()
 
     // Overview keeps its campaign segments.
     fireEvent.click(screen.getByRole('tab', { name: /^Overview/ }))
@@ -4088,7 +4088,7 @@ describe('Personal list', () => {
     expect(doneGroup).toHaveAttribute('aria-expanded', 'false')
     fireEvent.click(doneGroup)
     expect(titles()).toEqual(['Loose one', 'Write the doc', 'Finished one'])
-    expect(screen.getByRole('progressbar')).toHaveTextContent('1 / 3')
+    expect(screen.queryByRole('progressbar')).toBeNull()
   })
 
   it('reorders open todos by dragging one onto another in the list', () => {
@@ -4118,6 +4118,7 @@ describe('campaign dependency editor', () => {
     render(<Section />)
     await expandSection()
     fireEvent.click(screen.getByText('OITO', { exact: true }).closest('button')!)
+    fireEvent.click(screen.getByRole('button', { name: /^Depends on/ }))
     const editor = screen.getByRole('group', { name: 'Depends on' })
     fireEvent.click(within(editor).getByRole('checkbox', { name: /^PARADA/ }))
     fireEvent.click(within(editor).getByRole('button', { name: 'Save dependencies' }))
@@ -4136,6 +4137,7 @@ describe('campaign dependency editor', () => {
     render(<Section />)
     await expandSection()
     fireEvent.click(screen.getByText('OITO', { exact: true }).closest('button')!)
+    fireEvent.click(screen.getByRole('button', { name: /^Depends on/ }))
     const editor = screen.getByRole('group', { name: 'Depends on' })
     fireEvent.click(within(editor).getByRole('checkbox', { name: /^PARADA/ }))
     const changed = withOito(exemplo, { titulo: 'Concurrent update' })
@@ -4147,6 +4149,7 @@ describe('campaign dependency editor', () => {
         (item: { id: string }) => item.id === 'OITO',
       ).titulo,
     ).toBe('Concurrent update')
+    expect(await screen.findByRole('alert')).toHaveTextContent('Could not save dependencies')
   })
 })
 
@@ -4187,6 +4190,7 @@ it('preserves a dependency draft when an unrelated task update reloads the regis
   render(<Section />)
   await expandSection()
   fireEvent.click(screen.getByText('OITO', { exact: true }).closest('button')!)
+  fireEvent.click(screen.getByRole('button', { name: /^Depends on/ }))
   const editor = screen.getByRole('group', { name: 'Depends on' })
   fireEvent.click(within(editor).getByRole('checkbox', { name: /^PARADA/ }))
   await editRegistry((data) => {
@@ -4206,7 +4210,7 @@ describe('Night campaign access and blocking indicators', () => {
     fs.files.set(REGISTRY, JSON.stringify(exemplo))
     useTodosStore.setState({ tab: 'night' })
     render(<TodoSidebar />)
-    await expandSection()
+    await screen.findByText('OITO', { exact: true })
     fireEvent.click(screen.getByRole('button', { name: 'Open campaign OITO' }))
     expect(useUiStore.getState().openModal).toBe('newTerminal')
     await confirmSession('codex')
@@ -4216,7 +4220,10 @@ describe('Night campaign access and blocking indicators', () => {
     const data = structuredClone(exemplo)
     const dependent = data.campanhas.find((c) => c.id === 'NOTURNA')!
     dependent.depende_de = ['OITO']
-    dependent.tarefas.forEach(task => { task.estado = 'pronta'; task.depende_de = [] })
+    dependent.tarefas.forEach((task) => {
+      task.estado = 'pronta'
+      task.depende_de = []
+    })
     fs.files.set(REGISTRY, JSON.stringify(data))
     render(<Section />)
     await expandSection()
@@ -4227,4 +4234,64 @@ describe('Night campaign access and blocking indicators', () => {
     act(() => fs.onChange?.(REGISTRY))
     await waitFor(() => expect(row()).toHaveAttribute('data-blocked', 'false'))
   })
+})
+
+describe('visual feedback regressions', () => {
+  it('shows only night campaign cards and expands only their night tasks', async () => {
+    fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    useTodosStore.setState({ tab: 'night' })
+    render(<TodoSidebar />)
+    expect(await screen.findByText('OITO', { exact: true })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^Campaigns/ })).toBeNull()
+    expect(screen.queryByText('ABERTA', { exact: true })).toBeNull()
+    fireEvent.click(screen.getByText('OITO', { exact: true }).closest('button')!)
+    expect(screen.getByText('OITO-08', { exact: true })).toBeInTheDocument()
+    expect(screen.queryByText('OITO-02', { exact: true })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Open campaign OITO' }))
+    expect(useUiStore.getState().openModal).toBe('newTerminal')
+  })
+  it('hides progress in Personal even when personal tasks exist', () => {
+    useTodosStore.setState({
+      tab: 'personal',
+      todos: [{ id: 'personal', title: 'Personal item', completed: false, tags: [] }],
+    })
+    render(<TodoSidebar />)
+    expect(screen.queryByRole('progressbar')).toBeNull()
+  })
+  it('does not label registry-only progress as a live execution', async () => {
+    fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    render(<Section />)
+    await expandSection()
+    fireEvent.click(screen.getByText('OITO', { exact: true }).closest('button')!)
+    const row = screen.getByText('OITO-02', { exact: true }).closest('li')!
+    expect(row).toHaveTextContent('Not running')
+    expect(screen.queryByText('In progress, 4 ready')).toBeNull()
+    expect(task('OITO-02')?.estado).toBe('em execução')
+  })
+  it('confirms a saved dependency after the atomic write succeeds', async () => {
+    fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    render(<Section />)
+    await expandSection()
+    fireEvent.click(screen.getByText('OITO', { exact: true }).closest('button')!)
+    fireEvent.click(screen.getByRole('button', { name: /^Depends on/ }))
+    const editor = screen.getByRole('group', { name: 'Depends on' })
+    fireEvent.click(within(editor).getByRole('checkbox', { name: /^PARADA/ }))
+    fireEvent.click(within(editor).getByRole('button', { name: 'Save dependencies' }))
+    expect(await screen.findByRole('status')).toHaveTextContent('Dependencies saved')
+    expect(
+      JSON.parse(fs.files.get(REGISTRY)!).campanhas.find((c: { id: string }) => c.id === 'OITO')
+        .depende_de,
+    ).toContain('PARADA')
+  })
+})
+
+it('shows selected live night campaign progress and keeps it out of Personal', async () => {
+  fs.files.set(REGISTRY, JSON.stringify(exemplo))
+  const id = useProjectsStore.getState().projects[0].id
+  useTodosStore.setState({ tab: 'night', activeCampaigns: { [id]: 'OITO' } })
+  orchestrator.jobs = [{ id: 'night-job', task: 'OITO-08', status: 'running', cwd: 'C:\\repo' }]
+  render(<TodoSidebar />)
+  expect(await screen.findByRole('progressbar')).toHaveTextContent('1 / 8')
+  fireEvent.click(screen.getByRole('tab', { name: /^Personal/ }))
+  expect(screen.queryByRole('progressbar')).toBeNull()
 })

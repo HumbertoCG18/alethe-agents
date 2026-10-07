@@ -10,6 +10,10 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ## [Unreleased]
 
+- Night campaigns use compact expandable cards containing only night tasks. Campaign progress stays out of Personal and requires a running selected campaign in Overview or Night.
+- Campaign dependencies use compact app controls with saving, success and failure feedback. Registry tasks left in progress show no active execution when their campaign has no running terminal or worker.
+- The Markdown sidebar lists expandable campaign, report and other document groups from the open project's checkouts, with active campaign documents first. Missing files can be closed individually or recovered through the existing worktree path resolver.
+
 - AGY document generation remains unavailable until its CLI tool isolation can be verified.
 - Configurable Markdown summaries with Claude Code or Codex, model selection and Caveman, Medium or Detailed styles. Changing settings refreshes the visible summary; unchanged documents reuse results during the app session.
 - A dedicated Markdown reader window with full document rendering and selected-text questions to an agent, existing orchestration worker or open individual night session. Night evidence opens the same summary flow.

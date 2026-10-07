@@ -322,6 +322,7 @@ pub fn run() {
             economy_agents::set_economy_agents,
             economy_agents::economy_agents_enabled,
             filesystem::list_directory,
+            filesystem::list_project_markdown,
             filesystem::browse_directory,
             filesystem::home_directory,
             filesystem::read_text_file,

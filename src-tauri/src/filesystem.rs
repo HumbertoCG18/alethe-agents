@@ -31,6 +31,78 @@ const TODO_TEMPLATE: &str = r#"// Alethe Todo template
 }
 "#;
 
+/// Enumerates Markdown within one checkout without following links or dependency/build trees.
+fn project_markdown_paths(root: &Path) -> Result<Vec<String>, String> {
+    if !root.is_dir() {
+        return Err("directory not found".into());
+    }
+    let mut pending = vec![root.to_path_buf()];
+    let mut paths = Vec::new();
+    while let Some(directory) = pending.pop() {
+        for entry in
+            fs::read_dir(&directory).map_err(|error| format!("{}: {error}", directory.display()))?
+        {
+            let entry = entry.map_err(|error| error.to_string())?;
+            let kind = entry.file_type().map_err(|error| error.to_string())?;
+            if kind.is_symlink() {
+                continue;
+            }
+            #[cfg(windows)]
+            {
+                use std::os::windows::fs::MetadataExt;
+                if entry
+                    .metadata()
+                    .map_err(|error| error.to_string())?
+                    .file_attributes()
+                    & 0x400
+                    != 0
+                {
+                    continue;
+                }
+            }
+            let path = entry.path();
+            if kind.is_dir() {
+                let name = entry.file_name().to_string_lossy().to_lowercase();
+                if matches!(
+                    name.as_str(),
+                    ".git"
+                        | "node_modules"
+                        | "target"
+                        | "dist"
+                        | "build"
+                        | ".venv"
+                        | "venv"
+                        | "__pycache__"
+                        | ".next"
+                        | ".cache"
+                ) || path.join(".git").exists()
+                {
+                    continue;
+                }
+                pending.push(path);
+            } else if kind.is_file()
+                && path.extension().is_some_and(|ext| {
+                    matches!(
+                        ext.to_string_lossy().to_lowercase().as_str(),
+                        "md" | "markdown" | "mdx"
+                    )
+                })
+            {
+                paths.push(path.to_string_lossy().into_owned());
+            }
+        }
+    }
+    paths.sort();
+    Ok(paths)
+}
+
+#[tauri::command]
+pub async fn list_project_markdown(path: String) -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || project_markdown_paths(Path::new(path.trim())))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
 #[derive(Serialize)]
 pub struct DirectoryEntry {
     name: String,
@@ -583,6 +655,28 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("alethe-watch-{tag}-{suffix}"));
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn markdown_catalog_includes_nested_reports_but_skips_dependencies() {
+        let root = scratch("markdown-catalog");
+        for name in [
+            "docs/reports/deep/result.MD",
+            ".workflow/campaigns/run.md",
+            "node_modules/pkg/no.md",
+            "target/no.md",
+            "docs/readme.txt",
+        ] {
+            let file = root.join(name);
+            fs::create_dir_all(file.parent().unwrap()).unwrap();
+            fs::write(file, "test").unwrap();
+        }
+        let found = project_markdown_paths(&root).unwrap();
+        assert_eq!(found.len(), 2, "{found:?}");
+        assert!(found.iter().any(|p| p.ends_with("result.MD")));
+        assert!(found.iter().any(|p| p.ends_with("run.md")));
+        assert!(project_markdown_paths(&root.join("missing")).is_err());
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

@@ -2863,6 +2863,10 @@ export const ptBR: Record<MessageKey, string> = {
 
   /* ---- agent completion notifications ---- */
   'notif.agentDoneTitle': '{agent} terminou',
+  'notif.expand': 'Expandir notificação',
+  'notif.collapse': 'Recolher notificação',
+  'notif.copy': 'Copiar notificação',
+  'notif.copied': 'Copiado',
   'notif.respondedInPath': '{label} respondeu em {path}.',
   'notif.responded': '{label} respondeu.',
   'notif.responseReadyInPath': 'Resposta pronta em {path}.',

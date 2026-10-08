@@ -2830,6 +2830,10 @@ export const en = {
 
   /* ---- agent completion notifications ---- */
   'notif.agentDoneTitle': '{agent} finished',
+  'notif.expand': 'Expand notification',
+  'notif.collapse': 'Collapse notification',
+  'notif.copy': 'Copy notification',
+  'notif.copied': 'Copied',
   'notif.respondedInPath': '{label} responded in {path}.',
   'notif.responded': '{label} responded.',
   'notif.responseReadyInPath': 'Response ready in {path}.',

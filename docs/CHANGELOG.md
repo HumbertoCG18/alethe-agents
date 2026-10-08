@@ -347,6 +347,9 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ### Changed
 
+- **Notifications can be read in full and copied.** Click a notification to show its whole
+  message (it stays until you close it); the copy button next to the X copies the title and the
+  message.
 - **Fresher agent lines and tab titles, lighter Remote Control.** A campaign agent's line and
   pending question in the Todo panel, and the titles of Claude Code and Codex tabs, now follow the
   session as its transcript grows, instead of waiting for the agent to stop or for a timer. Each

@@ -2349,6 +2349,10 @@ export const zhCN: Record<MessageKey, string> = {
   'webPane.privateHint': '私人本地会话 · 当此面板关闭时，浏览数据将被丢弃。',
   /* ---- agent completion notifications ---- */
   'notif.agentDoneTitle': '{agent} 完成',
+  'notif.expand': '展开通知',
+  'notif.collapse': '收起通知',
+  'notif.copy': '复制通知',
+  'notif.copied': '已复制',
   'notif.respondedInPath': '{label} 在 {path} 做出了回应。',
   'notif.responded': '{label} 回应了。',
   'notif.responseReadyInPath': '响应已准备好，位于 {path}。',

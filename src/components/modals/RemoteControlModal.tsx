@@ -83,7 +83,9 @@ export function RemoteControlModal() {
             <button
               type="button"
               className={`${controls.btn} ${controls.btnDanger}`}
-              onClick={() => requestRemoteControlPreference(false, preferences, setPreferences, t)}
+              onClick={() =>
+                void requestRemoteControlPreference(false, preferences, setPreferences, t)
+              }
               disabled={busy}
             >
               <WifiOff size={14} />
@@ -93,7 +95,9 @@ export function RemoteControlModal() {
             <button
               type="button"
               className={`${controls.btn} ${controls.btnPrimary}`}
-              onClick={() => requestRemoteControlPreference(true, preferences, setPreferences, t)}
+              onClick={() =>
+                void requestRemoteControlPreference(true, preferences, setPreferences, t)
+              }
               disabled={busy}
             >
               <Wifi size={14} />

@@ -508,6 +508,8 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ### Fixed
 
+- **Open PRs lists only the active project's repository.** It showed every PR of the account when
+  the project had no terminal; a project without a repository folder now says so.
 - **The Files tab browses the project's folder without a terminal, and its "…" menu works.** The
   menu refreshes the tree, collapses all folders, and reveals the folder in the file manager.
 - **Chats resume after a restart.** A new Antigravity chat was never found, so it was never

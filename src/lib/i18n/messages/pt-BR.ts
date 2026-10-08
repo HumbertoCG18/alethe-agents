@@ -1480,10 +1480,11 @@ export const ptBR: Record<MessageKey, string> = {
   'prs.refresh': 'Atualizar',
   'prs.loading': 'Carregando pull requests…',
   'prs.emptyTitle': 'Nenhum PR aberto',
-  'prs.emptyDescription': 'Pull requests em que você é autor ou revisor vão aparecer aqui.',
+  'prs.noRepoTitle': 'Sem pasta de repositório',
+  'prs.noRepoDescription':
+    'Defina uma pasta para este projeto para ver os pull requests abertos dele.',
   'prs.emptyDescriptionProject': 'Este repositório não tem pull requests abertos.',
   'prs.scopeProject': 'em {project}',
-  'prs.scopeAll': 'em tudo',
   'prs.draftBadge': 'Rascunho',
   'prs.updatedLabel': 'Atualizado em {date}',
   'prs.openInBrowser': 'Abrir no GitHub',

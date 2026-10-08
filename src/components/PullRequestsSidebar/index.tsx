@@ -1,8 +1,8 @@
 import { ExternalLink, GitPullRequest, LoaderCircle, RefreshCw } from 'lucide-react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { useT } from '../../lib/i18n'
-import { githubPrListForProject, type MyPullRequestSummary, openInBrowser } from '../../lib/tauri'
+import { githubPrListMine, type MyPullRequestSummary, openInBrowser } from '../../lib/tauri'
 import { getProjectRepoRoot } from '../../lib/terminalFactory'
 import { useTodosStore } from '../../plugins/todos/store'
 import { useProjectsStore } from '../../stores/projectsStore'
@@ -15,24 +15,31 @@ export function PullRequestsSidebar() {
   const activeProject = useProjectsStore((state) =>
     state.projects.find((project) => project.id === state.activeProjectId),
   )
-  const repo = getProjectRepoRoot(activeProject)
+  // The project's own folder first: it may have no terminal, and PRs must never come from elsewhere.
+  const repo =
+    activeProject?.checkoutPath || activeProject?.defaultCwd || getProjectRepoRoot(activeProject)
   const [prs, setPrs] = useState<MyPullRequestSummary[]>([])
-  // False when the project's folder could not be listed and the account-wide list was used.
-  const [scoped, setScoped] = useState(Boolean(repo))
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(Boolean(repo))
   const [error, setError] = useState<string | null>(null)
+  // Only the latest request fills the panel: a project switch outdates the one still running.
+  const latest = useRef(0)
 
   const load = useCallback(async () => {
-    setLoading(true)
+    const request = ++latest.current
     setError(null)
-    try {
-      const result = await githubPrListForProject(repo)
-      setPrs(result.prs)
-      setScoped(result.scoped)
-    } catch (err) {
-      setError(String(err))
-    } finally {
+    if (!repo) {
+      setPrs([])
       setLoading(false)
+      return
+    }
+    setLoading(true)
+    try {
+      const result = await githubPrListMine(repo)
+      if (request === latest.current) setPrs(result)
+    } catch (err) {
+      if (request === latest.current) setError(String(err))
+    } finally {
+      if (request === latest.current) setLoading(false)
     }
   }, [repo])
 
@@ -49,10 +56,8 @@ export function PullRequestsSidebar() {
         <div className={styles.heading}>
           <GitPullRequest size={16} />
           <span>{t('prs.title')}</span>
-          <span className={styles.scope} title={scoped ? repo || undefined : undefined}>
-            {scoped
-              ? t('prs.scopeProject', { project: activeProject?.name ?? '' })
-              : t('prs.scopeAll')}
+          <span className={styles.scope} title={repo || undefined}>
+            {t('prs.scopeProject', { project: activeProject?.name ?? '' })}
           </span>
         </div>
         <button
@@ -80,8 +85,8 @@ export function PullRequestsSidebar() {
             <div className={styles.emptyIcon}>
               <GitPullRequest size={20} />
             </div>
-            <strong>{t('prs.emptyTitle')}</strong>
-            <span>{scoped ? t('prs.emptyDescriptionProject') : t('prs.emptyDescription')}</span>
+            <strong>{t(repo ? 'prs.emptyTitle' : 'prs.noRepoTitle')}</strong>
+            <span>{t(repo ? 'prs.emptyDescriptionProject' : 'prs.noRepoDescription')}</span>
           </div>
         ) : (
           <div className={styles.list}>

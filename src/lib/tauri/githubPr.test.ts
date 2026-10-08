@@ -6,7 +6,7 @@ vi.mock('@tauri-apps/api/core', () => ({
   invoke: (...args: unknown[]) => invoke(...args),
 }))
 
-import { githubPrListForProject, type MyPullRequestSummary } from './githubPr'
+import { githubPrListMine, type MyPullRequestSummary } from './githubPr'
 
 const pr = (number: number): MyPullRequestSummary => ({
   number,
@@ -18,52 +18,30 @@ const pr = (number: number): MyPullRequestSummary => ({
   updatedAt: '2026-09-29T00:00:00Z',
 })
 
-describe('githubPrListForProject', () => {
+describe('githubPrListMine', () => {
   beforeEach(() => {
     invoke.mockReset()
   })
 
-  it('returns the project list, marked as scoped, when the folder can be listed', async () => {
+  it('lists the PRs of the given repository folder', async () => {
     invoke.mockResolvedValueOnce([pr(1)])
 
-    const result = await githubPrListForProject('C:\\repos\\app')
+    await expect(githubPrListMine('C:/repos/app')).resolves.toEqual([pr(1)])
+    expect(invoke).toHaveBeenCalledWith('github_pr_list_mine', { repo: 'C:/repos/app' })
+  })
 
-    expect(result).toEqual({ prs: [pr(1)], scoped: true })
+  it.each(['', '   '])(
+    'never turns an empty path (%j) into an account-wide search',
+    async (repo) => {
+      await expect(githubPrListMine(repo)).resolves.toEqual([])
+      expect(invoke).not.toHaveBeenCalled()
+    },
+  )
+
+  it('propagates the error instead of falling back to other repositories', async () => {
+    invoke.mockRejectedValueOnce('github_command_failed:not a git repository')
+
+    await expect(githubPrListMine('C:/')).rejects.toBe('github_command_failed:not a git repository')
     expect(invoke).toHaveBeenCalledTimes(1)
-    expect(invoke).toHaveBeenCalledWith('github_pr_list_mine', { repo: 'C:\\repos\\app' })
-  })
-
-  it('falls back to the account-wide list when the folder is not a git checkout', async () => {
-    invoke
-      .mockRejectedValueOnce(
-        'github_command_failed:failed to run git: fatal: not a git repository (or any of the parent directories): .git',
-      )
-      .mockResolvedValueOnce([pr(2), pr(3)])
-
-    const result = await githubPrListForProject('C:\\')
-
-    expect(result).toEqual({ prs: [pr(2), pr(3)], scoped: false })
-    expect(invoke).toHaveBeenNthCalledWith(1, 'github_pr_list_mine', { repo: 'C:\\' })
-    expect(invoke).toHaveBeenNthCalledWith(2, 'github_pr_list_mine', { repo: null })
-  })
-
-  it('goes straight to the account-wide list when there is no project folder', async () => {
-    invoke.mockResolvedValueOnce([pr(4)])
-
-    const result = await githubPrListForProject(undefined)
-
-    expect(result).toEqual({ prs: [pr(4)], scoped: false })
-    expect(invoke).toHaveBeenCalledTimes(1)
-    expect(invoke).toHaveBeenCalledWith('github_pr_list_mine', { repo: null })
-  })
-
-  it('surfaces the account-wide error when both lists fail', async () => {
-    invoke
-      .mockRejectedValueOnce('github_command_failed:not a git repository')
-      .mockRejectedValueOnce('github_command_failed:gh auth login required')
-
-    await expect(githubPrListForProject('C:\\')).rejects.toBe(
-      'github_command_failed:gh auth login required',
-    )
   })
 })

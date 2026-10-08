@@ -43,7 +43,8 @@ export const ptBR: Record<MessageKey, string> = {
     'Não foi possível listar fontes instaladas. A fonte incluída continua disponível.',
   'prefs.fontMissing': 'Fonte salva indisponível. A fonte padrão será utilizada.',
   'prefs.shellPickOther': 'Outro executável…',
-  'prefs.shellCustom': 'Executável personalizado. Se ele for removido, novas sessões usam o padrão do sistema.',
+  'prefs.shellCustom':
+    'Executável personalizado. Se ele for removido, novas sessões usam o padrão do sistema.',
   'prefs.terminalFontDefault': 'Padrão ({name})',
   'markdown.settings': 'Markdown',
   'markdown.settingsDesc':
@@ -63,7 +64,8 @@ export const ptBR: Record<MessageKey, string> = {
   'markdown.summaries': 'Resumos com IA',
   'markdown.agentDesc': 'Agente que lê o documento e escreve o resumo.',
   'markdown.modelDesc': 'Use o padrão do agente ou escolha um modelo do catálogo instalado.',
-  'markdown.styleDesc': 'Caveman: tópicos curtíssimos. Médio: até 250 palavras. Detalhado: até 700 palavras.',
+  'markdown.styleDesc':
+    'Caveman: tópicos curtíssimos. Médio: até 250 palavras. Detalhado: até 700 palavras.',
   'markdown.maxAge': 'Documentos antigos',
   'markdown.maxAgeDesc':
     'Oculta da barra lateral documentos com data no caminho mais antiga que este limite. Documentos sem data e de campanhas abertas sempre aparecem.',

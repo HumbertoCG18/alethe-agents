@@ -19,7 +19,9 @@ import { MarkdownPage } from './MarkdownPage'
 
 /** Sections collapse through a header button named like their picker; this is the picker. */
 const picker = (name: string) =>
-  screen.getAllByRole('button', { name }).find((el) => el.getAttribute('aria-haspopup') === 'listbox')!
+  screen
+    .getAllByRole('button', { name })
+    .find((el) => el.getAttribute('aria-haspopup') === 'listbox')!
 
 beforeEach(() => {
   mocks.discover.mockReset().mockResolvedValue([{ id: 'current-model', label: 'Current model' }])
@@ -39,7 +41,13 @@ it('uses themed selectors and saves a discovered model without blur', async () =
 it('gives each setting its own section and saves the document age window', async () => {
   render(<MarkdownPage />)
   const headings = screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)
-  expect(headings).toEqual(['AI summaries', 'Summary agent', 'Model', 'Summary style', 'Older documents'])
+  expect(headings).toEqual([
+    'AI summaries',
+    'Summary agent',
+    'Model',
+    'Summary style',
+    'Older documents',
+  ])
   expect(screen.getByRole('checkbox', { name: 'Generate AI summaries' })).toBeChecked()
   fireEvent.click(picker('Older documents'))
   fireEvent.click(await screen.findByRole('option', { name: 'Older than 14 days' }))

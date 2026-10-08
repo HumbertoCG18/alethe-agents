@@ -14,7 +14,9 @@ import { MarkdownSummary } from './MarkdownSummary'
 
 /** Sections collapse through a header button named like their picker; this is the picker. */
 const picker = (name: string) =>
-  screen.getAllByRole('button', { name }).find((el) => el.getAttribute('aria-haspopup') === 'listbox')!
+  screen
+    .getAllByRole('button', { name })
+    .find((el) => el.getAttribute('aria-haspopup') === 'listbox')!
 
 vi.mock('../../lib/tauri/markdown', () => ({
   generateMarkdown: vi.fn(),

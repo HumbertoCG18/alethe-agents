@@ -251,7 +251,10 @@ export function TerminalPage({ enabledCount }: { enabledCount: number }) {
         />
         {loading ? <p role="status">{t('prefs.terminalDiscoveryLoading')}</p> : null}
         {fontError ? <p role="alert">{t('prefs.fontDiscoveryError')}</p> : null}
-        {!loading && fontChoice && fontChoice !== BUNDLED_TERMINAL_FONT && !fonts.includes(fontChoice) ? (
+        {!loading &&
+        fontChoice &&
+        fontChoice !== BUNDLED_TERMINAL_FONT &&
+        !fonts.includes(fontChoice) ? (
           <p role="alert">{t('prefs.fontMissing')}</p>
         ) : null}
       </SettingsSection>

@@ -42,7 +42,10 @@ import {
   MAX_RECENT_PROJECT_TABS,
 } from './projectsStore.constants'
 
-type LegacyPreferences = Partial<Preferences> & { showGitControl?: boolean; defaultShell?: string | null }
+type LegacyPreferences = Partial<Preferences> & {
+  showGitControl?: boolean
+  defaultShell?: string | null
+}
 
 function normalizeStoredAccent(value: unknown, fallback?: string): string | undefined {
   if (typeof value !== 'string') return fallback
@@ -260,7 +263,8 @@ export function normalizePreferences(raw: LegacyPreferences | undefined): Prefer
     ),
     pomodoroSession: normalizePomodoroSession(raw?.pomodoroSession),
     // A shell chosen in an earlier fork build was saved as `defaultShell`; it carries over.
-    shellPath: normalizeNonEmptyString(raw?.shellPath) ?? normalizeNonEmptyString(raw?.defaultShell),
+    shellPath:
+      normalizeNonEmptyString(raw?.shellPath) ?? normalizeNonEmptyString(raw?.defaultShell),
     terminalFontFamily:
       normalizeNonEmptyString(raw?.terminalFontFamily) ?? DEFAULT_TERMINAL_FONT_FAMILY,
   }

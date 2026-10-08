@@ -5,12 +5,12 @@ import { primaryFontFamily, terminalFontStack } from './terminalPreferences'
 import { DEFAULT_TERMINAL_FONT_FAMILY } from './types'
 
 it('carries a shell saved by an earlier fork build over to shellPath', () => {
-  expect(normalizePreferences({ defaultShell: 'C:\Program Files\Git\bin\bash.exe' } as never).shellPath).toBe(
-    'C:\Program Files\Git\bin\bash.exe',
-  )
-  expect(normalizePreferences({ shellPath: '/bin/zsh', defaultShell: '/bin/bash' } as never).shellPath).toBe(
-    '/bin/zsh',
-  )
+  expect(
+    normalizePreferences({ defaultShell: 'C:\Program Files\Git\bin\bash.exe' } as never).shellPath,
+  ).toBe('C:\Program Files\Git\bin\bash.exe')
+  expect(
+    normalizePreferences({ shellPath: '/bin/zsh', defaultShell: '/bin/bash' } as never).shellPath,
+  ).toBe('/bin/zsh')
   // The fork saved "no choice" as null; it reads as the default stack.
   expect(normalizePreferences({ terminalFontFamily: null } as never).terminalFontFamily).toBe(
     DEFAULT_TERMINAL_FONT_FAMILY,

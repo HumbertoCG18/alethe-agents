@@ -31,7 +31,9 @@ import { TerminalPage } from './TerminalPage'
 
 /** Sections collapse through a header button named like their picker; this is the picker. */
 const picker = (name: string) =>
-  screen.getAllByRole('button', { name }).find((el) => el.getAttribute('aria-haspopup') === 'listbox')!
+  screen
+    .getAllByRole('button', { name })
+    .find((el) => el.getAttribute('aria-haspopup') === 'listbox')!
 
 beforeEach(() => {
   mocks.state.preferences = { ...DEFAULT_PREFERENCES }
@@ -57,8 +59,9 @@ it('offers actual local shells and fonts and saves the choices', async () => {
   expect(
     await screen.findByRole('option', { name: 'Platform default (PowerShell 7)' }),
   ).toBeInTheDocument()
-  expect(screen.getByRole('option', { name: /^PowerShell 7 \(Microsoft Store\).*WindowsApps/ }))
-    .toBeInTheDocument()
+  expect(
+    screen.getByRole('option', { name: /^PowerShell 7 \(Microsoft Store\).*WindowsApps/ }),
+  ).toBeInTheDocument()
   expect(screen.getByRole('option', { name: /^Windows PowerShell.*v1\.0/ })).toBeInTheDocument()
   expect(screen.getByRole('option', { name: /^Git Bash.*Git\/bin/ })).toBeInTheDocument()
   fireEvent.click(screen.getByRole('option', { name: /^bash.*\/bin\/bash/ }))

@@ -37,7 +37,8 @@ export const en = {
   'prefs.fontDiscoveryError': 'Could not list installed fonts. The bundled font remains available.',
   'prefs.fontMissing': 'Saved font is unavailable. The default font is used instead.',
   'prefs.shellPickOther': 'Other executable…',
-  'prefs.shellCustom': 'Custom executable. If it is removed, new sessions use the platform default.',
+  'prefs.shellCustom':
+    'Custom executable. If it is removed, new sessions use the platform default.',
   'prefs.terminalFontDefault': 'Default ({name})',
   'markdown.settings': 'Markdown',
   'markdown.settingsDesc':
@@ -56,7 +57,8 @@ export const en = {
   'markdown.summaries': 'AI summaries',
   'markdown.agentDesc': 'The agent that reads the document and writes its summary.',
   'markdown.modelDesc': 'Use the agent default or pick a model from the installed catalog.',
-  'markdown.styleDesc': 'Caveman: terse bullets. Medium: up to 250 words. Detailed: up to 700 words.',
+  'markdown.styleDesc':
+    'Caveman: terse bullets. Medium: up to 250 words. Detailed: up to 700 words.',
   'markdown.maxAge': 'Older documents',
   'markdown.maxAgeDesc':
     'Hides sidebar documents whose path date is older than this. Undated documents and those of open campaigns always appear.',

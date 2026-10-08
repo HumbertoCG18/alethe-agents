@@ -42,7 +42,9 @@ export function GhosttySurface({
   const rafRef = useRef<number | null>(null)
   const spawnedRef = useRef(false)
   // Ghostty takes one family; the saved stack starts with the one the person picked.
-  const fontFamily = useProjectsStore((state) => primaryFontFamily(state.preferences.terminalFontFamily))
+  const fontFamily = useProjectsStore((state) =>
+    primaryFontFamily(state.preferences.terminalFontFamily),
+  )
   const fontRef = useRef(fontFamily)
   fontRef.current = fontFamily
   useEffect(() => {

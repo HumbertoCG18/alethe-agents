@@ -514,6 +514,8 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 - **The Todo panel shows its title once.** The settings gear moved to the Overview, Night and
   Personal row.
+- **Markdown tabs close cleanly.** A single Markdown tab can be closed, closing the last one keeps
+  the Markdown tab on its list, and a file that fails to load shows the list under the error.
 - **Chats resume after a restart.** A new Antigravity chat was never found, so it was never
   saved and came back empty after Alethe restarted: `agy` lists it in `last_conversations.json`
   well before `conversation_metadata.json`, if ever. Claude Code chats in a folder whose name has

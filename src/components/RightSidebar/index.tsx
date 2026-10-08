@@ -676,7 +676,7 @@ function MarkdownSidebarViewer() {
         </div>
       </header>
       {showingList ? list : null}
-      {!showingList && readmeTabs.length > 1 ? (
+      {!showingList && (readmeTabs.length > 1 || readmeTabs.some((tab) => tab.closable)) ? (
         <div
           className={styles.readmeTabs}
           role="tablist"
@@ -731,11 +731,14 @@ function MarkdownSidebarViewer() {
               }}
             >
               {error ? (
-                <div className={styles.empty}>
-                  <FileText size={20} />
-                  <strong>{t('rightSidebar.markdownError')}</strong>
-                  <span>{error}</span>
-                </div>
+                <>
+                  <div className={styles.empty}>
+                    <FileText size={20} />
+                    <strong>{t('rightSidebar.markdownError')}</strong>
+                    <span>{error}</span>
+                  </div>
+                  {listed ? list : null}
+                </>
               ) : content === null ? (
                 <div className={styles.empty}>
                   <span>{t('ui.markdown.loading')}</span>

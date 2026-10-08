@@ -505,6 +505,10 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ### Fixed
 
+- **Chats resume after a restart.** A new Antigravity chat was never found, so it was never
+  saved and came back empty after Alethe restarted: `agy` lists it in `last_conversations.json`
+  well before `conversation_metadata.json`, if ever. Claude Code chats in a folder whose name has
+  spaces, accents, or other non-ASCII-alphanumeric characters are found again too (upstream #302).
 - **A project without terminals stays selected when you open it.** Clicking it in the sidebar,
   its tab, or Back/Forward left no active project, so the Todo panel and the Markdown tab stayed
   blank; files saved in that state get the project back on load. With no project, the Todo

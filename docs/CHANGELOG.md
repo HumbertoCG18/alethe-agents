@@ -519,6 +519,12 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 - **Scrollbars follow the theme again.** The Markdown tab strip, the Git graph and the folder and
   plugin pickers showed the native scrollbar because a standard scrollbar property was turning the
   theme off.
+- **Removing a custom agent and turning on Remote Control ask first again.** In the app the old
+  check never waited for an answer, so the agent was removed at once and Remote Control turned on
+  without its consent prompt. Both now use the native confirmation dialog.
+- **A file link printed with another spelling of its folder opens.** A path through a Windows
+  short name (`RUNNER~1`) or macOS `/var` instead of `/private/var` is now matched to the checkout
+  that holds the file, and file watchers there report changes again.
 - **Chats resume after a restart.** A new Antigravity chat was never found, so it was never
   saved and came back empty after Alethe restarted: `agy` lists it in `last_conversations.json`
   well before `conversation_metadata.json`, if ever. Claude Code chats in a folder whose name has

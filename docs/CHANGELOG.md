@@ -508,6 +508,8 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ### Fixed
 
+- **The Files tab browses the project's folder without a terminal, and its "…" menu works.** The
+  menu refreshes the tree, collapses all folders, and reveals the folder in the file manager.
 - **Chats resume after a restart.** A new Antigravity chat was never found, so it was never
   saved and came back empty after Alethe restarted: `agy` lists it in `last_conversations.json`
   well before `conversation_metadata.json`, if ever. Claude Code chats in a folder whose name has

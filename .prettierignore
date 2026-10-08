@@ -11,3 +11,5 @@ package-lock.json
 assets
 # Byte-for-byte copies of agent-workflow-lab's campaign fixtures.
 src/lib/__fixtures__
+# Campaign registry and workflow state, written by agent-workflow-lab's own tools.
+.workflow

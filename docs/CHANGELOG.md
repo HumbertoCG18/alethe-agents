@@ -516,6 +516,9 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
   Personal row.
 - **Markdown tabs close cleanly.** A single Markdown tab can be closed, closing the last one keeps
   the Markdown tab on its list, and a file that fails to load shows the list under the error.
+- **Scrollbars follow the theme again.** The Markdown tab strip, the Git graph and the folder and
+  plugin pickers showed the native scrollbar because a standard scrollbar property was turning the
+  theme off.
 - **Chats resume after a restart.** A new Antigravity chat was never found, so it was never
   saved and came back empty after Alethe restarted: `agy` lists it in `last_conversations.json`
   well before `conversation_metadata.json`, if ever. Claude Code chats in a folder whose name has

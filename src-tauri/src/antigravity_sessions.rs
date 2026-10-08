@@ -118,7 +118,17 @@ fn snapshot_antigravity_sessions_inner(
             scope.is_guest(),
         )
     };
+    snapshots_in(&meta_path, &target_cwd, sep, guest)
+}
 
+/// The conversations recorded next to `meta_path` for `target_cwd` (every one when it is empty),
+/// newest first.
+fn snapshots_in(
+    meta_path: &std::path::Path,
+    target_cwd: &str,
+    sep: char,
+    guest: bool,
+) -> Result<Vec<AntigravitySessionSnapshot>, String> {
     let mut snapshots = Vec::new();
 
     // `agy` records the newest conversation per workspace in `last_conversations.json`
@@ -135,7 +145,7 @@ fn snapshot_antigravity_sessions_inner(
             for (workspace, id) in map {
                 let Some(id) = id.as_str() else { continue };
                 let norm = normalize_uri_path(&workspace, guest);
-                if target_cwd.is_empty() || cwd_matches(&norm, &target_cwd, sep) {
+                if target_cwd.is_empty() || cwd_matches(&norm, target_cwd, sep) {
                     snapshots.push(AntigravitySessionSnapshot {
                         id: id.to_string(),
                         preview: String::new(),
@@ -150,10 +160,10 @@ fn snapshot_antigravity_sessions_inner(
         return Ok(snapshots);
     }
 
-    let metadata = fs::metadata(&meta_path).ok();
+    let metadata = fs::metadata(meta_path).ok();
     let default_ms = metadata.as_ref().map(file_modified_ms).unwrap_or(0);
 
-    let contents = fs::read_to_string(&meta_path).map_err(|e| e.to_string())?;
+    let contents = fs::read_to_string(meta_path).map_err(|e| e.to_string())?;
     let json: serde_json::Value = serde_json::from_str(&contents).map_err(|e| e.to_string())?;
 
     let conversations = json.get("conversations").and_then(|v| v.as_object());
@@ -175,7 +185,7 @@ fn snapshot_antigravity_sessions_inner(
                 for uri in uri_list {
                     if let Some(u_str) = uri.as_str() {
                         let norm = normalize_uri_path(u_str, guest);
-                        if cwd_matches(&norm, &target_cwd, sep) {
+                        if cwd_matches(&norm, target_cwd, sep) {
                             matches_cwd = true;
                             break;
                         }
@@ -223,5 +233,64 @@ mod cwd_match_tests {
             normalize_uri_path("file:///c%3A/projects/Acme", false),
             normalize_cwd("c:/projects/Acme")
         );
+    }
+}
+
+#[cfg(test)]
+mod last_conversation_tests {
+    use super::*;
+
+    fn write(dir: &std::path::Path, name: &str, body: serde_json::Value) {
+        fs::write(dir.join(name), body.to_string()).unwrap();
+    }
+
+    // `agy` lists a new chat in last_conversations.json before conversation_metadata.json, if ever:
+    // measured on a real install, none of its 10 latest conversations were in the metadata.
+    #[test]
+    fn a_chat_listed_only_as_the_last_conversation_is_found_once() {
+        let dir = std::env::temp_dir().join(format!("alethe-agy-last-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let app = if cfg!(windows) {
+            r"C:\projects\App"
+        } else {
+            "/projects/App"
+        };
+        let other = if cfg!(windows) {
+            r"C:\projects\Other"
+        } else {
+            "/projects/Other"
+        };
+        write(
+            &dir,
+            "last_conversations.json",
+            serde_json::json!({ app: "new-chat", other: "other-chat" }),
+        );
+        write(
+            &dir,
+            "conversation_metadata.json",
+            serde_json::json!({ "conversations": {} }),
+        );
+        let meta = dir.join("conversation_metadata.json");
+        let sep = if cfg!(windows) { '\\' } else { '/' };
+        let target = normalize_uri_path(app, false);
+
+        let found = snapshots_in(&meta, &target, sep, false).unwrap();
+        assert_eq!(
+            found.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(),
+            ["new-chat"]
+        );
+
+        // Once the metadata lists it too, it appears once, with its preview.
+        write(
+            &dir,
+            "conversation_metadata.json",
+            serde_json::json!({ "conversations": {
+                "new-chat": { "summary": { "Preview": "hello", "WorkspaceURIs": [app] } }
+            }}),
+        );
+        let found = snapshots_in(&meta, &target, sep, false).unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].preview, "hello");
+        let _ = fs::remove_dir_all(&dir);
     }
 }

@@ -2,12 +2,12 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
   pull_request:
-    branches: [main]
+    branches: [main, dev]
   workflow_call:
 
-# Cancela runs antigos do mesmo branch/PR quando um novo chega.
+# Cancel older runs for the same branch or pull request.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -35,11 +35,11 @@ jobs:
       - name: Check formatting
         run: npm run format:check
 
-      # vitest run — suíte única, todo teste vive colocado como src/**/*.test.ts.
+      # Run the colocated frontend test suite.
       - name: Run unit tests
         run: npm test
 
-      # `npm run build` = tsc (typecheck) + vite build. Falha se houver erro de tipo.
+      # Build includes TypeScript and translation key checks.
       - name: Typecheck and build
         run: npm run build
 
@@ -81,9 +81,7 @@ jobs:
         working-directory: src-tauri
         run: cargo check
 
-      # Não-bloqueante por enquanto: já há ~37 warnings pré-existentes no
-      # código atual (nenhum deles deste PR). Endurecer pra `-D warnings`
-      # depois de uma limpeza dedicada, não junto de outra tarefa.
+      # Existing warnings keep clippy informational until a dedicated cleanup.
       - name: cargo clippy
         working-directory: src-tauri
         run: cargo clippy --all-targets

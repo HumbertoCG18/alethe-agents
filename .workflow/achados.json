@@ -120,6 +120,15 @@
       "origem": "TODO-31",
       "detalhe": "handoff.rs: os parsers acumulam todo o histórico e o corte (limit) vem depois (~534). Afeta o Controle Remoto e o session_transcript_tail do #87; leitura só na parada do agente. Ler do fim do arquivo se transcripts grandes pesarem (não medido).",
       "estado": "novo"
+    },
+    {
+      "id": "ACH-0014",
+      "data": "2026-10-05",
+      "tipo": "bug",
+      "titulo": "Saída do app: TerminateProcess negado (erro 5) num processo filho",
+      "origem": "CHAT-03",
+      "detalhe": "05/10 18:40: app.quit com 2 sessões, teardown 2869 ms (antes ~700 ms); sessão DwXx… 'error=1 of 13 processes not ended: 88856: terminate error 5'. O pid 88856 já não existia ao conferir. Investigar se é processo saindo (corrida) ou protegido; medir se o atraso se repete.",
+      "estado": "novo"
     }
   ]
 }

@@ -10,7 +10,7 @@
       "janela": "assistida",
       "depende_de": [],
       "worktrees": [],
-      "atualizado_em": "2026-10-06",
+      "atualizado_em": "2026-10-08",
       "tarefas": [
         {
           "id": "TODO-01",
@@ -361,6 +361,78 @@
           "depende_de": [],
           "origem": "USER",
           "resultado": "aguarda o Gate 2 do usuário; PR #98 mergeado (8089f29)"
+        },
+        {
+          "id": "TODO-36",
+          "titulo": "Campaign session dialog, last-active selection and blocking prerequisites (#99)",
+          "nivel": "T2",
+          "estado": "concluída",
+          "depende_de": [],
+          "origem": "USER",
+          "passos": [
+            {
+              "texto": "Restore last selection and badge without launching",
+              "feito": true
+            },
+            {
+              "texto": "New session modal preserves campaign context and cancellation",
+              "feito": true
+            },
+            {
+              "texto": "Selected running campaign progress only",
+              "feito": true
+            },
+            {
+              "texto": "Campaign dependencies validate and block until completed",
+              "feito": true
+            },
+            {
+              "texto": "Focused checks, translations and changelog verified",
+              "feito": true
+            }
+          ],
+          "resultado": "Follow-up merged into dev at 3d96f06; 1201 tests and desktop build passed. Updated in place; installed binary verified. Owner visual validation pending.",
+          "evidencia": "https://github.com/HumbertoCG18/alethe-agents/pull/101"
+        },
+        {
+          "id": "TODO-37",
+          "titulo": "Development Markdown catalog: bounded discovery, persistent index and integrated reader UI (#103)",
+          "nivel": "T2",
+          "estado": "bloqueada",
+          "depende_de": [],
+          "origem": "USER",
+          "resultado": "Implementation and owner-authorized Astra review complete; two P2 findings corrected. Awaiting owner Gate 2/native visual acceptance; no new commit or install.",
+          "passos": [
+            {
+              "texto": "Restrict automatic discovery to development documents; exclude generated tutor content",
+              "feito": true
+            },
+            {
+              "texto": "Persist the index, group checkout copies, filter completed campaign documents and bound mounted rows",
+              "feito": true
+            },
+            {
+              "texto": "Recover obsolete paths conservatively and integrate reader/summary UI",
+              "feito": true
+            },
+            {
+              "texto": "Pass regression, native, build/i18n checks and finish owner-authorized Astra review",
+              "feito": true
+            },
+            {
+              "texto": "Owner Gate 2 and native visual acceptance",
+              "feito": false
+            }
+          ],
+          "evidencia": "C:/Users/Humberto/Documents/GitHub/alethe-agents-preview-102-103/.workflow/local/markdown-catalog-regression/result.md"
+        },
+        {
+          "id": "TODO-38",
+          "titulo": "Sync upstream main into dev (merge c47ff33, 32 conflicts)",
+          "nivel": "T2",
+          "estado": "pronta",
+          "depende_de": [],
+          "origem": "USER"
         }
       ]
     },
@@ -589,7 +661,7 @@
       "janela": "assistida",
       "depende_de": [],
       "worktrees": [],
-      "atualizado_em": "2026-10-05",
+      "atualizado_em": "2026-10-07",
       "tarefas": [
         {
           "id": "UI-01",
@@ -682,6 +754,28 @@
           ],
           "origem": "USER",
           "resultado": "aguarda o Gate 2 do usuário; PR #96 mergeado (c12bdb0)"
+        },
+        {
+          "id": "UI-10",
+          "titulo": "Run CI for dev and record delivery evidence (#106)",
+          "nivel": "T1",
+          "estado": "em execução",
+          "depende_de": [],
+          "origem": "USER",
+          "passos": [
+            {
+              "texto": "Cover dev with existing CI",
+              "feito": false
+            },
+            {
+              "texto": "Record build and native acceptance evidence",
+              "feito": false
+            },
+            {
+              "texto": "Validate diff and prepare Gate 2",
+              "feito": false
+            }
+          ]
         }
       ]
     },

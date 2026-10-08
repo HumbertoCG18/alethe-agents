@@ -293,7 +293,10 @@ export function useMarkdownCatalog() {
     let hidden = 0
     for (const doc of docs.values()) {
       const openCampaign = doc.campaigns.some((id) => !concluded.has(id))
-      const old = cutoff !== null && !openCampaign && pathDate(doc.relative) < cutoff
+      const old =
+        cutoff !== null &&
+        !openCampaign &&
+        (inArchive(doc.relative) || pathDate(doc.relative) < cutoff)
       if (!showCompleted && (old || (doc.campaigns.length > 0 && !openCampaign))) {
         hidden++
         continue
@@ -321,10 +324,18 @@ export function useMarkdownCatalog() {
   return { ...current, sections, hidden, loading, reload, showCompleted, setShowCompleted }
 }
 
-/** Newest YYYY-MM-DD in a document path, as a timestamp; undated paths never count as old. */
+/** Newest YYYY-MM-DD (also `_` or `.` separated) in a document path, as a timestamp; undated paths never count as old. */
 function pathDate(relative: string): number {
-  const dates = [...relative.matchAll(/(?<!\d)(20\d\d-[01]\d-[0-3]\d)(?!\d)/g)]
-    .map((m) => Date.parse(m[1]))
+  const dates = [...relative.matchAll(/(?<!\d)(20\d\d)([-_.])([01]\d)\2([0-3]\d)(?!\d)/g)]
+    .map((m) => Date.parse(`${m[1]}-${m[3]}-${m[4]}`))
     .filter((time) => !Number.isNaN(time))
   return dates.length ? Math.max(...dates) : Infinity
+}
+
+/** True when a directory (not the file name) of the path is an archive folder. */
+function inArchive(relative: string): boolean {
+  return normalizeCwd(relative)
+    .split('/')
+    .slice(0, -1)
+    .some((segment) => ['_archive', 'archive', 'feitos'].includes(segment.toLowerCase()))
 }

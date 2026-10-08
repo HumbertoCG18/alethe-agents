@@ -157,6 +157,42 @@ it('hides documents dated beyond the age window unless an open campaign uses the
   )
   expect(screen.getByText('old.md')).toBeInTheDocument()
 })
+it('also ages out underscore-dated files and archive folders, except for open campaigns', async () => {
+  const data = structuredClone(example)
+  data.campanhas.find((c) => c.id === 'OITO')!.handoff = 'docs/reports/_archive/handoff.md'
+  state.registry = { ...parseCampaigns(JSON.stringify(data)), main: 'C:/repo' }
+  state.files.mockImplementation(async (root: string) =>
+    root === 'C:/repo'
+      ? [
+          'C:/repo/docs/reports/2020_05_08_x.md',
+          'C:/repo/docs/reports/2020.05.08_dot.md',
+          'C:/repo/docs/reports/Feitos/x_15-09.md',
+          'C:/repo/docs/reports/_archive/2026-09-30-y.md',
+          'C:/repo/docs/reports/_archive/handoff.md',
+          'C:/repo/docs/reports/archive.md',
+        ]
+      : [],
+  )
+  state.find.mockImplementation(async (_root: string, path: string) =>
+    path === 'docs/reports/_archive/handoff.md' ? 'C:/repo/docs/reports/_archive/handoff.md' : null,
+  )
+  render(<Catalog />)
+  await screen.findByText('archive.md')
+  expect(screen.getByText('handoff.md')).toBeInTheDocument()
+  for (const name of ['2020_05_08_x.md', '2020.05.08_dot.md', 'x_15-09.md', '2026-09-30-y.md'])
+    expect(screen.queryByText(name)).toBeNull()
+  fireEvent.click(screen.getByRole('button', { name: /\(4 hidden\)/ }))
+  for (const name of ['2020_05_08_x.md', '2020.05.08_dot.md', 'x_15-09.md', '2026-09-30-y.md'])
+    expect(screen.getByText(name)).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: /completed/i }))
+  act(() =>
+    useProjectsStore.setState((s) => ({
+      preferences: { ...s.preferences, markdownCatalogMaxAgeDays: 0 },
+    })),
+  )
+  expect(screen.getByText('x_15-09.md')).toBeInTheDocument()
+  expect(screen.getByText('2026-09-30-y.md')).toBeInTheDocument()
+})
 it('collapses a section through its header', async () => {
   render(<Catalog />)
   await screen.findByText('report.md')

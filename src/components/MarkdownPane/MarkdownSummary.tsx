@@ -1,5 +1,5 @@
-import { BookOpen, Settings2 } from 'lucide-react'
-import { lazy, Suspense, useEffect, useState } from 'react'
+import { BookOpen, ChevronDown, ChevronRight, Settings2 } from 'lucide-react'
+import { lazy, Suspense, useEffect, useId, useState } from 'react'
 
 import { useT } from '../../lib/i18n'
 import {
@@ -25,6 +25,8 @@ export function MarkdownSummary({
   dark: boolean
 }) {
   const t = useT()
+  const bodyId = useId()
+  const collapsed = useUiStore((s) => s.markdownSummaryCollapsed)
   const settings =
     useProjectsStore((s) => s.preferences.markdownSummary) ?? DEFAULT_MARKDOWN_SUMMARY
   const language = useProjectsStore((s) => s.preferences.language)
@@ -74,26 +76,41 @@ export function MarkdownSummary({
         >
           <Settings2 size={14} />
         </button>
+        <button
+          type="button"
+          title={t(collapsed ? 'markdown.expandSummary' : 'markdown.collapseSummary')}
+          aria-label={t(collapsed ? 'markdown.expandSummary' : 'markdown.collapseSummary')}
+          aria-expanded={!collapsed}
+          // The body leaves the DOM while collapsed, so it is only referenced while shown.
+          aria-controls={collapsed ? undefined : bodyId}
+          onClick={() => useUiStore.getState().toggleMarkdownSummaryCollapsed()}
+        >
+          {collapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+        </button>
       </div>
-      {settings.enabled ? (
-        <>
-          <small>{t('markdown.generated')}</small>
-          {current.error ? (
-            <div role="alert">
-              {t('markdown.failed')}
-              <p>{current.error}</p>
-              <button onClick={() => setRetry((n) => n + 1)}>{t('markdown.retry')}</button>
-            </div>
-          ) : current.text ? (
-            <Suspense fallback={t('ui.markdown.loading')}>
-              <MarkdownRenderer content={current.text} dark={dark} />
-            </Suspense>
+      {collapsed ? null : (
+        <div id={bodyId} className={styles.body}>
+          {settings.enabled ? (
+            <>
+              <small>{t('markdown.generated')}</small>
+              {current.error ? (
+                <div role="alert">
+                  {t('markdown.failed')}
+                  <p>{current.error}</p>
+                  <button onClick={() => setRetry((n) => n + 1)}>{t('markdown.retry')}</button>
+                </div>
+              ) : current.text ? (
+                <Suspense fallback={t('ui.markdown.loading')}>
+                  <MarkdownRenderer content={current.text} dark={dark} />
+                </Suspense>
+              ) : (
+                <p role="status">{t('markdown.generating')}</p>
+              )}
+            </>
           ) : (
-            <p role="status">{t('markdown.generating')}</p>
+            <p>{t('markdown.disabled')}</p>
           )}
-        </>
-      ) : (
-        <p>{t('markdown.disabled')}</p>
+        </div>
       )}
     </div>
   )

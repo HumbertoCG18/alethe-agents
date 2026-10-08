@@ -9,6 +9,7 @@ import {
 import { generateMarkdown } from '../../lib/tauri/markdown'
 import { EMPTY_PROJECTS_FILE } from '../../lib/types'
 import { useProjectsStore } from '../../stores/projectsStore'
+import { useUiStore } from '../../stores/uiStore'
 import { MarkdownPage } from '../modals/preferences/MarkdownPage'
 import { MarkdownSummary } from './MarkdownSummary'
 
@@ -28,6 +29,7 @@ vi.mock('./MarkdownRenderer', () => ({
 }))
 beforeEach(() => {
   vi.clearAllMocks()
+  useUiStore.setState({ markdownSummaryCollapsed: false })
   useProjectsStore.setState({
     ...structuredClone(EMPTY_PROJECTS_FILE),
     preferences: {
@@ -121,4 +123,26 @@ it('cancels a pending summary only after its last reader leaves', () => {
   const next = summarizeMarkdown('/cancel.md', 'source', DEFAULT_MARKDOWN_SUMMARY, 'en')
   expect(next.promise).not.toBe(one.promise)
   next.release()
+})
+
+it('collapses the summary body from its header and keeps that for every summary', async () => {
+  vi.mocked(generateMarkdown).mockResolvedValue('the summary')
+  const first = render(<MarkdownSummary path="/one.md" content="source" dark />)
+  expect(await screen.findByText('the summary')).toBeInTheDocument()
+  const toggle = screen.getByRole('button', { name: 'Collapse summary' })
+  expect(toggle).toHaveAttribute('aria-expanded', 'true')
+  const body = document.getElementById(toggle.getAttribute('aria-controls')!)!
+  expect(body).toContainElement(screen.getByText('the summary'))
+  fireEvent.click(toggle)
+  expect(screen.queryByText('the summary')).toBeNull()
+  expect(screen.getByRole('button', { name: 'Expand summary' })).toHaveAttribute(
+    'aria-expanded',
+    'false',
+  )
+  expect(screen.getByRole('button', { name: 'Read full document' })).toBeInTheDocument()
+  first.unmount()
+  render(<MarkdownSummary path="/two.md" content="other" dark />)
+  expect(screen.queryByText('the summary')).toBeNull()
+  fireEvent.click(screen.getByRole('button', { name: 'Expand summary' }))
+  expect(await screen.findByText('the summary')).toBeInTheDocument()
 })

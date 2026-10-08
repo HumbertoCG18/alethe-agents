@@ -15,6 +15,8 @@ export const ptBR: Record<MessageKey, string> = {
   'markdown.reader': 'Leitor Markdown',
   'markdown.selectionTooLarge': 'Selecione até 24.000 caracteres para fazer uma pergunta.',
   'markdown.openFull': 'Ler documento completo',
+  'markdown.collapseSummary': 'Recolher resumo',
+  'markdown.expandSummary': 'Expandir resumo',
   'markdown.modelSearch': 'Buscar ou digitar um ID de modelo',
   'markdown.modelsLoading': 'Carregando catálogo de modelos…',
   'markdown.modelsError':
@@ -68,7 +70,7 @@ export const ptBR: Record<MessageKey, string> = {
     'Caveman: tópicos curtíssimos. Médio: até 250 palavras. Detalhado: até 700 palavras.',
   'markdown.maxAge': 'Documentos antigos',
   'markdown.maxAgeDesc':
-    'Oculta da barra lateral documentos com data no caminho mais antiga que este limite. Documentos sem data e de campanhas abertas sempre aparecem.',
+    'Oculta da barra lateral documentos com data no caminho mais antiga que este limite e os de pastas de arquivo (_archive, archive, Feitos). Documentos sem data e de campanhas abertas sempre aparecem.',
   'markdown.maxAgeDays': 'Mais antigos que {count} dias',
   'markdown.maxAgeNever': 'Nunca ocultar',
   'markdown.generated': 'Resumo gerado por IA — confira o documento completo.',
@@ -632,6 +634,7 @@ export const ptBR: Record<MessageKey, string> = {
   'prefs.sidebarIconMove': 'Mover {name}',
   'prefs.sidebarIconMoveHint':
     'Arraste, ou pressione as setas para cima e para baixo, para reordenar',
+  'prefs.sidebarMarkdownSettings': 'Configurações de Markdown',
   'prefs.sidebarIconLocked': 'Sempre visível, para o app continuar acessível',
   'prefs.categoryRemoteControl': 'Controle remoto',
   'prefs.categoryRemoteControlDesc':

@@ -698,3 +698,76 @@
   transform-origin: top center;
   animation: var(--clean-popover-animation);
 }
+
+.headerActionActive {
+  color: var(--accent);
+}
+
+/* The Markdown list, in the file explorer's rows. */
+.list {
+  flex: 1;
+  min-height: 0;
+  padding: 2px 0 8px;
+  overflow-y: auto;
+}
+
+.listHeading {
+  height: 28px;
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  color: var(--fg);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.listRow {
+  width: 100%;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  color: var(--fg-muted);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  white-space: nowrap;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  user-select: none;
+}
+
+.listRow:hover {
+  color: var(--fg);
+  background: var(--panel-hover);
+}
+
+.listNested {
+  padding-left: 22px;
+}
+
+.listChevron {
+  flex: 0 0 auto;
+  color: var(--fg-faint);
+}
+
+.listIcon {
+  flex: 0 0 auto;
+  color: var(--fg-muted);
+}
+
+.listName {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.listChip {
+  flex: 0 0 auto;
+  color: var(--fg-faint);
+  font: 10px var(--font-mono);
+}

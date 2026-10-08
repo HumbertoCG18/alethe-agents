@@ -1602,6 +1602,9 @@ export const ptBR: Record<MessageKey, string> = {
   'rightSidebar.markdownEmptyTitle': 'Nenhum Markdown selecionado',
   'rightSidebar.markdownEmptyDesc':
     'Abra um arquivo Markdown na sidebar de projetos para visualizá-lo aqui.',
+  'rightSidebar.markdownList': 'Markdown relevante',
+  'rightSidebar.campaignMarkdown': 'Campanha {id}',
+  'rightSidebar.handoffChip': 'handoff',
   'rightSidebar.commentsToggle': 'Mostrar comentários',
   'rightSidebar.commentsTitle': 'Comentários da aplicação',
   'rightSidebar.commentsEmpty': 'Selecione um trecho do Markdown para adicionar um comentário.',

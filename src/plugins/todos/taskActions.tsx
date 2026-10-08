@@ -95,6 +95,44 @@ export async function openEvidence(
   else await openInFileExplorer(found).catch(() => {})
 }
 
+/** A campaign's Markdown file on disk, `written` as the registry names it; no `task` for the handoff. */
+export type CampaignMarkdownFile = { path: string; written: string; task: string | null }
+
+/**
+ * The campaign's Markdown that exists: its handoff (relative to the main checkout), then the `.md`
+ * evidence of its tasks, each looked up as `openEvidence` does and kept only inside the checkouts.
+ * ponytail: evidence naming a folder is left out; list its report when one is asked for.
+ */
+export async function campaignMarkdown(
+  campaign: Campaign,
+  registry: Registry,
+): Promise<CampaignMarkdownFile[]> {
+  const { main, checkouts } = registry
+  const base = campaignCwd(campaign, checkouts) ?? main
+  const wanted = [
+    ...(campaign.handoff ? [{ written: campaign.handoff, task: null, from: main }] : []),
+    ...campaign.tasks.flatMap((task) =>
+      task.evidence && evidenceIsPath(task.evidence) && isMarkdownFilePath(task.evidence)
+        ? [{ written: task.evidence, task: task.id, from: base }]
+        : [],
+    ),
+  ]
+  const found = await Promise.all(
+    wanted.map(({ written, from }) =>
+      evidenceInCheckouts(from, written, checkouts)
+        ? findRelativePath(from, written).catch(() => null)
+        : null,
+    ),
+  )
+  const seen = new Set<string>()
+  return wanted.flatMap(({ written, task }, index) => {
+    const path = found[index]
+    if (!path || !inCheckouts(path, checkouts) || seen.has(path)) return []
+    seen.add(path)
+    return [{ path, written, task }]
+  })
+}
+
 export type TaskActions = ReturnType<typeof useTaskActions>
 
 /**

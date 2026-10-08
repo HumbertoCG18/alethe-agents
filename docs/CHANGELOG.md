@@ -347,6 +347,13 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ### Changed
 
+- **Relevant Markdown in the right sidebar's Markdown tab.** With no file open, the tab lists the
+  active campaign's handoff and the Markdown evidence of its tasks, grouped by folder in the file
+  explorer's rows, then the project's planning docs; only files that exist are listed. The list
+  button in the header shows it while a file is open, and picking a file opens it.
+- **Night tab: concluded tasks under Completed.** Entries of the latest night whose task is already
+  concluded in the registry move to a collapsed Completed section, so the night lists only what is
+  still open.
 - **Fresher agent lines and tab titles, lighter Remote Control.** A campaign agent's line and
   pending question in the Todo panel, and the titles of Claude Code and Codex tabs, now follow the
   session as its transcript grows, instead of waiting for the agent to stop or for a timer. Each
@@ -505,6 +512,8 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ### Fixed
 
+- **The Todo panel shows its title once.** The settings gear moved to the Overview, Night and
+  Personal row.
 - **Chats resume after a restart.** A new Antigravity chat was never found, so it was never
   saved and came back empty after Alethe restarted: `agy` lists it in `last_conversations.json`
   well before `conversation_metadata.json`, if ever. Claude Code chats in a folder whose name has

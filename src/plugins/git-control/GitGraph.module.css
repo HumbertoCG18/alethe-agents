@@ -31,7 +31,11 @@
   max-height: 380px;
   overflow-y: auto;
   overflow-x: hidden;
-  scrollbar-width: thin;
+}
+
+.body::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
 }
 
 .loading,
@@ -188,7 +192,11 @@
   padding: 4px 6px 10px;
   max-height: 380px;
   overflow-y: auto;
-  scrollbar-width: thin;
+}
+
+.detail::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
 }
 
 .detailBack {

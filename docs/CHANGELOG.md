@@ -347,6 +347,13 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ### Changed
 
+- **Relevant Markdown in the right sidebar's Markdown tab.** With no file open, the tab lists the
+  active campaign's handoff and the Markdown evidence of its tasks, grouped by folder in the file
+  explorer's rows, then the project's planning docs; only files that exist are listed. The list
+  button in the header shows it while a file is open, and picking a file opens it.
+- **Night tab: concluded tasks under Completed.** Entries of the latest night whose task is already
+  concluded in the registry move to a collapsed Completed section, so the night lists only what is
+  still open. Its progress bar is hidden once every task of the night is concluded.
 - **Fresher agent lines and tab titles, lighter Remote Control.** A campaign agent's line and
   pending question in the Todo panel, and the titles of Claude Code and Codex tabs, now follow the
   session as its transcript grows, instead of waiting for the agent to stop or for a timer. Each
@@ -505,6 +512,13 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ### Fixed
 
+- **The Todo panel shows its title once.** The settings gear moved to the Overview, Night and
+  Personal row.
+- **Markdown tabs close cleanly.** A single Markdown tab can be closed, closing the last one keeps
+  the Markdown tab on its list, and a file that fails to load shows the list under the error.
+- **Scrollbars follow the theme again.** The Markdown tab strip, the Git graph and the folder and
+  plugin pickers showed the native scrollbar because a standard scrollbar property was turning the
+  theme off.
 - **Removing a custom agent and turning on Remote Control ask first again.** In the app the old
   check never waited for an answer, so the agent was removed at once and Remote Control turned on
   without its consent prompt. Both now use the native confirmation dialog.

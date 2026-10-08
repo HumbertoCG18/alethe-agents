@@ -312,7 +312,6 @@ export const useUiStore = create<UiState>((set) => ({
       return {
         rightSidebarMarkdownTabs: tabs,
         rightSidebarMarkdown: next,
-        rightSidebarMode: next ? 'markdown' : TODOS_VIEW_ID,
       }
     }),
   restoreMarkdownSidebarHistory: () =>

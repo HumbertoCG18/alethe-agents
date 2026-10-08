@@ -373,6 +373,9 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ### Changed
 
+- **Night tab: concluded tasks under Completed.** Entries of the latest night whose task is already
+  concluded in the registry move to a collapsed Completed section, so the night lists only what is
+  still open.
 - **Fresher agent lines and tab titles, lighter Remote Control.** A campaign agent's line and
   pending question in the Todo panel, and the titles of Claude Code and Codex tabs, now follow the
   session as its transcript grows, instead of waiting for the agent to stop or for a timer. Each
@@ -531,6 +534,20 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ### Fixed
 
+- **The Todo panel shows its title once.** The settings gear moved to the Overview, Night and
+  Personal row.
+- **Scrollbars follow the theme again.** The Git graph and the folder and plugin pickers showed the
+  native scrollbar because a standard scrollbar property was turning the theme off.
+- **Removing a custom agent and turning on Remote Control ask first again.** In the app the old
+  check never waited for an answer, so the agent was removed at once and Remote Control turned on
+  without its consent prompt. Both now use the native confirmation dialog.
+- **A file link printed with another spelling of its folder opens.** A path through a Windows
+  short name (`RUNNER~1`) or macOS `/var` instead of `/private/var` is now matched to the checkout
+  that holds the file, and file watchers there report changes again.
+- **Chats resume after a restart.** A new Antigravity chat was never found, so it was never
+  saved and came back empty after Alethe restarted: `agy` lists it in `last_conversations.json`
+  well before `conversation_metadata.json`, if ever. Claude Code chats in a folder whose name has
+  spaces, accents, or other non-ASCII-alphanumeric characters are found again too (upstream #302).
 - **A project without terminals stays selected when you open it.** Clicking it in the sidebar,
   its tab, or Back/Forward left no active project, so the Todo panel and the Markdown tab stayed
   blank; files saved in that state get the project back on load. With no project, the Todo

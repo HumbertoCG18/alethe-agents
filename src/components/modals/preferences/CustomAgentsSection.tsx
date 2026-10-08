@@ -18,7 +18,7 @@ import {
   invalidateCustomAgentIconAsset,
   isCustomIconFileAvailable,
 } from '../../../lib/customAgentIconAssets'
-import { pickFile } from '../../../lib/dialog'
+import { askConfirm, pickFile } from '../../../lib/dialog'
 import { type MessageKey, useT } from '../../../lib/i18n'
 import type { CustomAgentDefinition, CustomAgentIconSpec } from '../../../lib/types'
 import { useProjectsStore } from '../../../stores/projectsStore'
@@ -250,8 +250,9 @@ export function CustomAgentsSection({ enabledCount }: { enabledCount: number }) 
     closeForm()
   }
 
-  const onRemove = (definition: CustomAgentDefinition) => {
-    if (!window.confirm(t('prefs.customAgentConfirmRemove', { label: definition.label }))) return
+  const onRemove = async (definition: CustomAgentDefinition) => {
+    if (!(await askConfirm(t('prefs.customAgentConfirmRemove', { label: definition.label }))))
+      return
     removeCustomAgent(definition.id)
     invalidateCustomAgentIconAsset(definition.id)
     if (editingId === definition.id) closeForm()
@@ -293,7 +294,7 @@ export function CustomAgentsSection({ enabledCount }: { enabledCount: number }) 
               <button type="button" onClick={() => openEdit(definition)}>
                 {t('prefs.customAgentEdit')}
               </button>
-              <button type="button" onClick={() => onRemove(definition)}>
+              <button type="button" onClick={() => void onRemove(definition)}>
                 {t('prefs.customAgentRemove')}
               </button>
             </span>

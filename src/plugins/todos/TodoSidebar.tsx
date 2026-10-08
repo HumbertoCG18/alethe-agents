@@ -765,10 +765,32 @@ export function TodoSidebar() {
   return (
     <aside className={styles.sidebar} aria-label={t('todo.title')}>
       <header className={styles.header}>
-        <div className={styles.headerTop}>
-          <div className={styles.heading}>
-            <ListTodo size={17} />
-            <span>{t('todo.title')}</span>
+        {parts?.length ? <ProgressBar parts={parts} /> : null}
+        <div className={styles.filtersRow}>
+          <div className={styles.filters} role="tablist" aria-label={t('todo.tabs.label')}>
+            {TODO_TABS.map((item) => (
+              <button
+                key={item}
+                type="button"
+                role="tab"
+                ref={item === 'tasks' ? tasksTab : undefined}
+                id={`${tabsId}-${item}`}
+                aria-selected={tab === item}
+                aria-controls={`${tabsId}-panel`}
+                className={`${styles.filterButton} ${tab === item ? styles.filterButtonActive : ''}`}
+                onClick={() => setTab(item)}
+              >
+                {t(TAB_KEYS[item])}
+                {item === 'night' && nightRunning ? (
+                  <span
+                    className={`${campaignStyles.dot} ${styles.tabDot}`}
+                    data-status="working"
+                    role="img"
+                    aria-label={t('todo.campaigns.liveRunning')}
+                  />
+                ) : null}
+              </button>
+            ))}
           </div>
           <button
             type="button"
@@ -779,32 +801,6 @@ export function TodoSidebar() {
           >
             <Settings size={14} />
           </button>
-        </div>
-        {parts?.length ? <ProgressBar parts={parts} /> : null}
-        <div className={styles.filters} role="tablist" aria-label={t('todo.tabs.label')}>
-          {TODO_TABS.map((item) => (
-            <button
-              key={item}
-              type="button"
-              role="tab"
-              ref={item === 'tasks' ? tasksTab : undefined}
-              id={`${tabsId}-${item}`}
-              aria-selected={tab === item}
-              aria-controls={`${tabsId}-panel`}
-              className={`${styles.filterButton} ${tab === item ? styles.filterButtonActive : ''}`}
-              onClick={() => setTab(item)}
-            >
-              {t(TAB_KEYS[item])}
-              {item === 'night' && nightRunning ? (
-                <span
-                  className={`${campaignStyles.dot} ${styles.tabDot}`}
-                  data-status="working"
-                  role="img"
-                  aria-label={t('todo.campaigns.liveRunning')}
-                />
-              ) : null}
-            </button>
-          ))}
         </div>
       </header>
 

@@ -107,13 +107,22 @@ export function NightCard({
   const locale = useProjectsStore((state) => state.preferences.language)
   const { campaigns } = registry
   const [open, setOpen] = useState(false)
+  const [doneOpen, setDoneOpen] = useState(false)
   const toggle = useRef<HTMLButtonElement>(null)
+  const doneToggle = useRef<HTMLButtonElement>(null)
+  // As the progress bar counts them: an entry is concluded once its task is, in the registry.
+  const concluded = (entry: NightEntry) =>
+    campaigns.some((campaign) =>
+      campaign.tasks.some((task) => task.id === entry.task && task.state === 'concluída'),
+    )
+  const done = diary.entries.filter(concluded)
+  const rest = diary.entries.filter((entry) => !concluded(entry))
 
   return (
     <section className={`${sidebarStyles.section} ${styles.card}`}>
       <SectionToggle
         name={t('todo.night.title', { date: nightDay(diary.date, locale) })}
-        count={diary.entries.length}
+        count={rest.length}
         open={open}
         onToggle={() => setOpen((current) => !current)}
         toggleRef={toggle}
@@ -133,7 +142,7 @@ export function NightCard({
       />
       {open ? (
         <ul className={styles.tasks}>
-          {diary.entries.map((entry, index) => (
+          {rest.map((entry, index) => (
             <NightEntryRow
               key={`${entry.task}-${index}`}
               entry={entry}
@@ -143,6 +152,30 @@ export function NightCard({
             />
           ))}
         </ul>
+      ) : null}
+      {done.length ? (
+        <>
+          <SectionToggle
+            name={t('todo.campaigns.completed')}
+            count={done.length}
+            open={doneOpen}
+            onToggle={() => setDoneOpen((current) => !current)}
+            toggleRef={doneToggle}
+          />
+          {doneOpen ? (
+            <ul className={styles.tasks}>
+              {done.map((entry, index) => (
+                <NightEntryRow
+                  key={`${entry.task}-${index}`}
+                  entry={entry}
+                  registry={registry}
+                  edits={edits}
+                  fallback={() => doneToggle.current}
+                />
+              ))}
+            </ul>
+          ) : null}
+        </>
       ) : null}
     </section>
   )

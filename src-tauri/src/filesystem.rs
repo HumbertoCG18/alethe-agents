@@ -576,6 +576,15 @@ fn path_watcher(
             .map(Path::to_path_buf)
             .ok_or_else(|| "invalid path".to_string())?
     };
+    // Events can carry the canonical spelling instead: macOS reports `/private/var/...` for a
+    // target under `/var/...`.
+    let real = watched_dir.canonicalize().ok().and_then(|dir| {
+        if folder {
+            Some(dir)
+        } else {
+            target.file_name().map(|name| dir.join(name))
+        }
+    });
     let mut watcher = RecommendedWatcher::new(
         move |res: notify::Result<notify::Event>| {
             let Ok(event) = res else { return };
@@ -583,7 +592,12 @@ fn path_watcher(
                 return;
             }
             let concerns = |path: &PathBuf| {
-                path == &target || (folder && path.parent() == Some(target.as_path()))
+                [Some(&target), real.as_ref()]
+                    .into_iter()
+                    .flatten()
+                    .any(|wanted| {
+                        path == wanted || (folder && path.parent() == Some(wanted.as_path()))
+                    })
             };
             if event.paths.iter().any(concerns) {
                 changed();
@@ -686,11 +700,15 @@ fn find_relative_path_inner(cwd: &Path, path: &str) -> Option<PathBuf> {
         .map(PathBuf::from)
         .collect();
     let candidates: Vec<PathBuf> = if path.has_root() {
-        // The innermost checkout holding it, since a worktree can live inside the main one.
-        let inner = roots
-            .iter()
-            .filter_map(|root| strip_checkout(path, root))
-            .min_by_key(|inner| inner.components().count())?;
+        // The innermost checkout holding it, since a worktree can live inside the main one. A path
+        // spelled unlike git's roots (a `RUNNER~1` short name, macOS `/var` for `/private/var`) is
+        // matched through the canonical spelling of both.
+        let inner = innermost_inside(path, roots.iter().cloned()).or_else(|| {
+            innermost_inside(
+                &canonical_spelling(path)?,
+                roots.iter().filter_map(|root| root.canonicalize().ok()),
+            )
+        })?;
         roots.iter().map(|root| root.join(&inner)).collect()
     } else {
         let mut components = path.components();
@@ -713,6 +731,22 @@ fn find_relative_path_inner(cwd: &Path, path: &str) -> Option<PathBuf> {
         })
         .max_by_key(|(modified, _)| *modified)
         .map(|(_, candidate)| candidate)
+}
+
+/// `path` relative to the innermost of `roots` that holds it.
+fn innermost_inside(path: &Path, roots: impl Iterator<Item = PathBuf>) -> Option<PathBuf> {
+    roots
+        .filter_map(|root| strip_checkout(path, &root))
+        .min_by_key(|inner| inner.components().count())
+}
+
+/// `path` with its deepest existing ancestor canonicalized, since the file itself may exist only
+/// in another checkout.
+fn canonical_spelling(path: &Path) -> Option<PathBuf> {
+    let (base, real) = path
+        .ancestors()
+        .find_map(|base| base.canonicalize().ok().map(|real| (base, real)))?;
+    Some(real.join(path.strip_prefix(base).ok()?))
 }
 
 /// `path` relative to the checkout `root`, refused unless it is plain names: joined to the other
@@ -1012,9 +1046,16 @@ mod tests {
         fs::create_dir_all(night.join("docs")).unwrap();
         let handoff = night.join("docs").join("handoff.md");
         fs::write(&handoff, "night").unwrap();
-        let find = |path: &Path| find_relative_path_inner(&main, path.to_str().unwrap());
+        // Compared canonically: git and the temp folder may spell one path differently (a
+        // `RUNNER~1` short name on Windows runners, `/private/var` on macOS).
+        let real = |found: Option<PathBuf>| found.map(|found| fs::canonicalize(found).unwrap());
+        let find = |path: &Path| real(find_relative_path_inner(&main, path.to_str().unwrap()));
+        let handoff = fs::canonicalize(&handoff).unwrap();
 
-        assert_eq!(find(&main.join("a.txt")), Some(main.join("a.txt")));
+        assert_eq!(
+            find(&main.join("a.txt")),
+            Some(fs::canonicalize(main.join("a.txt")).unwrap())
+        );
         assert_eq!(
             find(&main.join("docs").join("handoff.md")),
             Some(handoff.clone())
@@ -1033,13 +1074,13 @@ mod tests {
             // Windows compares checkouts without case, whichever separator was printed.
             let printed = format!("{}/docs/handoff.md", main.to_str().unwrap().to_uppercase());
             assert_eq!(
-                find_relative_path_inner(&main, &printed.replace('\\', "/")),
+                real(find_relative_path_inner(&main, &printed.replace('\\', "/"))),
                 Some(handoff.clone())
             );
             // A verbatim path names the same checkout.
             let verbatim = format!(r"\\?\{}", main.join("docs").join("handoff.md").display());
             assert_eq!(
-                find_relative_path_inner(&main, &verbatim),
+                real(find_relative_path_inner(&main, &verbatim)),
                 Some(handoff.clone())
             );
         }

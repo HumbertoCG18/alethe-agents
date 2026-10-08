@@ -77,7 +77,6 @@ export async function startOrchestrationOn({
   }
 }
 
-
 function addBoard(projectId: string, terminalId: string, cwd: string) {
   const { createOrchestratorPane, groupPanes } = useProjectsStore.getState()
   const board = createOrchestratorPane(projectId, cwd)

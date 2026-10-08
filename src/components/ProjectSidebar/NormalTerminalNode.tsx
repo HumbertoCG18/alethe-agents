@@ -47,7 +47,8 @@ export function NormalTerminalNode({
   // A name the user typed wins; otherwise the campaign step, then the upstream fallback chain.
   const displayName = terminal.customName
     ? terminal.name
-    : (campaignTabTitle(activeTab, chatTitle, steps) ?? sidebarTerminalDisplayName(terminal, chatTitle))
+    : (campaignTabTitle(activeTab, chatTitle, steps) ??
+      sidebarTerminalDisplayName(terminal, chatTitle))
   const uniqueTypes = Array.from(new Set(terminal.tabs.map((tab) => tab.type))) as AgentType[]
   const orderedTypes =
     activeTab && uniqueTypes.length > 1

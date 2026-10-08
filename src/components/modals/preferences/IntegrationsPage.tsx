@@ -10,6 +10,7 @@ import {
 import { useProjectsStore } from '../../../stores/projectsStore'
 import { Router9Settings } from '../../Router9/Router9Settings'
 import controls from '../controls.module.css'
+import { UsageAccessStep } from '../onboarding/UsageAccessStep'
 import styles from '../PreferencesModal.module.css'
 import { SettingsSection } from './primitives'
 import { VoiceDictationSection } from './VoiceDictationSection'
@@ -106,6 +107,14 @@ export function IntegrationsPage() {
   const setPreferences = useProjectsStore((state) => state.setPreferences)
   return (
     <>
+      <SettingsSection
+        id="usage-access"
+        title={t('prefs.usageAccess')}
+        description={t('prefs.usageAccessDesc')}
+      >
+        <UsageAccessStep />
+      </SettingsSection>
+
       <TerminalCommandSection />
 
       <Router9Settings />

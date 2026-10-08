@@ -196,9 +196,13 @@ describe('Claude terminal session lifecycle', () => {
     const renderer = input.terminalRef.current
     act(() =>
       useProjectsStore.setState((state) => ({
-        preferences: { ...state.preferences, terminalFontFamily: 'Consolas' },
+        preferences: { ...state.preferences, terminalFontFamily: '"Consolas", monospace' },
       })),
     )
+    // Preferences announce a font change the way they announce a zoom change.
+    act(() => {
+      window.dispatchEvent(new CustomEvent('alethe:terminal-font-changed'))
+    })
     expect(input.terminalRef.current).toBe(renderer)
     expect(renderer?.options.fontFamily).toContain('Consolas')
     expect(tauri.spawnPty).toHaveBeenCalledTimes(1)
@@ -206,7 +210,7 @@ describe('Claude terminal session lifecycle', () => {
   })
   it('passes the saved shell only to a new plain-shell terminal', async () => {
     useProjectsStore.setState((state) => ({
-      preferences: { ...state.preferences, defaultShell: '/bin/bash' },
+      preferences: { ...state.preferences, shellPath: '/bin/bash' },
     }))
     const input = params()
     input.command = null
@@ -214,7 +218,7 @@ describe('Claude terminal session lifecycle', () => {
     const view = renderHook(() => useXtermSession(input))
     await waitFor(() => expect(tauri.spawnPty).toHaveBeenCalled())
     expect(tauri.spawnPty).toHaveBeenLastCalledWith(
-      expect.objectContaining({ command: undefined, shell: '/bin/bash' }),
+      expect.objectContaining({ command: undefined, launcherOverride: '/bin/bash' }),
     )
     view.unmount()
   })

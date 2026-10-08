@@ -1,12 +1,12 @@
 import { Bell, X } from 'lucide-react'
 import { type CSSProperties, useEffect } from 'react'
 
-import styles from '../App.module.css'
 import { agentAccentVar } from '../lib/agentProviders'
 import { useT } from '../lib/i18n'
 import { useProjectsStore } from '../stores/projectsStore'
 import { type InAppToast, useUiStore } from '../stores/uiStore'
 import { AgentIcon } from './icons/AgentIcons'
+import styles from './InAppNotifications.module.css'
 
 function ToastItem({ toast }: { toast: InAppToast }) {
   const t = useT()

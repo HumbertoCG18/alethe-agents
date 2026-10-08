@@ -35,6 +35,7 @@
   flex-direction: column;
   gap: 8px;
   margin-bottom: 12px;
+  /* A row needs about 830px; a narrower window scrolls the table instead of spilling past it. */
   overflow-x: auto;
 }
 

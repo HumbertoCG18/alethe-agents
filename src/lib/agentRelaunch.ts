@@ -1,7 +1,7 @@
 import { useTerminalsStore } from '../stores/terminalsStore'
-import { resolveAgentCliCommand } from './agentProviders'
 import { preparePtyRuntimeLaunch } from './agentRuntimeAdapter'
 import { claudeLaunchExtras, recordClaudeLaunch } from './claudeMcpConfigs'
+import { ptyLaunchTarget } from './ptyLaunchTarget'
 import { type AgentLaunch, buildAgentLaunch } from './sessionLaunch'
 import { restartPty } from './tauri'
 import type { AgentRuntimeProfile, AgentType } from './types'
@@ -44,7 +44,8 @@ export async function relaunchAgentPty({
     id: ptyId,
     cols: 80,
     rows: 24,
-    command: resolveAgentCliCommand(agent),
+    // A plain shell tab has no CLI and restarts on the shell chosen in Preferences, if any.
+    ...ptyLaunchTarget(agent),
     cwd: cwd || undefined,
     extraArgs: launch.args,
     env: prepared.env,

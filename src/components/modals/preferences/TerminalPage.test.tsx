@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { beforeEach, expect, it, vi } from 'vitest'
 
-import { DEFAULT_PREFERENCES } from '../../../lib/types'
+import { DEFAULT_PREFERENCES, DEFAULT_TERMINAL_FONT_FAMILY } from '../../../lib/types'
 
 const mocks = vi.hoisted(() => ({
   shells: vi.fn(),
@@ -29,6 +29,10 @@ vi.mock('../../../lib/resetLastSession', () => ({
 import { Modal } from '../Modal'
 import { TerminalPage } from './TerminalPage'
 
+/** Sections collapse through a header button named like their picker; this is the picker. */
+const picker = (name: string) =>
+  screen.getAllByRole('button', { name }).find((el) => el.getAttribute('aria-haspopup') === 'listbox')!
+
 beforeEach(() => {
   mocks.state.preferences = { ...DEFAULT_PREFERENCES }
   mocks.state.setPreferences.mockReset()
@@ -49,7 +53,7 @@ it('offers actual local shells and fonts and saves the choices', async () => {
       <TerminalPage enabledCount={4} />
     </Modal>,
   )
-  fireEvent.click(screen.getByRole('button', { name: 'Default shell' }))
+  fireEvent.click(picker('Default shell'))
   expect(
     await screen.findByRole('option', { name: 'Platform default (PowerShell 7)' }),
   ).toBeInTheDocument()
@@ -58,21 +62,25 @@ it('offers actual local shells and fonts and saves the choices', async () => {
   expect(screen.getByRole('option', { name: /^Windows PowerShell.*v1\.0/ })).toBeInTheDocument()
   expect(screen.getByRole('option', { name: /^Git Bash.*Git\/bin/ })).toBeInTheDocument()
   fireEvent.click(screen.getByRole('option', { name: /^bash.*\/bin\/bash/ }))
-  expect(mocks.state.setPreferences).toHaveBeenCalledWith({ defaultShell: '/bin/bash' })
-  fireEvent.click(screen.getByRole('button', { name: 'Terminal font' }))
+  expect(mocks.state.setPreferences).toHaveBeenCalledWith({ shellPath: '/bin/bash' })
+  fireEvent.click(picker('Terminal font'))
   fireEvent.click(await screen.findByRole('option', { name: 'Consolas' }))
-  expect(mocks.state.setPreferences).toHaveBeenCalledWith({ terminalFontFamily: 'Consolas' })
+  expect(mocks.state.setPreferences).toHaveBeenCalledWith({
+    terminalFontFamily: `"Consolas", ${DEFAULT_TERMINAL_FONT_FAMILY}`,
+  })
   expect(close).not.toHaveBeenCalled()
 })
 
 it('shows fallback warnings for removed local choices', async () => {
-  mocks.state.preferences.defaultShell = '/removed/bash'
-  mocks.state.preferences.terminalFontFamily = 'Removed font'
+  mocks.state.preferences.shellPath = '/custom/bash'
+  mocks.state.preferences.terminalFontFamily = `"Removed font", ${DEFAULT_TERMINAL_FONT_FAMILY}`
   render(<TerminalPage enabledCount={4} />)
   expect(
-    await screen.findByText('Saved shell is unavailable. New sessions use the platform default.'),
+    await screen.findByText(
+      'Custom executable. If it is removed, new sessions use the platform default.',
+    ),
   ).toBeTruthy()
   expect(
-    await screen.findByText('Saved font is unavailable. The bundled font is used instead.'),
+    await screen.findByText('Saved font is unavailable. The default font is used instead.'),
   ).toBeTruthy()
 })

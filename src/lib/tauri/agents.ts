@@ -1,6 +1,8 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 
+import { AI_MEMORY_DEFAULT_PORT } from '../aiMemory'
+
 export async function agentHooksEndpoint(): Promise<string> {
   return invoke('agent_hooks_endpoint')
 }
@@ -33,15 +35,37 @@ export function listenCodexAppServer(
 }
 
 /**
- * Caminho do settings.json de hooks gerado pro Claude Code (agent_events.rs).
+ * The live capture consent, read fresh (never from the debounced `projects.json` on disk) so a
+ * terminal opened right after the person flips the preference gets their current choice. The store
+ * is imported lazily: it imports these bindings itself, and a static cycle breaks module mocks.
+ */
+async function liveAiMemoryPrefs(): Promise<{ enabled: boolean; port: number }> {
+  const { useProjectsStore } = await import('../../stores/projectsStore')
+  const prefs = useProjectsStore.getState().preferences
+  return { enabled: prefs.enabledFeatures.aiMemory, port: AI_MEMORY_DEFAULT_PORT }
+}
+
+/**
+ * Path of the hooks settings.json generated for Claude Code (agent_events.rs).
  * `orchestrator: false` writes the session-tracking-only variant (SessionStart/UserPromptSubmit),
  * without the subagent and tool-call hooks the orchestrator canvas needs.
+ * `aiMemory` carries the live capture consent: when enabled, ai-memory's own hooks are merged into
+ * this same file rather than into the person's own settings. It defaults to the live preference, so
+ * a call site that forgets the argument still gets the person's actual choice; pass `null` explicitly
+ * to opt a caller out of capture regardless of the preference (e.g. a demo sandbox).
  */
 export async function agentHooksSettingsPath(
   plannerId: string,
   orchestrator = true,
+  aiMemory?: { enabled: boolean; port: number } | null,
 ): Promise<string> {
-  return invoke<string>('agent_hooks_settings_path', { plannerId, orchestrator })
+  if (aiMemory === undefined) aiMemory = await liveAiMemoryPrefs()
+  return invoke<string>('agent_hooks_settings_path', {
+    plannerId,
+    orchestrator,
+    aiMemoryEnabled: aiMemory?.enabled ?? false,
+    aiMemoryPort: aiMemory?.port ?? null,
+  })
 }
 
 /** Publishes the main window's subagent canvas for detached orchestration boards. */
@@ -124,4 +148,18 @@ export function listenOpenCodeBridgeStatus(
   handler: (payload: OpenCodeBridgeStatus) => void,
 ): Promise<UnlistenFn> {
   return listen<OpenCodeBridgeStatus>('opencode-bridge-status', (event) => handler(event.payload))
+}
+
+/** Copies a validated `.ico` into app data as the icon of the custom agent `agentId`. */
+export async function importCustomAgentIcon(sourcePath: string, agentId: string): Promise<void> {
+  await invoke('import_custom_agent_icon', { sourcePath, agentId })
+}
+
+/** A custom agent's stored icon as a data URL; rejects when it has none. */
+export async function customAgentIconDataUrl(agentId: string): Promise<string> {
+  return invoke<string>('custom_agent_icon_data_url', { agentId })
+}
+
+export async function removeCustomAgentIcon(agentId: string): Promise<void> {
+  await invoke('remove_custom_agent_icon', { agentId })
 }

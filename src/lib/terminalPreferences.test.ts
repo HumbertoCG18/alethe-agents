@@ -1,22 +1,26 @@
 import { expect, it } from 'vitest'
 
 import { normalizePreferences } from '../stores/projectsStore.migrations'
-import { BUNDLED_TERMINAL_FONT, terminalFontStack } from './terminalPreferences'
+import { primaryFontFamily, terminalFontStack } from './terminalPreferences'
+import { DEFAULT_TERMINAL_FONT_FAMILY } from './types'
 
-it('backfills older preferences and keeps legacy palettes', () => {
-  const prefs = normalizePreferences({ terminalTheme: 'dark' })
-  expect(prefs.defaultShell).toBeNull()
-  expect(prefs.terminalFontFamily).toBeNull()
-  expect(prefs.terminalTheme).toBe('dark')
+it('carries a shell saved by an earlier fork build over to shellPath', () => {
+  expect(normalizePreferences({ defaultShell: 'C:\Program Files\Git\bin\bash.exe' } as never).shellPath).toBe(
+    'C:\Program Files\Git\bin\bash.exe',
+  )
+  expect(normalizePreferences({ shellPath: '/bin/zsh', defaultShell: '/bin/bash' } as never).shellPath).toBe(
+    '/bin/zsh',
+  )
+  // The fork saved "no choice" as null; it reads as the default stack.
+  expect(normalizePreferences({ terminalFontFamily: null } as never).terminalFontFamily).toBe(
+    DEFAULT_TERMINAL_FONT_FAMILY,
+  )
 })
 
-it('persists local choices and rejects corrupted values', () => {
-  expect(
-    normalizePreferences({ defaultShell: '/bin/bash', terminalFontFamily: 'Consolas' }),
-  ).toMatchObject({ defaultShell: '/bin/bash', terminalFontFamily: 'Consolas' })
-  expect(
-    normalizePreferences({ defaultShell: 'bad\0path', terminalFontFamily: 123 as never }),
-  ).toMatchObject({ defaultShell: null, terminalFontFamily: null })
-  expect(terminalFontStack('Font "name"')).toContain('"Font \\"name\\""')
-  expect(terminalFontStack(null)).toContain(BUNDLED_TERMINAL_FONT)
+it('stores a picked family first with the default stack as fallback', () => {
+  const stack = terminalFontStack('Font "name"')
+  expect(stack).toBe(`"Font \\"name\\"", ${DEFAULT_TERMINAL_FONT_FAMILY}`)
+  expect(terminalFontStack('  ')).toBe(DEFAULT_TERMINAL_FONT_FAMILY)
+  expect(primaryFontFamily(terminalFontStack('Consolas'))).toBe('Consolas')
+  expect(primaryFontFamily(DEFAULT_TERMINAL_FONT_FAMILY)).toBe('Cascadia Mono')
 })

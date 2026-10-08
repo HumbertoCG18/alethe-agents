@@ -31,6 +31,7 @@ import { NewProjectModal } from './components/modals/NewProjectModal'
 import { NewSubTabModal } from './components/modals/NewSubTabModal'
 import { NewTerminalModal } from './components/modals/NewTerminalModal'
 import { OnboardingModal } from './components/modals/OnboardingModal'
+import { PluginMarketplaceModal } from './components/modals/PluginMarketplaceModal'
 import { PreferencesModal } from './components/modals/PreferencesModal'
 import { ProfilesModal } from './components/modals/ProfilesModal'
 import { ProjectGridModal } from './components/modals/ProjectGridModal'
@@ -53,16 +54,17 @@ import { VoiceCommand } from './components/VoiceCommand'
 import { WorkspaceView } from './components/WorkspaceView'
 import { useAgentBrowserOffers } from './hooks/useAgentBrowserOffers'
 import { useAgentHookBridge } from './hooks/useAgentHookBridge'
+import { useAiMemoryAutoStart } from './hooks/useAiMemoryAutoStart'
 import { useCliOpenRequests } from './hooks/useCliOpenRequests'
 import { useCloseConfirmation } from './hooks/useCloseConfirmation'
 import { useDiscordPresence } from './hooks/useDiscordPresence'
 import { useKeybindings } from './hooks/useKeybindings'
-import { useMcpIntroPrompt } from './hooks/useMcpIntroPrompt'
 import { useOrchestrationSettingsSync } from './hooks/useOrchestrationSettingsSync'
 import { useRemoteControlService } from './hooks/useRemoteControlService'
 import { useResourceSupervisor } from './hooks/useResourceSupervisor'
 import { useRouter9AutoStart } from './hooks/useRouter9AutoStart'
 import { startActivityTracker } from './lib/activityTracker'
+import { resumeAgentCanvasMirror } from './lib/agentCanvasMirror'
 import { APP_SHELL_ID } from './lib/appShell'
 import { AGENT_SANDBOX_ENABLED } from './lib/featureFlags'
 import { intlLocale, translate, useT } from './lib/i18n'
@@ -70,8 +72,12 @@ import { applyLegacyPluginMigrations } from './lib/plugins'
 import { useProjectCheckoutAnchors } from './lib/projectCheckout'
 import { visibilityFromPanelResize, widthFromPanelResize } from './lib/sidebarPanelState'
 import { setMaxConcurrentSpawns } from './lib/spawnQueue'
-import { ghosttyKillAll, setWindowOpacity } from './lib/tauri'
-import { getLastCrashReport } from './lib/tauri'
+import { ghosttyKillAll, setWindowOpacity, setWslIntegrationEnabled } from './lib/tauri'
+import {
+  getLastCrashReport,
+  orchestratorDefaultRuleSets,
+  orchestratorSetRuleSets,
+} from './lib/tauri'
 import { rememberBootAppearance } from './lib/bootAppearance'
 import { loadThemeIconBytes } from './lib/themeIcons'
 import { useAppliedTheme } from './lib/themes'
@@ -171,6 +177,7 @@ export default function App() {
   const mcpEnabled = useProjectsStore((s) => s.preferences.enabledFeatures.mcp)
   const rightSidebarTabs = useSidebarViews('right')
   const rightPanelEnabled = mcpEnabled || rightSidebarTabs.length > 0
+  const wslEnabled = useProjectsStore((s) => s.preferences.enabledFeatures.wsl)
   const setPreferences = useProjectsStore((s) => s.setPreferences)
   // Keep panel defaults stable while dragging. Updating defaultSize on every
   // resize event can make react-resizable-panels rebuild the layout mid-drag.
@@ -200,7 +207,6 @@ export default function App() {
   useKeybindings()
   useDiscordPresence()
   useOrchestrationSettingsSync()
-  useMcpIntroPrompt()
   useRemoteControlService()
   useCloseConfirmation()
   useResourceSupervisor(hydrated)
@@ -218,11 +224,16 @@ export default function App() {
   }, [activeProfileId, hydrated, restoreMarkdownSidebarHistory])
 
   useRouter9AutoStart(hydrated)
+  useAiMemoryAutoStart(hydrated)
 
   useEffect(() => {
     void ghosttyKillAll().catch(() => {
       /* No-op on unsupported platforms. */
     })
+  }, [])
+
+  useEffect(() => {
+    resumeAgentCanvasMirror()
   }, [])
 
   useEffect(() => {
@@ -248,12 +259,16 @@ export default function App() {
   }, [appIconTheme, hydrated])
 
   useEffect(() => {
-    document.documentElement.lang = language === 'pt-BR' ? 'pt-BR' : 'en'
+    document.documentElement.lang = intlLocale(language)
   }, [language])
 
   useEffect(() => {
     setMaxConcurrentSpawns(spawnConcurrency)
   }, [spawnConcurrency])
+  useEffect(() => {
+    if (!hydrated) return
+    void setWslIntegrationEnabled(wslEnabled).catch(() => {})
+  }, [hydrated, wslEnabled])
 
   useEffect(() => {
     if (!hydrated) return
@@ -429,6 +444,28 @@ export default function App() {
       cancelled = true
     }
   }, [hydrated])
+
+  const storedRuleSets = useProjectsStore((state) => state.preferences.workerRuleSets)
+  const rulesPublishTokenRef = useRef(0)
+
+  // The core composes the block at delegation time, so it needs the person's list — and a fresh one
+  // whenever they edit it, not only at startup. Two quick edits can otherwise resolve out of order
+  // over IPC, so a monotonic token makes the last one win instead of whichever lands last.
+  useEffect(() => {
+    if (!hydrated) return
+    const token = ++rulesPublishTokenRef.current
+    const publish = async () => {
+      // Ours are only needed when the person never customized; fetching them otherwise would be a
+      // wasted round trip that also widens the window for an out-of-order write.
+      const sets = storedRuleSets ?? (await orchestratorDefaultRuleSets())
+      // A later edit already published: dropping this one is what keeps the newest list in the core.
+      if (rulesPublishTokenRef.current !== token) return
+      await orchestratorSetRuleSets(sets)
+    }
+    void publish().catch((error) =>
+      console.error('[rules] could not publish the rule sets:', error),
+    )
+  }, [hydrated, storedRuleSets])
 
   useEffect(() => {
     if (!hydrated) return
@@ -648,6 +685,7 @@ export default function App() {
         <AddBrowserModal />
         <NewSubTabModal />
         <PreferencesModal />
+        <PluginMarketplaceModal />
         <ProfilesModal />
         <SyncModal />
         <FindJumpModal />

@@ -38,6 +38,19 @@ export function startAgentCanvasMirror(): void {
 }
 
 /**
+ * Resumes publishing after the main window reloads. The backend keeps the last snapshot for the
+ * whole run, so one being there means a board was detached and may still be open; without this,
+ * that board's canvas would stop updating until another board is detached.
+ */
+export function resumeAgentCanvasMirror(): void {
+  void agentCanvasMirror()
+    .then((raw) => {
+      if (raw) startAgentCanvasMirror()
+    })
+    .catch(() => undefined)
+}
+
+/**
  * Keeps a detached board's canvas equal to what the main window publishes. The first read and the
  * live updates can arrive in either order, so only a newer snapshot replaces the one on screen.
  */

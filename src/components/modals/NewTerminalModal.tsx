@@ -31,6 +31,7 @@ import {
   isShellAgentType,
   type TerminalCreationPreset,
 } from '../../lib/types'
+import { wslTargetFor } from '../../lib/wsl'
 import { getProjectDefaultCwd, useProjectsStore } from '../../stores/projectsStore'
 import { useUiStore } from '../../stores/uiStore'
 import { AgentIcon } from '../icons/AgentIcons'
@@ -38,6 +39,7 @@ import controls from './controls.module.css'
 import { Modal } from './Modal'
 import styles from './NewTerminalModal.module.css'
 import { RowSelect, type RowSelectOption } from './RowSelect'
+import { WslPathPicker } from './WslPathPicker'
 
 const PLANNER_AGENTS: AgentType[] = ['claude', 'codex']
 
@@ -75,6 +77,7 @@ export function NewTerminalModal() {
   )
   const projects = useProjectsStore((s) => s.projects)
   const enabled = useProjectsStore((s) => s.preferences.enabledAgents)
+  const wslEnabled = useProjectsStore((s) => s.preferences.enabledFeatures.wsl)
   const terminalTheme = useProjectsStore(
     (s) => s.preferences.terminalTheme ?? s.preferences.uiTheme,
   )
@@ -272,6 +275,8 @@ export function NewTerminalModal() {
     }
   }
 
+  const wslTarget = wslTargetFor(cwd || inheritedCwd, wslEnabled)
+
   const browse = async () => {
     const dir = await pickDirectory({ defaultPath: cwd || inheritedCwd || undefined })
     if (dir) setCwd(dir)
@@ -446,6 +451,7 @@ export function NewTerminalModal() {
               <button type="button" className={styles.fieldAction} onClick={() => void browse()}>
                 {t('term.chooseFolder')}
               </button>
+              <WslPathPicker onPick={setCwd} triggerClassName={styles.fieldAction} />
             </span>
             <RowSelect
               field="folder"
@@ -460,6 +466,11 @@ export function NewTerminalModal() {
               title={basename(cwd) || cwd || t('term.shellDefaultPlaceholder')}
               side={cwd ? shortenPath(cwd) : undefined}
             />
+            {wslTarget ? (
+              <span className={controls.wslHint}>
+                {t('crud.wslHint', { distro: wslTarget.distro })}
+              </span>
+            ) : null}
           </div>
 
           {orchestrating ? (

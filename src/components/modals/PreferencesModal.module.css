@@ -283,8 +283,46 @@
 .section:focus .sectionHeading h2 {
   color: var(--accent);
 }
+.sectionToggle {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.sectionToggle:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 4px;
+}
+.sectionToggle:hover {
+  color: var(--accent);
+}
+.sectionChevron {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  margin-bottom: 2px;
+  border-right: 1.5px solid currentcolor;
+  border-bottom: 1.5px solid currentcolor;
+  opacity: 0.65;
+  transform: rotate(45deg);
+  transition: transform 120ms ease;
+}
+.sectionToggle[aria-expanded='false'] .sectionChevron {
+  margin-bottom: 0;
+  transform: rotate(-45deg);
+}
 .sectionHeading {
   margin-bottom: 18px;
+}
+.section[data-collapsed] .sectionHeading {
+  margin-bottom: 0;
 }
 .sectionHeading h2 {
   margin: 0;
@@ -967,7 +1005,8 @@
 }
 
 /* Same shell as .agentList label, but a row of actions instead of a single toggle. */
-.cliPathRow {
+.cliPathRow,
+.shellPathRow {
   display: grid;
   grid-template-columns: 40px minmax(0, 1fr) auto;
   align-items: center;
@@ -976,6 +1015,11 @@
   background: var(--bg-sunken);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
+}
+
+/* Same row, without the agent-icon column. */
+.shellPathRow {
+  grid-template-columns: minmax(0, 1fr) auto;
 }
 
 .cliPathValue,

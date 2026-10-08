@@ -218,7 +218,13 @@ pub struct DirectoryEntry {
 }
 
 #[tauri::command]
-pub fn list_directory(path: String) -> Result<Vec<DirectoryEntry>, String> {
+pub async fn list_directory(path: String) -> Result<Vec<DirectoryEntry>, String> {
+    tokio::task::spawn_blocking(move || list_directory_inner(path))
+        .await
+        .map_err(|error| format!("list_directory: blocking task failed: {error}"))?
+}
+
+fn list_directory_inner(path: String) -> Result<Vec<DirectoryEntry>, String> {
     let directory = PathBuf::from(path.trim());
     if !directory.is_dir() {
         return Err("directory not found".to_string());
@@ -300,6 +306,9 @@ fn get_system_roots() -> Vec<String> {
                 roots.push(drive);
             }
         }
+        for distro in crate::wsl::installed_distros() {
+            roots.push(crate::wsl::distro_root_unc(&distro));
+        }
     }
     #[cfg(not(target_os = "windows"))]
     {
@@ -320,8 +329,21 @@ fn get_system_roots() -> Vec<String> {
     roots
 }
 
+pub fn strip_extended_prefix(path: &str) -> String {
+    path.strip_prefix(r"\\?\UNC\")
+        .map(|rest| format!(r"\\{rest}"))
+        .or_else(|| path.strip_prefix(r"\\?\").map(str::to_string))
+        .unwrap_or_else(|| path.to_string())
+}
+
 #[tauri::command]
-pub fn browse_directory(path: String) -> Result<DirectoryListing, String> {
+pub async fn browse_directory(path: String) -> Result<DirectoryListing, String> {
+    tokio::task::spawn_blocking(move || browse_directory_inner(path))
+        .await
+        .map_err(|error| format!("browse_directory: blocking task failed: {error}"))?
+}
+
+fn browse_directory_inner(path: String) -> Result<DirectoryListing, String> {
     let home = get_home_dir();
     let trimmed = path.trim();
     let directory = if trimmed.is_empty() || trimmed == "~" {
@@ -345,15 +367,11 @@ pub fn browse_directory(path: String) -> Result<DirectoryListing, String> {
         .canonicalize()
         .unwrap_or_else(|_| directory.clone());
     let current_path_str = canonical.to_string_lossy().into_owned();
-    let clean_current_path = current_path_str
-        .strip_prefix(r"\\?\")
-        .unwrap_or(&current_path_str)
-        .to_string();
+    let clean_current_path = strip_extended_prefix(&current_path_str);
 
-    let parent_path = canonical.parent().map(|p| {
-        let s = p.to_string_lossy().into_owned();
-        s.strip_prefix(r"\\?\").unwrap_or(&s).to_string()
-    });
+    let parent_path = canonical
+        .parent()
+        .map(|p| strip_extended_prefix(&p.to_string_lossy()));
 
     let mut entries = match fs::read_dir(&canonical) {
         Ok(read_dir) => read_dir
@@ -365,11 +383,7 @@ pub fn browse_directory(path: String) -> Result<DirectoryListing, String> {
                 if name.starts_with('$') || name == "System Volume Information" {
                     return None;
                 }
-                let full_path = entry.path().to_string_lossy().into_owned();
-                let clean_path = full_path
-                    .strip_prefix(r"\\?\")
-                    .unwrap_or(&full_path)
-                    .to_string();
+                let clean_path = strip_extended_prefix(&entry.path().to_string_lossy());
                 Some(BrowseDirectoryEntry {
                     name,
                     path: clean_path,
@@ -387,11 +401,7 @@ pub fn browse_directory(path: String) -> Result<DirectoryListing, String> {
             .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
     });
 
-    let clean_home = home.to_string_lossy().into_owned();
-    let home_path = clean_home
-        .strip_prefix(r"\\?\")
-        .unwrap_or(&clean_home)
-        .to_string();
+    let home_path = strip_extended_prefix(&home.to_string_lossy());
 
     Ok(DirectoryListing {
         current_path: clean_current_path,
@@ -952,25 +962,20 @@ mod tests {
             file.set_modified(at).unwrap();
         };
 
-        assert_eq!(
-            find_relative_path_inner(&main, "a.txt"),
-            Some(main.join("a.txt"))
-        );
-        assert_eq!(
-            find_relative_path_inner(&main, "repo-feature/docs/report.md"),
-            Some(feature.clone())
-        );
-        assert_eq!(find_relative_path_inner(&main, "docs/missing.md"), None);
+        // The temp folder has aliases git does not print (`/var` is `/private/var` on macOS, and
+        // Windows may hand out an 8.3 short name), so a match is compared by the file it names.
+        let found = |path: &str| {
+            find_relative_path_inner(&main, path).map(|found| fs::canonicalize(found).unwrap())
+        };
+        let resolved = |path: &Path| Some(fs::canonicalize(path).unwrap());
+
+        assert_eq!(found("a.txt"), resolved(&main.join("a.txt")));
+        assert_eq!(found("repo-feature/docs/report.md"), resolved(&feature));
+        assert_eq!(found("docs/missing.md"), None);
         touch(&other, 2);
-        assert_eq!(
-            find_relative_path_inner(&main, "docs/report.md"),
-            Some(feature.clone())
-        );
+        assert_eq!(found("docs/report.md"), resolved(&feature));
         touch(&feature, 3);
-        assert_eq!(
-            find_relative_path_inner(&main, "docs/report.md"),
-            Some(other)
-        );
+        assert_eq!(found("docs/report.md"), resolved(&other));
 
         for name in ["repo-feature", "repo-other"] {
             let worktree = parent.join(name);
@@ -1068,6 +1073,43 @@ mod tests {
                 Path::new("//server/share/repo")
             ),
             None
+        );
+    }
+
+    #[test]
+    fn strips_the_extended_length_prefix_from_a_drive_path() {
+        assert_eq!(
+            strip_extended_prefix(r"\\?\C:\projects\app"),
+            r"C:\projects\app"
+        );
+    }
+
+    #[test]
+    fn maps_an_extended_unc_path_back_to_its_double_backslash_form() {
+        assert_eq!(
+            strip_extended_prefix(r"\\?\UNC\wsl.localhost\Ubuntu\home\dev"),
+            r"\\wsl.localhost\Ubuntu\home\dev"
+        );
+    }
+
+    #[test]
+    fn a_cleaned_wsl_path_is_still_parsed_as_a_wsl_path() {
+        let cleaned = strip_extended_prefix(r"\\?\UNC\wsl.localhost\Ubuntu\home\dev");
+        assert_eq!(
+            crate::wsl::parse_wsl_unc(&cleaned).map(|target| target.distro),
+            Some("Ubuntu".to_string())
+        );
+    }
+
+    #[test]
+    fn leaves_an_ordinary_path_untouched() {
+        assert_eq!(
+            strip_extended_prefix(r"C:\projects\app"),
+            r"C:\projects\app"
+        );
+        assert_eq!(
+            strip_extended_prefix(r"\\wsl.localhost\Ubuntu"),
+            r"\\wsl.localhost\Ubuntu"
         );
     }
 }

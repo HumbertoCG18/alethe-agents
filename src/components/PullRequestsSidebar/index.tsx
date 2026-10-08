@@ -129,7 +129,7 @@ export function PullRequestsSidebar() {
               <GitPullRequest size={20} />
             </div>
             <strong>{t('prs.emptyTitle')}</strong>
-            <span>{repo ? t('prs.emptyDescriptionProject') : t('prs.emptyDescription')}</span>
+            <span>{t('prs.emptyDescriptionProject')}</span>
           </div>
         ) : (
           <div className={styles.list}>

@@ -244,6 +244,9 @@
 .status_error {
   color: var(--status-error);
 }
+.status_blocked {
+  color: var(--status-waiting);
+}
 
 .nodeRole {
   min-width: 0;

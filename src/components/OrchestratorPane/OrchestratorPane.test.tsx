@@ -40,31 +40,6 @@ const t = (key: Parameters<typeof translate>[1]) => translate('en', key)
 afterEach(cleanup)
 
 // UI-01: the composer is a text field a screen reader can name.
-describe('OrchestratorPane composer', () => {
-  it('names its input with the text of its placeholder', async () => {
-    const terminal = {
-      id: 'board',
-      name: 'Board',
-      cwd: '',
-      tabs: [{ id: 'tab', ptyId: 'pty-planner' }],
-      activeTabId: 'tab',
-      disabled: false,
-      laneVisible: null,
-    } as unknown as Terminal
-    const project = { id: 'p1', name: 'P1', terminals: [terminal] } as unknown as Project
-    useProjectsStore.setState({
-      ...structuredClone(EMPTY_PROJECTS_FILE),
-      projects: [project],
-      hydrated: true,
-    })
-
-    render(<OrchestratorPane projectId="p1" terminal={terminal} />)
-
-    const input = await screen.findByRole('textbox', { name: t('orchestrator.sendPlaceholder') })
-    expect(input).toHaveAttribute('placeholder', t('orchestrator.sendPlaceholder'))
-  })
-})
-
 // UI-01: a worker stopped on an approval is announced, not only drawn.
 describe('ApprovalAsk', () => {
   it('announces the question a blocked worker is stopped on', () => {

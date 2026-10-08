@@ -36,12 +36,15 @@ export const ptBR: Record<MessageKey, string> = {
   'prefs.shellMissing': 'Shell salvo indisponível. Novas sessões usam o padrão do sistema.',
   'prefs.terminalFont': 'Fonte do terminal',
   'prefs.terminalFontDesc':
-    'Fontes instaladas. Alterações se aplicam aos terminais abertos; a fonte incluída é usada como alternativa.',
+    'Fontes instaladas, mais a Caskaydia Cove Nerd Font incluída. Prompts como oh-my-posh e Starship precisam de uma Nerd Font. Alterações se aplicam aos terminais abertos.',
   'prefs.fontSearch': 'Buscar fontes instaladas',
   'prefs.terminalDiscoveryLoading': 'Carregando shells e fontes locais…',
   'prefs.fontDiscoveryError':
     'Não foi possível listar fontes instaladas. A fonte incluída continua disponível.',
-  'prefs.fontMissing': 'Fonte salva indisponível. A fonte incluída será utilizada.',
+  'prefs.fontMissing': 'Fonte salva indisponível. A fonte padrão será utilizada.',
+  'prefs.shellPickOther': 'Outro executável…',
+  'prefs.shellCustom': 'Executável personalizado. Se ele for removido, novas sessões usam o padrão do sistema.',
+  'prefs.terminalFontDefault': 'Padrão ({name})',
   'markdown.settings': 'Markdown',
   'markdown.settingsDesc':
     'Escolha o agente e modelo dos resumos de documentos, incluindo relatórios noturnos.',
@@ -145,6 +148,11 @@ export const ptBR: Record<MessageKey, string> = {
   'onboarding.agentsEnabledOf': '{active} de {total} ligadas',
   'onboarding.agentChecking': 'Verificando',
   'onboarding.agentReady': 'pronto',
+  'onboarding.usageTitle': 'Mostrar seus limites de uso?',
+  'onboarding.usageSubtitle':
+    'O Alethe pode mostrar quanto de cada plano você já usou. Para ler isso, o Alethe usa as credenciais da CLI já instalada neste computador e contata o provedor. Tudo fica desligado até você ligar.',
+  'onboarding.usageFooter':
+    'Nada é lido enquanto um provedor está desligado · altere depois em Preferências',
   'onboarding.featuresTitle': 'Escolha seus recursos',
   'onboarding.featuresSubtitle':
     'Comece enxuto. Cada módulo que você ligar aparece na interface, e dá pra mudar quando quiser nas Preferências.',
@@ -311,6 +319,25 @@ export const ptBR: Record<MessageKey, string> = {
   'remote.statusOff': 'Desligado',
   'remote.enable': 'Ligar controle remoto',
   'remote.disable': 'Desligar controle remoto',
+  'remote.confirmEnable':
+    'Ligar o Controle Remoto?\n\nO Alethe abrirá listeners HTTP e WebSocket na sua rede local. Dispositivos pareados poderão ver a saída dos terminais compartilhados. As sessões pareadas expiram após {expiry}.\n\n{access}',
+  'remote.confirmEnableTailscale':
+    'Ligar o Controle Remoto?\n\nO Alethe abrirá listeners HTTP e WebSocket na sua rede Tailscale. Dispositivos pareados poderão ver a saída dos terminais compartilhados. As sessões pareadas expiram após {expiry}.\n\n{access}',
+  'remote.confirmAccessReadOnly':
+    'O acesso atual é somente leitura: mensagens para agentes e entrada de shell estão bloqueadas.',
+  'remote.confirmAccessAgentInput':
+    'O acesso atual permite mensagens para agentes; a entrada de shell está bloqueada.',
+  'remote.confirmAccessShellInput':
+    'O acesso atual permite mensagens para agentes e entrada de shell.',
+  'remote.sessionSeconds': '{seconds} segundos',
+  'remote.enableFailedTitle': 'Não foi possível iniciar o controle remoto',
+  'remote.enableFailedBody': 'O Alethe manteve o controle remoto desligado. {error}',
+  'remote.disableFailedTitle': 'Não foi possível desligar o controle remoto',
+  'remote.disableFailedBody':
+    'O Alethe não conseguiu confirmar que o acesso remoto foi encerrado. Reinicie o Alethe antes de continuar. {error}',
+  'remote.rollbackFailedTitle': 'A reversão do controle remoto requer atenção',
+  'remote.rollbackFailedBody':
+    'O Alethe não conseguiu salvar ou aplicar completamente o estado desligado. Reinicie o Alethe e confirme que o Controle Remoto está desligado. Erro de inicialização: {error}. Erro de reversão: {rollbackError}',
   'remote.modalReachEyebrow': 'Passo 1 · Rede',
   'remote.modalPairEyebrow': 'Passo 2 · Parear dispositivo',
   'remote.connectedDevices': 'Dispositivos conectados',
@@ -435,8 +462,11 @@ export const ptBR: Record<MessageKey, string> = {
   'agentInstall.docs': 'Documentação',
   'agentInstall.installTitle': 'Instalar o {agent}',
   'agentInstall.chooseMethod': 'Escolha como instalar o {agent} nesta máquina.',
+  'agentInstall.chooseMethodWsl': 'Escolha como instalar o {agent} dentro do {distro}.',
   'agentInstall.probing': 'Verificando o que está disponível nesta máquina…',
   'agentInstall.noMethod': 'Não há instalador automático para este agente nesta máquina.',
+  'agentInstall.noMethodWsl':
+    'Nenhum instalador deste agente funciona dentro do {distro}. Instale-o manualmente na distro.',
   'agentInstall.uninstall': 'Desinstalar',
   'agentInstall.uninstalling': 'Desinstalando…',
   'agentInstall.uninstallFailed': 'A desinstalação não foi concluída',
@@ -483,6 +513,13 @@ export const ptBR: Record<MessageKey, string> = {
   'handoff.included': '{count} eventos incluídos',
   'handoff.omitted': '{count} omitidos',
   'handoff.redacted': '{count} ocultados',
+  'handoff.scopeLabel': 'O que o outro agente recebe',
+  'handoff.scopeFull': 'Conversa completa',
+  'handoff.scopeFullHint':
+    'Suas mensagens, as respostas do assistente, a atividade de ferramentas e os nomes dos arquivos alterados. Conteúdo de arquivos ou segredos que apareceram na conversa podem chegar a outro fornecedor.',
+  'handoff.scopeUserOnly': 'Só as minhas mensagens',
+  'handoff.scopeUserOnlyHint':
+    'Só o que você digitou, mais a branch e quantos arquivos mudaram. Sem respostas do assistente, sem atividade de ferramentas, sem nomes de arquivos do Git.',
   'handoff.reviewLabel': 'Revise e edite o contexto que o agente de destino vai receber',
   'handoff.size': '{current} / {max} bytes',
   'handoff.unrestricted': 'Iniciar o {agent} em modo irrestrito',
@@ -493,6 +530,8 @@ export const ptBR: Record<MessageKey, string> = {
   'handoff.fallbackNewest':
     'O pane não tinha ID de sessão; a conversa mais recente desta pasta foi selecionada.',
   'handoff.lossOmitted': '{count} eventos antigos ou duplicados foram omitidos.',
+  'handoff.lossOmittedUserOnly':
+    '{count} eventos ficaram de fora: respostas do assistente, atividade de ferramentas e o que passou do limite de tamanho.',
   'handoff.lossRedacted': '{count} possível(is) segredo(s) foram ocultados.',
   'handoff.paneName': 'Handoff para {agent}',
   'handoff.bootstrapPrompt':
@@ -733,6 +772,10 @@ export const ptBR: Record<MessageKey, string> = {
   'features.prs.description':
     'Mostra os Pull Requests do GitHub em que você está envolvido como autor ou revisor, em todos os repositórios, com um jeito rápido de enviar um pra sua lista de TODO.',
   'features.prs.keywords': 'pull request pr github revisao todo',
+  'features.wsl.title': 'Integração com o WSL',
+  'features.wsl.description':
+    'No Windows, uma pasta dentro de uma distro WSL abre o shell da própria distro, roda a CLI instalada lá e retoma as sessões guardadas lá. Desligue para tratar toda pasta como pasta do Windows.',
+  'features.wsl.keywords': 'wsl linux distro ubuntu subsistema windows unc',
   'features.mcp.title': 'MCP e Skills',
   'features.mcp.description':
     'Inspecione e gerencie os servidores MCP e as skills de cada agente em um só painel.',
@@ -745,6 +788,37 @@ export const ptBR: Record<MessageKey, string> = {
   'aiMemory.notInstalledTitle': 'AI Memory está ligado, mas o ai-memory não foi encontrado',
   'aiMemory.notInstalledBody':
     'Instale o servidor ai-memory para os agentes compartilharem memória de longo prazo. Os agentes iniciam normalmente sem ele.',
+  // ai-memory's sub-panel, under its switch in Features.
+  'aiMemory.panelCaptures':
+    'Todo prompt e toda chamada de ferramenta dos agentes que o Alethe inicia são registrados, como markdown num repositório git mais um índice de busca — os dois nesta máquina, os dois legíveis sem o Alethe.',
+  'aiMemory.checking': 'Verificando…',
+  'aiMemory.install': 'Instalar o ai-memory',
+  'aiMemory.installing': 'Instalando…',
+  'aiMemory.installedManaged': 'Instalado pelo Alethe',
+  'aiMemory.installedExternal': 'Usando a cópia que você instalou',
+  'aiMemory.at': 'em {path}',
+  'aiMemory.missing': 'Ainda não instalado — instale e os agentes já podem usar.',
+  'aiMemory.unsupported':
+    'O ai-memory ainda não publica build para esta plataforma, então o Alethe não consegue instalar aqui.',
+  'aiMemory.openRepo': 'Abrir o projeto',
+  'aiMemory.start': 'Iniciar',
+  'aiMemory.starting': 'Iniciando…',
+  'aiMemory.stop': 'Parar',
+  'aiMemory.stopping': 'Parando…',
+  'aiMemory.running': 'Respondendo em {endpoint}',
+  'aiMemory.stopped': 'Parado',
+  'aiMemory.portBusy':
+    'Algo já responde em {endpoint} e não foi o Alethe que iniciou — provavelmente a sua própria cópia. O Alethe não vai mexer nela.',
+  'aiMemory.counts': '{pages} páginas · {sessions} sessões · {observations} observações',
+  'aiMemory.installError': 'Não foi possível instalar o ai-memory.',
+  'aiMemory.startError': 'Não foi possível iniciar o ai-memory.',
+  'aiMemory.stopError': 'Não foi possível parar o ai-memory.',
+  'aiMemory.error.portInUse':
+    'Outra coisa já está respondendo nessa porta — provavelmente a sua própria cópia do ai-memory. Deixe-a rodando e use essa em vez de iniciar outra.',
+  'aiMemory.error.unsupportedPlatform':
+    'O ai-memory não publica build para esta plataforma, então não há o que instalar aqui.',
+  'aiMemory.error.binaryMissing':
+    'O download terminou, mas nenhum binário do ai-memory estava nele. Tente instalar de novo.',
 
   /* ---- global todo sidebar ---- */
   'todo.title': 'Tarefas',
@@ -932,6 +1006,15 @@ export const ptBR: Record<MessageKey, string> = {
     'Notifica quando uma janela de uso do Claude ou Codex reseta, mostrando qual.',
   'prefs.limitResetNotifyOn': 'Ligado',
   'prefs.limitResetNotifyOff': 'Desligado',
+  'prefs.experimentalPermissions': 'Permissões do Agent Canvas',
+  'prefs.experimentalPermissionsDesc':
+    'Como os agentes workers iniciados pelo Agent Canvas experimental lidam com permissões. Vale para os agentes iniciados a partir de agora e fica só neste computador.',
+  'prefs.experimentalPermissionsAsk': 'Perguntar',
+  'prefs.experimentalPermissionsBypass': 'Ignorar',
+  'prefs.experimentalPermissionsAskHint':
+    'Os agentes mantêm as próprias verificações de permissão. Um terminal em que você pode digitar pergunta a você; um worker rodando em segundo plano não tem a quem perguntar, então a ação que precisa de aprovação é recusada e o worker avisa.',
+  'prefs.experimentalPermissionsBypassHint':
+    'Os agentes executam comandos e editam arquivos sem perguntar: o Claude inicia com --dangerously-skip-permissions e o Codex com as aprovações e o sandbox desligados. Use só onde você aceita o que o agente fizer.',
   'prefs.dictation': 'Ditado por voz',
   'prefs.dictationDesc':
     'Speech-to-text local com modelos no dispositivo. Pressione {shortcut} para ditar texto em qualquer painel focado.',
@@ -1035,7 +1118,7 @@ export const ptBR: Record<MessageKey, string> = {
   'prefs.orchestrationRoleName': 'Nome',
   'prefs.orchestrationRoleNameFor': 'Nome do papel {name}',
   'prefs.orchestrationRoleNameInvalid':
-    'Use um nome único, sem espaços e que não comece com "-". Até lá o orquestrador não consegue usar este papel, e ele é descartado quando o Alethe reinicia.',
+    'Use um nome único, sem espaços e que não comece com "-". Até lá o papel mantém o nome salvo, que é o que o orquestrador usa.',
   'prefs.orchestrationAgent': 'Agente',
   'prefs.orchestrationModel': 'Modelo',
   'prefs.orchestrationEffort': 'Esforço',
@@ -1102,6 +1185,40 @@ export const ptBR: Record<MessageKey, string> = {
     'Selecione um projeto acima para ver o histórico de auditoria do GSD.',
   'prefs.multiagentAutocommitError': 'Falha ao alterar a configuração de autocommit.',
   'prefs.multiagentTraceTask': 'Tarefa: {id}',
+  'prefs.orchestratorShortcuts': 'Atalhos de orquestração',
+  'prefs.orchestratorShortcutsDesc':
+    'Instruções de um clique para o agente líder. Clicar em uma no board escreve ela no terminal do líder, onde você edita antes de enviar.',
+  'prefs.shortcutName': 'Nome',
+  'prefs.shortcutText': 'Mensagem',
+  'prefs.shortcutRule': 'Aparece em',
+  'prefs.shortcutRuleAny': 'Qualquer worker',
+  'prefs.shortcutRuleFinished': 'Um worker que terminou',
+  'prefs.shortcutRuleIsolated': 'Um worker isolado que terminou',
+  'prefs.shortcutRestore': 'Restaurar padrão',
+  'prefs.shortcutDelete': 'Excluir',
+  'prefs.shortcutAdd': 'Adicionar atalho',
+  'prefs.shortcutNewName': 'Novo atalho',
+  'prefs.shortcutPlaceholders': 'Disponíveis: {jobId}, {agent}, {branch}, {worktree}, {project}.',
+  'prefs.shortcutsEmpty':
+    'Você não tem atalhos. Restaure os padrões para trazer os do Alethe de volta.',
+  'prefs.shortcutsRestoreDefaults': 'Restaurar padrões',
+  'prefs.workerRules': 'Regras para o trabalho delegado',
+  'prefs.workerRulesDesc':
+    'O que o Alethe diz aos agentes para quem delega trabalho. O conjunto geral vale para toda tarefa; o agente líder escolhe o conjunto que combina com o trabalho. As convenções do próprio repositório sempre prevalecem sobre estas.',
+  'prefs.ruleSetName': 'Nome do conjunto',
+  'prefs.ruleSetText': 'Regras',
+  'prefs.ruleSetSize': '{count} caracteres, enviados a cada tarefa deste conjunto',
+  'prefs.ruleSetDuplicate': 'Outro conjunto já usa esse nome.',
+  'prefs.ruleSetDuplicateRejected':
+    '“{name}” já está em uso, então este conjunto manteve o nome anterior.',
+  'prefs.ruleSetAdd': 'Adicionar conjunto',
+  'prefs.ruleSetNewName': 'Novo conjunto',
+  'prefs.ruleSetsEmpty': 'Nenhuma regra é enviada com o trabalho delegado.',
+  'prefs.ruleSetsLoading': 'Carregando as regras do Alethe…',
+  'prefs.ruleSetsUnavailable':
+    'Não foi possível carregar os conjuntos de regras do Alethe, então eles não podem ser editados agora. As regras que os agentes recebem continuam as mesmas.',
+  'prefs.ruleSetsRetry': 'Tentar de novo',
+  'prefs.ruleSetsRestoreAll': 'Restaurar os conjuntos do Alethe',
   /* ---- plugins ---- */
   'prefs.categoryPlugins': 'Plugins',
   'prefs.categoryPluginsDesc': 'Extensões que adicionam temas, painéis, abas e comandos.',
@@ -1138,6 +1255,54 @@ export const ptBR: Record<MessageKey, string> = {
   'prefs.pluginsCatalogStale': 'Mostrando a última lista salva neste computador',
   'prefs.pluginsCatalogLoading': 'Carregando a lista de plugins…',
   'prefs.pluginsCatalogEmpty': 'Nenhum plugin listado ainda.',
+
+  // Plugin marketplace — its own window, because browsing and configuring are different tasks.
+  'prefs.pluginsMarketplaceDesc': 'Navegue, busque e instale plugins numa janela só para isso.',
+  'prefs.pluginsMarketplaceOpen': 'Abrir o marketplace',
+  'market.title': 'Plugins',
+  'market.search': 'Buscar plugins',
+  'market.browse': 'Marketplace',
+  'market.installed': 'Instalados',
+  'market.sort': 'Ordenar',
+  'market.sortName': 'Nome',
+  'market.sortUpdated': 'Atualizações primeiro',
+  'market.filterCapabilities': 'Pode fazer',
+  'market.filterSource': 'Origem',
+  'market.sourceBundled': 'Vem com o Alethe',
+  'market.sourceLocal': 'Instalado aqui',
+  'market.filterState': 'Estado',
+  'market.stateEnabled': 'Habilitado',
+  'market.stateDisabled': 'Desabilitado',
+  'market.clear': 'Limpar filtros',
+  'market.results': '{count} à mostra',
+  'market.by': 'por {author}',
+  'market.install': 'Instalar',
+  'market.installing': 'Instalando…',
+  'market.update': 'Atualizar para {version}',
+  'market.installedMark': 'Instalado',
+  'market.openPage': 'Abrir a página',
+  'market.enable': 'Habilitar',
+  'market.disable': 'Desabilitar',
+  'market.uninstall': 'Desinstalar',
+  'market.back': 'Voltar à lista',
+  'market.loading': 'Lendo o catálogo…',
+  'market.stale': 'Mostrando o último catálogo carregado — a rede não respondeu.',
+  'market.retry': 'Tentar de novo',
+  'market.error': 'Não foi possível ler o catálogo.',
+  'market.emptySearch': 'Nada corresponde ao que você digitou.',
+  'market.emptyCatalog': 'Nenhum plugin listado ainda.',
+  'market.emptyInstalled': 'Nada instalado ainda. O marketplace é a outra aba.',
+  'market.detailCapabilities': 'O que ele pode fazer',
+  'market.detailRepo': 'Código',
+  'market.notInstallable':
+    'Esta entrada aponta para uma página em vez de publicar um pacote, então o Alethe não consegue instalar por você.',
+  'market.fullPower':
+    'Um plugin roda com o mesmo poder do próprio Alethe. As capacidades são uma declaração, não uma jaula — instale o que você tem motivo para confiar.',
+  'market.uninstallWarning': 'Desinstalar remove o plugin e os dados que ele guardou.',
+  'market.installDone': '{name} instalado',
+  'market.installDoneBody':
+    'Ele fica desabilitado até você habilitar e aceitar o que ele pode fazer.',
+  'market.installFailed': 'Não foi possível instalar esse plugin.',
   'prefs.pluginsCatalogError': 'Não foi possível carregar a lista de plugins.',
   'prefs.pluginsCatalogInstalled': 'Instalado',
   'prefs.pluginsCatalogBy': 'Por {author}',
@@ -1190,9 +1355,14 @@ export const ptBR: Record<MessageKey, string> = {
 
   'prefs.agentsTitle': 'Agentes habilitados',
   'prefs.agentsDesc': 'Escolha quais agentes podem ser usados ao criar terminais e sub-tabs.',
+  'prefs.shell': 'Shell',
+  'prefs.shellDesc':
+    'O Alethe escolhe o shell sozinho (PowerShell 7 quando disponível, senão o Windows PowerShell; $SHELL nos demais sistemas). Aponte outro binário para sobrescrever — vale para abas Shell, não para abas de agente.',
+  'prefs.shellPathPick': 'Selecione o executável do shell',
+  'prefs.terminalFontFamily': 'Família da fonte',
   'prefs.cliPaths': 'Caminhos dos CLIs',
   'prefs.cliPathsDesc':
-    'O Alethe encontra o CLI de cada agente sozinho. Só defina um caminho se o CLI estiver num lugar fora do comum — e aponte para a ferramenta de linha de comando, não para o aplicativo gráfico.',
+    'O Alethe encontra o CLI de cada agente sozinho. Só defina um caminho se o CLI estiver num lugar fora do comum — e aponte para a ferramenta de linha de comando, não para o aplicativo gráfico. Esses caminhos são do Windows: terminais cuja pasta está dentro do WSL os ignoram e resolvem o CLI dentro da distro.',
   'prefs.cliPathAuto': 'Detectado automaticamente',
   'prefs.cliPathSet': 'Definir caminho',
   'prefs.cliPathReset': 'Limpar',
@@ -1201,6 +1371,51 @@ export const ptBR: Record<MessageKey, string> = {
   'prefs.cliPathMismatchBody':
     'A ferramenta de linha de comando do {agent} se chama "{command}". O arquivo escolhido tem outro nome, então ele pode abrir o aplicativo gráfico em vez de rodar no terminal.',
   'prefs.enabledAgents': 'Agentes habilitados ({count}/4)',
+  'prefs.customAgents': 'Agentes personalizados',
+  'prefs.customAgentsDesc':
+    'Adicione seus próprios CLIs de agente. Eles aparecem junto aos nativos em todo lugar e abrem um terminal real com o comando configurado.',
+  'prefs.customAgentsEmpty': 'Nenhum agente personalizado ainda.',
+  'prefs.customAgentAdd': 'Adicionar agente personalizado',
+  'prefs.customAgentEdit': 'Editar',
+  'prefs.customAgentRemove': 'Remover',
+  'prefs.customAgentConfirmRemove': 'Remover o agente personalizado "{label}"?',
+  'prefs.customAgentId': 'ID (slug)',
+  'prefs.customAgentIdHint': 'Letras minúsculas, números e traços, 2–32 caracteres.',
+  'prefs.customAgentLabel': 'Nome de exibição',
+  'prefs.customAgentCli': 'Comando CLI',
+  'prefs.customAgentCliHint': 'Binário mais argumentos padrão opcionais, ex. my-agent --chat.',
+  'prefs.customAgentFlag': 'Flag irrestrita (opcional)',
+  'prefs.customAgentFlagHint': 'Flag única usada no modo irrestrito, ex. --allow-all.',
+  'prefs.customAgentAccent': 'Cor de destaque',
+  'prefs.customAgentIcon': 'Ícone',
+  'prefs.customAgentIconMode': 'Origem do ícone',
+  'prefs.customAgentIconPreset': 'Modelo embutido',
+  'prefs.customAgentIconFile': 'Arquivo .ico local',
+  'prefs.customAgentIconUrl': 'Link de imagem (https)',
+  'prefs.customAgentIconPreview': 'Prévia',
+  'prefs.customAgentIconPick': 'Escolher arquivo .ico',
+  'prefs.customAgentIconFileKept': 'Usando o arquivo .ico salvo. Escolha outro para substituir.',
+  'prefs.customAgentIconFileHint':
+    'Arquivo .ico quadrado de até 512KB. Guardado nos dados do app, nunca como caminho absoluto.',
+  'prefs.customAgentIconUnavailable': 'Ícones .ico locais só funcionam no app de desktop.',
+  'prefs.customAgentIconUrlPlaceholder': 'https://exemplo.com/icone.png',
+  'prefs.customAgentIconUrlHint':
+    'Somente link https de imagem terminado em .png, .jpg ou .jpeg. Imagens remotas carregam devagar e sem referrer.',
+  'prefs.customAgentErrorIconFile': 'Escolha um arquivo .ico quadrado válido de até 512KB.',
+  'prefs.customAgentErrorIconFileTooLarge': 'Esse .ico passa de 512KB. Escolha um arquivo menor.',
+  'prefs.customAgentErrorIconFileNotSquare': 'Esse .ico não é quadrado. Escolha um ícone quadrado.',
+  'prefs.customAgentErrorIconFileInvalid':
+    'Esse arquivo não é um .ico válido. Escolha um arquivo exportado como ícone.',
+  'prefs.customAgentErrorIconUrl': 'Use um link https que termine em .png, .jpg ou .jpeg.',
+  'prefs.customAgentSave': 'Salvar agente',
+  'prefs.customAgentCancel': 'Cancelar',
+  'prefs.customAgentErrorIdFormat': 'Use 2–32 letras minúsculas, números ou traços.',
+  'prefs.customAgentErrorIdTaken': 'Este ID já está em uso.',
+  'prefs.customAgentErrorIdBuiltin': 'Este ID é reservado para um agente nativo.',
+  'prefs.customAgentErrorLabelEmpty': 'Dê um nome de exibição ao agente.',
+  'prefs.customAgentErrorCliEmpty': 'Informe o comando CLI que inicia o agente.',
+  'prefs.customAgentErrorCliUnsafe':
+    'O comando parece inválido ou inseguro. Use um binário com argumentos simples.',
   'prefs.resetSession': 'Resetar última sessão',
   'prefs.resetSessionDesc':
     'Se reabrir o app não retomou seus agentes, isto acha a conversa mais recente de cada agente aberto e reinicia com resume.',
@@ -1637,6 +1852,9 @@ export const ptBR: Record<MessageKey, string> = {
   'widget.antigravityNotSignedIn': 'sem login no agy',
   'widget.antigravityUsageHint': 'rode agy e faça login para ver as quotas ao vivo',
   'widget.usageUnavailable': 'uso indisponível',
+  'widget.usageOff': 'uso desligado',
+  'widget.usageOffHint': 'ligar usa seu login do {provider} e contata a {vendor}',
+  'widget.turnOnUsage': 'ligar',
   'widget.mostUsed': 'mais consumido',
   'widget.mostUsedBucket': 'mais consumido · {name}',
   'widget.remainingLabel': 'restante',
@@ -1676,6 +1894,7 @@ export const ptBR: Record<MessageKey, string> = {
   'crud.projectPathLabel': 'Pasta do projeto',
   'crud.projectPathPlaceholder': 'Escolha a pasta do projeto',
   'crud.projectPathHint': 'Novos terminais começarão nesta pasta.',
+  'crud.wslHint': 'Rodando dentro do WSL · {distro}',
   'crud.groupLabel': 'Grupo',
   'crud.noGroup': 'Solto (sem grupo)',
   'crud.colorLabel': 'Cor',
@@ -1755,6 +1974,11 @@ export const ptBR: Record<MessageKey, string> = {
   'term.goalPlaceholder': 'O que o orquestrador precisa entregar?',
   'term.createMore': 'Criar mais',
   'term.createOrchestration': 'Criar orquestração',
+  'term.wslBadgeLabel': 'Rodando dentro do WSL · {distro}',
+  'term.wslPick': 'WSL',
+  'term.wslPickTitle': 'Abrir uma pasta dentro de uma distro WSL',
+  'term.wslPickFailed': 'Não foi possível acessar o WSL',
+  'term.wslPickFailedBody': 'O Alethe não conseguiu ler a pasta home da distro {distro}.',
   'term.openAgent': 'Abrir {agent}',
   'term.cancel': 'Cancelar',
   'term.create': 'Criar',
@@ -1964,6 +2188,13 @@ export const ptBR: Record<MessageKey, string> = {
   'usageModal.showInTopbar': 'Topbar',
   'usageModal.allHidden':
     'Todos os itens de uso estão ocultos. Reative-os no painel de detalhes de uso de IA.',
+  'prefs.usageAccess': 'Leitura de uso de IA',
+  'prefs.usageAccessDesc':
+    'Escolha de quais provedores o Alethe lê o seu uso. Ligar um deles usa as credenciais da CLI já instalada neste computador e contata esse provedor. Enquanto estiver desligado, o Alethe nunca lê essas credenciais nem contata o provedor.',
+  'usageAccess.providerHint': 'Usa o login do {provider} neste computador e contata a {vendor}.',
+  'usageAccess.orchestratorToastTitle': 'Leitura de uso ligada',
+  'usageAccess.orchestratorToastBody':
+    'O orquestrador usa a cota para avisar você e escolher os papéis, então o Alethe agora lê o uso de {providers} com as credenciais da CLI instalada. Você pode desligar em Preferências > Integrações.',
   'ui.titlebar.itemClaude': 'Uso do Claude Code',
   'ui.titlebar.itemCodex': 'Uso do Codex',
   'ui.titlebar.itemAntigravity': 'Status do Antigravity',
@@ -2416,6 +2647,15 @@ export const ptBR: Record<MessageKey, string> = {
   'ws.copied': 'copiado!',
   'ws.copy': 'copiar',
   'ws.agentsChangedRestart': 'agents mudaram — reinicia o claude ↻',
+  'ws.permissionsChangedRestart': 'modo de permissão mudou — reinicia o claude ↻',
+  'ws.permissionsAsk': 'permissões: perguntar',
+  'ws.permissionsBypass': 'permissões: ignorar',
+  'ws.permissionsAskTitle':
+    'Os agentes perguntam antes de executar comandos ou editar arquivos. Um worker em segundo plano não tem a quem perguntar, então o que precisa de aprovação é recusado. Clique para alterar.',
+  'ws.permissionsBypassTitle':
+    'Os agentes executam comandos e editam arquivos sem perguntar. Clique para alterar.',
+  'ws.workerAskRefused':
+    'Modo perguntar: ninguém podia aprovar este worker, então qualquer ação que precisava de aprovação foi recusada. Altere o modo em Preferências → Terminal e agentes.',
   'ws.exitedCode': 'encerrado (code {code})',
   'ws.economyModeTitle':
     'Modo economia: escreve/remove agents Haiku e codex-executor em .claude/agents/ da pasta',
@@ -2433,14 +2673,6 @@ export const ptBR: Record<MessageKey, string> = {
   'diff.error.binary': 'Arquivo binário não pode ser exibido como texto',
   'diff.error.tooLarge': 'Diff muito grande para exibir (> 2MB)',
   'diff.error.generic': 'Não foi possível carregar o diff',
-  'orchestrator.steerPlaceholder': 'Corrigir este worker…',
-  'orchestrator.sendPlaceholder': 'Dar mais trabalho a ele…',
-  'orchestrator.resumePlaceholder': 'Retomar com…',
-  'orchestrator.steerHint': 'Entra no turno que ele está rodando agora',
-  'orchestrator.sendHint': 'Roda como o próximo turno dele, com tudo o que ele já sabe',
-  'orchestrator.resumeHint': 'Inicia este worker de novo e retoma a thread dele com a mensagem',
-  'orchestrator.resumeNote': 'enviar o inicia de novo, com o contexto intacto',
-  'orchestrator.sendFailed': 'O worker não aceitou a mensagem',
   'orchestrator.addPlannerTitle': 'Abrir outro terminal de agente para orquestrar',
   'orchestrator.title': 'Orquestração',
   'orchestrator.running': '{count} rodando',
@@ -2475,6 +2707,31 @@ export const ptBR: Record<MessageKey, string> = {
   'orchestrator.status.released': 'liberado',
   'orchestrator.status.interrupted': 'interrompido',
   'orchestrator.status.blocked': 'aguardando você',
+  'orchestrator.shellsEyebrow': 'shells',
+  'orchestrator.shellsLabel': 'Shells',
+  'orchestrator.shellsOrphanLabel': 'Shells sem agente',
+  'orchestrator.shellCount': '{count} shell',
+  'orchestrator.shellCountPlural': '{count} shells',
+  'orchestrator.shell.running': 'rodando',
+  'orchestrator.shell.exited': 'encerrado ({code})',
+  'orchestrator.shell.stopped': 'parado',
+  'orchestrator.shell.stop': 'Parar',
+  'orchestrator.shell.restart': 'Reiniciar',
+  'orchestrator.shell.play': 'Rodar de novo',
+  'orchestrator.shell.openTerminal': 'Abrir terminal',
+  'orchestrator.shell.remove': 'Remover',
+  'orchestrator.shell.failed': 'O shell não respondeu',
+  'orchestrator.shell.viewGone':
+    'Este shell não está rodando. Inicie de novo pelo quadro de orquestração.',
+  'orchestrator.shortcut.applyName': 'Aplicar',
+  'orchestrator.shortcut.applyText':
+    'Traga o trabalho do worker {jobId} para o projeto: faça commit do que ele deixou em {worktree}, dê merge de {branch} na branch atual e me avise se houver conflito.',
+  'orchestrator.shortcut.reviewName': 'Revisar',
+  'orchestrator.shortcut.reviewText':
+    'Leia o relatório e o diff do worker {jobId} e me diga se ele fez o que foi pedido e o que você mudaria.',
+  'orchestrator.shortcut.continueName': 'Continuar',
+  'orchestrator.shortcut.continueText':
+    'Mande mais trabalho ao worker {jobId} no thread que ele já tem, aproveitando tudo o que ele aprendeu.',
   'orchestrator.interruptedTitle':
     'O processo morreu junto com o app. A thread continua em disco, então é possível retomar o trabalho.',
   'orchestrator.blockedTitle':
@@ -2510,6 +2767,7 @@ export const ptBR: Record<MessageKey, string> = {
   'orchestrator.forestHint':
     'Uma árvore por chamada de delegação · os workers de uma execução não dependem uns dos outros.',
   'orchestrator.runNodeTitle': 'A delegação que iniciou estes workers',
+  'orchestrator.runRulesTitle': 'Conjunto de regras com que esta execução foi delegada',
   'orchestrator.zoomIn': 'Aproximar',
   'orchestrator.zoomOut': 'Afastar',
   'orchestrator.zoomFit': 'ajustar',
@@ -2533,29 +2791,8 @@ export const ptBR: Record<MessageKey, string> = {
   'orchestrator.noReport': 'Este worker ainda não relatou nada.',
   'orchestrator.contextChip': '{value}% do contexto',
   'orchestrator.contextTitle': '{percent}% da janela de contexto do modelo usada',
-  'orchestrator.messageAction': 'mensagem',
-  'orchestrator.viewDiff': 'ver diff',
-  'orchestrator.hideDiff': 'ocultar diff',
   'orchestrator.diffLoading': 'Carregando diff…',
   'orchestrator.diffFailed': 'Não foi possível carregar o diff',
-  'orchestrator.applyAction': 'aplicar',
-  'orchestrator.applying': 'aplicando…',
-  'orchestrator.applyConflict': 'Não é possível aplicar automaticamente',
-  'orchestrator.applyConflictBody':
-    'A branch do worker {id} conflita com a atual. Resolva manualmente, como em qualquer outra worktree.',
-  'orchestrator.applyFailed': 'Não foi possível aplicar as mudanças do worker',
-  'orchestrator.menuOpen': 'Abrir',
-  'orchestrator.menuStop': 'Parar',
-  'orchestrator.menuRestart': 'Reiniciar',
-  'orchestrator.stopFailed': 'Não foi possível parar o worker',
-  'orchestrator.restartFailed': 'Não foi possível reiniciar o worker',
-  'orchestrator.applySuccess': 'Aplicado',
-  'orchestrator.applySuccessBody': 'Mesclado em {branch} e a worktree foi removida.',
-  'orchestrator.composeTo': 'para {id}',
-  'orchestrator.composeNoTarget': 'Escolha um worker para falar com ele',
-  'orchestrator.modeSteer': 'corrigir',
-  'orchestrator.modeNext': 'próximo turno',
-  'orchestrator.modeResume': 'retomar',
   'orchestrator.askLabel': 'aguardando você',
   'orchestrator.askCommand': 'Ele quer rodar um comando.',
   'orchestrator.askFileChange': 'Ele quer alterar arquivos.',
@@ -2574,6 +2811,18 @@ export const ptBR: Record<MessageKey, string> = {
   'orchestrator.answerAbort': 'Abortar',
   'orchestrator.answerAbortTitle': 'Encerra o turno deste worker em vez de responder à pergunta',
   'orchestrator.answerFailed': 'O worker não aceitou a resposta',
+  'orchestrator.reportTab': 'Relatório',
+  'orchestrator.diffTab': 'Diff',
+  'orchestrator.stopWorker': 'Parar este worker',
+  'orchestrator.stopFailed': 'O worker não parou',
+  'orchestrator.menuOpen': 'Abrir',
+  'orchestrator.menuStop': 'Parar',
+  'orchestrator.menuRestart': 'Reiniciar',
+  'orchestrator.restartFailed': 'Não foi possível reiniciar o worker',
+  'orchestrator.inspectorClose': 'Fechar',
+  'orchestrator.shellCwd': 'em {path}',
+  'orchestrator.noPlannerForShortcuts':
+    'O agente que iniciou este worker não está mais aberto, então não há para quem enviar uma instrução.',
   'addContent.orchestrator': 'Orquestração',
   'addContent.orchestratorDescription': 'Acompanhe os workers para quem os agentes delegam.',
   'diff.empty': 'Sem alterações para exibir.',
@@ -2622,7 +2871,7 @@ export const ptBR: Record<MessageKey, string> = {
   'ui.terminal.openOrchestration': 'Abrir orquestração',
   'ui.terminal.orchestrationRestartTitle': 'Reiniciar o Claude para a orquestração?',
   'ui.terminal.orchestrationRestartBody':
-    'Esta conversa foi iniciada sem as ferramentas do orquestrador. O Claude reinicia na mesma conversa para recebê-las.',
+    'Esta conversa foi iniciada sem as ferramentas do orquestrador. O Claude reinicia na mesma conversa para recebê-las, e a orquestração de agentes fica ligada para os próximos terminais Claude e Codex.',
   'git.initOffer.title': 'Ainda não é um repositório Git',
   'git.initOffer.body':
     'Isolamento de agentes, worktrees e merges precisam que esta pasta seja um repositório Git. Inicializar agora?',
@@ -2817,6 +3066,8 @@ export const ptBR: Record<MessageKey, string> = {
   'sync.error.access_denied': 'A autorização foi negada no GitHub.',
   'sync.error.code_expired': 'O código expirou — tente entrar de novo.',
   'sync.error.malformed_payload': 'Os dados na nuvem estão malformados.',
+  'sync.error.secure_store_unavailable':
+    'O cofre de credenciais do sistema não está disponível, então nada foi salvo. No Linux, instale e desbloqueie um cofre como o GNOME Keyring ou o KWallet e tente de novo.',
   'sync.error.generic': 'Falha na sincronização: {error}',
 
   /* ---- supervisor de recursos ---- */
@@ -2864,6 +3115,11 @@ export const ptBR: Record<MessageKey, string> = {
   'sandbox.statusWorking': 'Trabalhando',
   'sandbox.statusDone': 'Concluído',
   'sandbox.statusError': 'Erro',
+  'sandbox.statusBlocked': 'Bloqueado',
+  'sandbox.approvalDeclinedCommand':
+    'Parado por um pedido de permissão: um comando precisava de aprovação e ninguém podia responder, então foi recusado. Altere o modo em Preferências → Terminal e agentes.',
+  'sandbox.approvalDeclinedFileChange':
+    'Parado por um pedido de permissão: uma alteração de arquivo precisava de aprovação e ninguém podia responder, então foi recusada. Altere o modo em Preferências → Terminal e agentes.',
   'sandbox.terminalPreview': 'Prévia do terminal',
   'sandbox.selectTerminal': 'Selecione um terminal de agente para inspecioná-lo aqui.',
   'sandbox.resizeTerminal': 'Redimensionar terminal',
@@ -3243,6 +3499,13 @@ export const ptBR: Record<MessageKey, string> = {
   'mcp.registryNoResults': 'Nenhum servidor encontrado.',
   'mcp.registryOffline': 'Não deu para alcançar o registry e não há nada em cache para esta busca.',
   'mcp.registryStale': 'Registry fora do ar — mostrando a cópia salva em {date}.',
+  'mcp.registryReviewTitle': 'Seleção do registry',
+  'mcp.registryReviewOrigin': 'Origem no registry',
+  'mcp.registryReviewName': 'Título publicado',
+  'mcp.registryReviewVersion': 'Versão publicada',
+  'mcp.registryReviewRepository': 'Repositório',
+  'mcp.registryAcknowledgement':
+    'Entendo que este é um software de terceiros que pode executar código local ou acessar serviços remotos quando um agente iniciar, e que aparecer no registry não significa um endosso da Alethe.',
   'mcp.addWritten': '{count} servidor(es) adicionado(s) em {agents}',
   'mcp.fieldName': 'Nome',
   'mcp.fieldTransport': 'Transporte',
@@ -3335,6 +3598,11 @@ export const ptBR: Record<MessageKey, string> = {
   'router9.install': 'Instalar',
   'router9.reinstall': 'Reinstalar',
   'router9.update': 'Atualizar para {version}',
+  'router9.installDone': 'O 9router está instalado e pronto para rotear.',
+  'router9.installFailed': 'O 9router não foi instalado. A saída do instalador está abaixo.',
+  'router9.uninstallDone': 'O 9router foi removido da pasta do Alethe.',
+  'router9.uninstallFailed': 'O 9router continua instalado. A saída está abaixo.',
+  'router9.retry': 'Tentar de novo',
   'router9.installTitle': 'Instalar o 9router',
   'router9.uninstallTitle': 'Remover o 9router',
   'router9.installIntro':

@@ -12,11 +12,22 @@ import {
   setRemoteControlShellInput,
 } from '../lib/tauri'
 import { translate } from '../lib/i18n'
-import { useProjectsStore } from '../stores/projectsStore'
+import { flushProjectsState, useProjectsStore } from '../stores/projectsStore'
 import { useUiStore } from '../stores/uiStore'
+
+// The backend treats the highest id it has seen as the authoritative
+// enable/disable request, so ids must keep growing across remounts and HMR.
+let remoteControlRequestId = Date.now() * 1_000
+
+function nextRemoteControlRequestId(): number {
+  remoteControlRequestId += 1
+  return remoteControlRequestId
+}
 
 export function useRemoteControlService() {
   const startupSyncedRef = useRef(false)
+  const syncSequence = useRef(0)
+  const syncQueue = useRef(Promise.resolve())
   const hydrated = useProjectsStore((store) => store.hydrated)
   const enabled = useProjectsStore((store) => store.preferences.remoteEnabled)
   const maxDevices = useProjectsStore((store) => store.preferences.remoteMaxDevices)
@@ -27,25 +38,88 @@ export function useRemoteControlService() {
 
   useEffect(() => {
     if (!hydrated) return
+    const sequence = ++syncSequence.current
+    const requestId = nextRemoteControlRequestId()
+
+    // Remote Control is intentionally session-scoped. A saved preference must
+    // not silently reopen a network listener after the app is restarted.
+    let wanted = enabled
+    if (!startupSyncedRef.current) {
+      startupSyncedRef.current = true
+      if (enabled) {
+        useProjectsStore.getState().setPreferences({ remoteEnabled: false })
+        wanted = false
+      }
+    }
+
+    if (!wanted) {
+      // Disabling bypasses the queue: it must not wait behind a pending enable.
+      void setRemoteControlEnabled(false, requestId).catch((error: unknown) => {
+        if (useProjectsStore.getState().preferences.remoteEnabled) return
+        const locale = useProjectsStore.getState().preferences.language
+        useUiStore.getState().pushToast({
+          title: translate(locale, 'remote.disableFailedTitle'),
+          body: translate(locale, 'remote.disableFailedBody', { error: String(error) }),
+        })
+      })
+      return
+    }
+
     const sync = async () => {
-      // Remote Control is intentionally session-scoped. A saved preference must
-      // not silently reopen a network listener after the app is restarted.
-      if (!startupSyncedRef.current) {
-        startupSyncedRef.current = true
-        if (enabled) {
-          useProjectsStore.getState().setPreferences({ remoteEnabled: false })
-          await setRemoteControlEnabled(false)
+      if (sequence !== syncSequence.current) return
+
+      try {
+        // Fail closed: every policy must be applied before a listener opens.
+        await Promise.all([
+          setRemoteControlMaxDevices(maxDevices),
+          setRemoteControlSessionExpiry(expiry),
+          setRemoteControlReadOnly(readOnly),
+          setRemoteControlShellInput(allowShellInput),
+        ])
+        if (sequence !== syncSequence.current) return
+        await setRemoteControlReachMode(useTailscale)
+        if (sequence !== syncSequence.current) return
+
+        const status = await setRemoteControlEnabled(true, requestId)
+        if (sequence !== syncSequence.current) return
+        if (!status.enabled) {
+          throw new Error('Remote control did not report active listeners.')
+        }
+      } catch (error) {
+        if (sequence !== syncSequence.current) return
+        const store = useProjectsStore.getState()
+        if (!store.preferences.remoteEnabled) return
+
+        const stopError = await setRemoteControlEnabled(false, requestId).then(
+          () => null,
+          (stopFailure: unknown) => stopFailure,
+        )
+        if (sequence !== syncSequence.current) return
+
+        const locale = store.preferences.language
+        store.setPreferences({ remoteEnabled: false })
+        const persistenceError = await flushProjectsState().then(
+          () => null,
+          (saveFailure: unknown) => saveFailure,
+        )
+        if (stopError || persistenceError) {
+          useUiStore.getState().pushToast({
+            title: translate(locale, 'remote.rollbackFailedTitle'),
+            body: translate(locale, 'remote.rollbackFailedBody', {
+              error: String(error),
+              rollbackError: String(stopError ?? persistenceError),
+            }),
+          })
           return
         }
+        useUiStore.getState().pushToast({
+          title: translate(locale, 'remote.enableFailedTitle'),
+          body: translate(locale, 'remote.enableFailedBody', { error: String(error) }),
+        })
       }
-      await setRemoteControlMaxDevices(maxDevices)
-      await setRemoteControlSessionExpiry(expiry)
-      await setRemoteControlReadOnly(readOnly)
-      await setRemoteControlShellInput(allowShellInput)
-      await setRemoteControlReachMode(useTailscale)
-      await setRemoteControlEnabled(enabled)
     }
-    void sync().catch(() => undefined)
+
+    syncQueue.current = syncQueue.current.catch(() => undefined).then(sync)
   }, [allowShellInput, enabled, expiry, hydrated, maxDevices, readOnly, useTailscale])
 
   useEffect(() => {

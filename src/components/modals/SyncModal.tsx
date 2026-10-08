@@ -93,6 +93,7 @@ export function SyncModal() {
   const mapError = (raw: unknown): string => {
     const msg =
       typeof raw === 'string' ? raw : String((raw as { message?: string })?.message ?? raw)
+    if (msg.startsWith('secure_store_unavailable')) return t('sync.error.secure_store_unavailable')
     if (KNOWN_ERRORS.has(msg)) return t(`sync.error.${msg}` as MessageKey)
     return t('sync.error.generic', { error: msg })
   }

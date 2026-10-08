@@ -130,22 +130,10 @@ fn shells_on_path() -> Vec<ShellOption> {
     shells
 }
 
-/// Only a currently discovered executable is accepted; strings never become shell command lines.
 pub(crate) fn resolve_shell(selected: Option<&str>) -> Option<String> {
+    // The rule `pty.rs` applies to a plain tab's override: a real file, never a command line.
     let selected = selected?.trim();
-    if !Path::new(selected).is_absolute() || !Path::new(selected).is_file() {
-        return None;
-    }
-    shells_on_path()
-        .into_iter()
-        .find(|item| {
-            if cfg!(windows) {
-                item.id.eq_ignore_ascii_case(selected)
-            } else {
-                item.id == selected
-            }
-        })
-        .map(|item| item.id)
+    (Path::new(selected).is_absolute() && Path::new(selected).is_file()).then(|| selected.to_string())
 }
 
 #[tauri::command]
@@ -272,15 +260,11 @@ mod tests {
             .into_iter()
             .next()
             .expect("An installed shell");
+        // A plain tab's shell arrives as the launcher override `pty.rs` already checked.
         let plain =
-            crate::cli_resolver::command_builder_for_terminal(None, None, &[], Some(&shell.id));
+            crate::cli_resolver::command_builder_for_terminal(None, Some(&shell.id), &[], None);
         assert_eq!(plain.get_argv()[0].to_string_lossy(), shell.id);
-        let agent = crate::cli_resolver::command_builder_for_terminal(
-            Some("claude"),
-            None,
-            &[],
-            Some(&shell.id),
-        );
+        let agent = crate::cli_resolver::command_builder_for_terminal(Some("claude"), None, &[], None);
         assert_eq!(
             agent.get_argv()[0].to_string_lossy(),
             crate::cli_resolver::default_shell()
@@ -303,14 +287,12 @@ mod tests {
         assert_eq!(kind("bash", r"C:\WINDOWS\system32\bash.exe"), "wsl");
         assert_eq!(kind("bash", r"C:\Program Files\Git\bin\bash.exe"), "gitBash");
         assert_eq!(kind("bash", r"C:\msys64\usr\bin\bash.exe"), "bash");
+        let found = shells_on_path().into_iter().find(|s| s.kind == "gitBash");
         let git_bash = crate::cli_resolver::command_builder_for_terminal(
             None,
-            None,
+            found.as_ref().map(|s| s.id.as_str()),
             &[],
-            shells_on_path()
-                .iter()
-                .find(|s| s.kind == "gitBash")
-                .map(|s| s.id.as_str()),
+            None,
         );
         if git_bash.get_argv()[0].to_string_lossy().ends_with("bash.exe") {
             let args: Vec<_> = git_bash.get_argv()[1..]

@@ -1,4 +1,5 @@
 import { useProjectsStore } from '../stores/projectsStore'
+import { agentLabel } from './agentProviders'
 import {
   agentHooksSettingsPath,
   aiMemoryDetect,
@@ -8,20 +9,22 @@ import {
   orchestratorMcpConfigPath,
   playwrightMcpConfigPath,
 } from './tauri'
-import type { Project } from './types'
+import type { AgentType, Project } from './types'
+import { toWslGuestPath, wslTargetFor } from './wsl'
 
 /**
  * The terminal a pty belongs to, which is how the orchestration board names its planner. The label
  * is taken before the first spawn, when the tab has no ptyId yet and the pane spawns under its tab
- * id, so a tab is matched by the same `ptyId ?? id` the pane uses (#264).
+ * id, so a tab is matched by the same `ptyId ?? id` the pane uses. When none matches, the agent's
+ * name is still more readable than the raw id.
  */
-export function plannerLabelFor(ptyId: string): string {
+export function plannerLabelFor(ptyId: string, agent?: AgentType): string {
   for (const project of useProjectsStore.getState().projects) {
     for (const terminal of project.terminals) {
       if (terminal.tabs.some((tab) => (tab.ptyId ?? tab.id) === ptyId)) return terminal.name
     }
   }
-  return ptyId
+  return agent ? agentLabel(agent) : ptyId
 }
 
 /** The repository Graphify serves a terminal from, or null when the project has it off. */
@@ -43,6 +46,9 @@ export type ClaudeLaunchExtras = {
  * Claude only reads them at launch, so every launch of a pane (first spawn, restart, resume) has
  * to pass them again (#248). None of this starts a browser: the Playwright config points at the
  * shared one when it runs and otherwise leaves Playwright to open one only when it is needed.
+ *
+ * A Claude inside a WSL distro reads every path in guest form. Graphify and AI memory stay off
+ * there: they run Windows-side binaries over Windows paths and would fail at every call.
  */
 export async function claudeLaunchExtras({
   ptyId,
@@ -57,15 +63,16 @@ export async function claudeLaunchExtras({
 }): Promise<ClaudeLaunchExtras> {
   const { enabledFeatures, playwrightBrowserMode, playwrightDedicatedHeadless } =
     useProjectsStore.getState().preferences
+  const wslTarget = wslTargetFor(cwd, enabledFeatures.wsl)
   const mcpConfigPaths: string[] = []
 
-  if (graphifyRepo) {
+  if (graphifyRepo && !wslTarget) {
     void graphifyEnsureGraph(graphifyRepo).catch(() => undefined)
     const path = await graphifyMcpConfigPath(graphifyRepo).catch(() => undefined)
     if (path) mcpConfigPaths.push(path)
   }
 
-  if (enabledFeatures.aiMemory && cwd) {
+  if (enabledFeatures.aiMemory && cwd && !wslTarget) {
     const status = await aiMemoryDetect().catch(() => undefined)
     if (status?.installed) {
       const path = await aiMemoryMcpConfigPath(cwd).catch(() => undefined)
@@ -84,7 +91,7 @@ export async function claudeLaunchExtras({
   }
 
   const orchestratorPath = enabledFeatures.orchestrator
-    ? await orchestratorMcpConfigPath(ptyId, plannerLabelFor(ptyId), 'claude').catch(
+    ? await orchestratorMcpConfigPath(ptyId, plannerLabelFor(ptyId, 'claude'), 'claude').catch(
         () => undefined,
       )
     : undefined
@@ -96,6 +103,15 @@ export async function claudeLaunchExtras({
     () => undefined,
   )
 
+  if (wslTarget) {
+    return {
+      mcpConfigPaths: mcpConfigPaths.map(toWslGuestPath).filter((p): p is string => p !== null),
+      hooksSettingsPath: hooksSettingsPath
+        ? (toWslGuestPath(hooksSettingsPath) ?? undefined)
+        : undefined,
+      orchestrator: Boolean(orchestratorPath),
+    }
+  }
   return { mcpConfigPaths, hooksSettingsPath, orchestrator: Boolean(orchestratorPath) }
 }
 

@@ -17,6 +17,10 @@ vi.mock('../../../stores/projectsStore', () => ({
 vi.mock('../../../lib/tauri/agents', () => ({ discoverProviderModels: mocks.discover }))
 import { MarkdownPage } from './MarkdownPage'
 
+/** Sections collapse through a header button named like their picker; this is the picker. */
+const picker = (name: string) =>
+  screen.getAllByRole('button', { name }).find((el) => el.getAttribute('aria-haspopup') === 'listbox')!
+
 beforeEach(() => {
   mocks.discover.mockReset().mockResolvedValue([{ id: 'current-model', label: 'Current model' }])
   mocks.state.setPreferences.mockReset()
@@ -24,7 +28,7 @@ beforeEach(() => {
 
 it('uses themed selectors and saves a discovered model without blur', async () => {
   render(<MarkdownPage />)
-  fireEvent.click(screen.getByRole('button', { name: 'Model' }))
+  fireEvent.click(picker('Model'))
   fireEvent.click(await screen.findByRole('option', { name: 'Current model' }))
   expect(mocks.state.setPreferences).toHaveBeenCalledWith({
     markdownSummary: expect.objectContaining({ model: 'current-model' }),
@@ -37,7 +41,7 @@ it('gives each setting its own section and saves the document age window', async
   const headings = screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)
   expect(headings).toEqual(['AI summaries', 'Summary agent', 'Model', 'Summary style', 'Older documents'])
   expect(screen.getByRole('checkbox', { name: 'Generate AI summaries' })).toBeChecked()
-  fireEvent.click(screen.getByRole('button', { name: 'Older documents' }))
+  fireEvent.click(picker('Older documents'))
   fireEvent.click(await screen.findByRole('option', { name: 'Older than 14 days' }))
   expect(mocks.state.setPreferences).toHaveBeenCalledWith({ markdownCatalogMaxAgeDays: 14 })
 })
@@ -46,5 +50,5 @@ it('shows a discovery error while keeping the default/custom model choices usabl
   mocks.discover.mockRejectedValue(new Error('unavailable'))
   render(<MarkdownPage />)
   expect(await screen.findByRole('alert')).toBeTruthy()
-  expect(screen.getByRole('button', { name: 'Model' })).not.toBeDisabled()
+  expect(picker('Model')).not.toBeDisabled()
 })

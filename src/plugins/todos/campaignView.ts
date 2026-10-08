@@ -52,7 +52,7 @@ import {
   listDirectory,
   listenFileChanged,
   listenOrchestratorJobs,
-  orchestratorCancel,
+  orchestratorCancelJob,
   type OrchestratorJob,
   orchestratorJobs,
   type OrchestratorSnapshot,
@@ -645,7 +645,7 @@ export async function cancelCampaign(
     )
   const jobs = liveJobs(await orchestratorJobs())
   await pauseCampaign(projectId, campaign.id)
-  const results = await Promise.allSettled(jobs.map((job) => orchestratorCancel(job.id)))
+  const results = await Promise.allSettled(jobs.map((job) => orchestratorCancelJob(job.id)))
   // Any worker of the campaign live now counts, also one started since the first listing; without
   // a new snapshot, no cancel is confirmed.
   const after = await orchestratorJobs().catch(() => null)

@@ -11,6 +11,7 @@ import {
   ghosttySyncFrame,
   type WebRect,
 } from '../../lib/tauri'
+import { primaryFontFamily } from '../../lib/terminalPreferences'
 import { useProjectsStore } from '../../stores/projectsStore'
 
 const EXIT_POLL_MS = 2500
@@ -40,7 +41,8 @@ export function GhosttySurface({
   const lastRectRef = useRef<WebRect | null>(null)
   const rafRef = useRef<number | null>(null)
   const spawnedRef = useRef(false)
-  const fontFamily = useProjectsStore((state) => state.preferences.terminalFontFamily ?? null)
+  // Ghostty takes one family; the saved stack starts with the one the person picked.
+  const fontFamily = useProjectsStore((state) => primaryFontFamily(state.preferences.terminalFontFamily))
   const fontRef = useRef(fontFamily)
   fontRef.current = fontFamily
   useEffect(() => {
@@ -111,7 +113,7 @@ export function GhosttySurface({
           command,
           shell: command
             ? undefined
-            : (useProjectsStore.getState().preferences.defaultShell ?? undefined),
+            : (useProjectsStore.getState().preferences.shellPath ?? undefined),
           fontFamily: requestedFont,
         })
         if (disposed) return

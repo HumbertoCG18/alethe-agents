@@ -1,6 +1,7 @@
 import { useProjectsStore } from '../stores/projectsStore'
 import { hasOrchestratorTools, waitForOrchestratorTools } from './claudeMcpConfigs'
 import type { Terminal } from './types'
+import { enableOrchestratorFeature } from './orchestratorUsageAccess'
 
 /** How long a restarted (or resumed) Claude gets to come back with the orchestrator tools. */
 const TOOLS_TIMEOUT_MS = 20_000
@@ -58,7 +59,7 @@ export async function startOrchestrationOn({
 
     // Same as starting a planner from the new-terminal dialog. Only after the user agreed to go
     // ahead.
-    enableOrchestrator()
+    enableOrchestratorFeature()
     if (needsRestart) {
       if (!(await restart())) return 'failed'
       if (!(await waitForOrchestratorTools(ptyId, TOOLS_TIMEOUT_MS))) return 'failed'
@@ -76,18 +77,11 @@ export async function startOrchestrationOn({
   }
 }
 
-/** The feature has to be on for an agent's launch to include the orchestrator tools. */
-function enableOrchestrator() {
-  const { preferences, setPreferences } = useProjectsStore.getState()
-  if (!preferences.enabledFeatures.orchestrator) {
-    setPreferences({ enabledFeatures: { ...preferences.enabledFeatures, orchestrator: true } })
-  }
-}
 
 function addBoard(projectId: string, terminalId: string, cwd: string) {
   const { createOrchestratorPane, groupPanes } = useProjectsStore.getState()
   const board = createOrchestratorPane(projectId, cwd)
-  groupPanes(projectId, [terminalId, board.id], { kind: 'orchestration' })
+  groupPanes(projectId, [terminalId, board.id], { kind: 'orchestration', plannerId: terminalId })
 }
 
 /**
@@ -99,7 +93,7 @@ export async function createOrchestratedTerminal(
   cwd: string,
   create: () => Terminal | Promise<Terminal>,
 ): Promise<Terminal> {
-  enableOrchestrator()
+  enableOrchestratorFeature()
   const terminal = await create()
   addBoard(projectId, terminal.id, cwd)
   return terminal

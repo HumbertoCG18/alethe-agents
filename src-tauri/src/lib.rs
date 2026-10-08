@@ -3,6 +3,7 @@ mod agent_cost;
 mod agent_events;
 mod agent_library;
 mod ai_memory;
+mod ai_memory_hooks;
 mod antigravity_sessions;
 mod antigravity_usage;
 mod backup;
@@ -23,6 +24,7 @@ mod conflict_resolution;
 mod contract_check;
 mod crash_watch;
 mod cursor_sessions;
+mod custom_agent_icons;
 mod diagnostics;
 mod discord_presence;
 mod economy_agents;
@@ -51,6 +53,7 @@ mod opencode_gsd_plugin;
 mod opencode_sessions;
 pub mod orchestrator;
 pub mod orchestrator_core;
+mod orchestrator_shell_host;
 mod paths;
 mod planning;
 mod planning_gate;
@@ -69,8 +72,12 @@ mod resource_manager;
 mod resources;
 mod router9;
 mod scheduler;
+mod secure_store;
 mod session_reader;
 mod session_watcher;
+// The handoff it reports goes over D-Bus, which only the Linux build links (zbus).
+#[cfg(target_os = "linux")]
+mod single_instance_probe;
 mod skills;
 mod speech;
 mod speech_capture;
@@ -85,6 +92,7 @@ mod window_style;
 #[cfg(windows)]
 mod windows_webview;
 mod worktrees;
+mod wsl;
 
 use crate::pty::{PtySession, PtySessions};
 use std::collections::HashMap;
@@ -149,6 +157,47 @@ pub fn run() {
 
     logging::install_panic_hook();
 
+    // Built once and handed to `build()` below: `generate_context!` embeds the
+    // whole frontend bundle, so expanding it twice would duplicate it.
+    let context: tauri::Context<tauri::Wry> = tauri::generate_context!();
+
+    // `tauri-plugin-single-instance` exits the second process with status 0 and
+    // prints nothing, so a stale owner looks exactly like a broken install.
+    // Report what is about to happen while this process can still write to the
+    // terminal that started it. See single_instance_probe.rs.
+    #[cfg(target_os = "linux")]
+    {
+        use single_instance_probe::ProbeOutcome;
+
+        // The identifier comes from the same context the plugin reads, so
+        // `--config tauri.dev.json` and release builds probe the name that is
+        // actually registered.
+        match single_instance_probe::probe(&context.config().identifier) {
+            ProbeOutcome::HandoffAccepted { pid } => {
+                let owner = match pid {
+                    Some(pid) => format!("pid {pid}"),
+                    None => "another process".to_string(),
+                };
+                eprintln!(
+                    "[single-instance] Alethe is already running ({owner}); focusing its window."
+                );
+            }
+            ProbeOutcome::StaleOwner { pid } => {
+                let owner = match pid {
+                    Some(pid) => format!("Process {pid}"),
+                    None => "A process".to_string(),
+                };
+                eprintln!(
+                    "[single-instance] {owner} holds the D-Bus name but did not answer within \
+                     1s, so no window will open. End the stuck instance \
+                     (`busctl --user list | grep alethe`) and try again."
+                );
+                std::process::exit(1);
+            }
+            ProbeOutcome::NameFree | ProbeOutcome::Inconclusive => {}
+        }
+    }
+
     pty::install_kill_on_close_guard();
     let sessions: PtySessions = Arc::new(Mutex::new(HashMap::<String, PtySession>::new()));
     let browser_session_state = browser_session::BrowserSessionState::default();
@@ -182,6 +231,7 @@ pub fn run() {
         .manage(cli_launch::PendingOpen::default())
         .manage(orchestrator::OrchestratorState::default())
         .manage(router9::Router9Process::default())
+        .manage(ai_memory::AiMemoryProcess::default())
         .manage(speech::SpeechState::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
@@ -288,12 +338,18 @@ pub fn run() {
             orchestrator::orchestrator_apply_settings,
             orchestrator::orchestrator_codex_models,
             orchestrator::orchestrator_set_agent_fitness,
+            orchestrator::orchestrator_set_rule_sets,
+            orchestrator::orchestrator_default_rule_sets,
             orchestrator::orchestrator_message,
-            orchestrator::open_orchestration_window,
-            orchestrator::orchestrator_cancel,
             orchestrator::orchestrator_restart,
+            orchestrator::open_orchestration_window,
             orchestrator::orchestrator_answer,
             orchestrator::orchestrator_job_diff,
+            orchestrator::orchestrator_cancel_job,
+            orchestrator::orchestrator_shell_output,
+            orchestrator::orchestrator_shell_stop,
+            orchestrator::orchestrator_shell_restart,
+            orchestrator::orchestrator_shell_remove,
             browser_session::browser_session_start,
             browser_session::browser_session_stop,
             browser_session::browser_session_status,
@@ -322,6 +378,9 @@ pub fn run() {
             agent_library::uninstall_agent,
             economy_agents::set_economy_agents,
             economy_agents::economy_agents_enabled,
+            custom_agent_icons::import_custom_agent_icon,
+            custom_agent_icons::custom_agent_icon_data_url,
+            custom_agent_icons::remove_custom_agent_icon,
             filesystem::list_directory,
             filesystem::list_project_markdown,
             filesystem::browse_directory,
@@ -390,6 +449,10 @@ pub fn run() {
             profiles::delete_profile,
             cli_resolver::find_cli_launcher,
             cli_resolver::refresh_cli_launcher,
+            wsl::list_wsl_distros,
+            wsl::find_wsl_cli,
+            wsl::wsl_distro_home,
+            wsl::set_wsl_integration_enabled,
             cli_resolver::probe_install_toolchain,
             cli_resolver::agent_cli_version,
             cli_launch::cli_take_pending_open,
@@ -552,6 +615,10 @@ pub fn run() {
             ai_memory::ai_memory_mcp_config_path,
             ai_memory::ai_memory_opencode_config_write,
             ai_memory::ai_memory_codex_config_write,
+            ai_memory::ai_memory_install,
+            ai_memory::ai_memory_start,
+            ai_memory::ai_memory_stop,
+            ai_memory::ai_memory_counts,
             router9::router9_status,
             router9::router9_install_command,
             router9::router9_uninstall_command,
@@ -586,7 +653,7 @@ pub fn run() {
             opencode_sessions::opencode_export_session,
             ping,
         ])
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("error while building alethe")
         .run(move |_app_handle, event| {
             // emitir `Exit`; esperar esse evento deixa shells/agentes vivos
@@ -597,6 +664,7 @@ pub fn run() {
                     &_app_handle.state::<browser_session::BrowserSessionState>(),
                 );
                 router9::stop_managed(&_app_handle.state::<router9::Router9Process>());
+                ai_memory::stop_managed(&_app_handle.state::<ai_memory::AiMemoryProcess>());
             }
 
             if let tauri::RunEvent::Exit = event {

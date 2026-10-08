@@ -53,9 +53,9 @@ path relative to the repository.
    `src/styles/theme.css`; **never** hardcode a color — use the variables (`--bg`, `--fg`,
    `--accent`, `--agent-*`, `--status-*`, etc.).
 4. **i18n is mandatory.** Every visible string goes through `t()`. When adding text, register the key
-   in `src/lib/i18n/messages/en.ts` (**source of truth**, default EN) **and** in
-   `src/lib/i18n/messages/pt-BR.ts`. `pt-BR.ts` is typed against the keys of `en.ts`, so
-   `npm run build` **fails** if a translation is missing.
+   in `src/lib/i18n/messages/en.ts` (**source of truth**, default EN) **and** in every other
+   locale: `src/lib/i18n/messages/pt-BR.ts` and `src/lib/i18n/messages/zh-CN.ts`. Each is typed
+   against the keys of `en.ts`, so `npm run build` **fails** if a translation is missing.
 5. **Changelog is mandatory for features.** Every feature addition, change, or removal must update
    [`docs/CHANGELOG.md`](docs/CHANGELOG.md) in the same task, under the **`[Unreleased]`** section
    (top of the file), with a short, objective, user-facing description. Never skip this step — the

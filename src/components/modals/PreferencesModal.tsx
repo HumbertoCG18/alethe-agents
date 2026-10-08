@@ -21,6 +21,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { useT } from '../../lib/i18n'
 import { getProfileImageUrl, getProfileInitial } from '../../lib/profile'
+import { setSectionCollapsed } from '../../lib/settingsSections'
 import { useProjectsStore } from '../../stores/projectsStore'
 import { useUiStore } from '../../stores/uiStore'
 import { ErrorBoundary } from '../ErrorBoundary'
@@ -176,21 +177,21 @@ export function PreferencesModal() {
         target: 'profile',
         label: t('prefs.profile'),
         description: t('prefs.profileDesc'),
-        keywords: 'avatar photo name nome perfil account conta',
+        keywords: 'avatar photo name nome perfil account conta 头像 照片 名称 账户 账号',
       },
       {
         category: 'account',
         target: 'language',
         label: t('prefs.language'),
         description: t('prefs.languageDesc'),
-        keywords: 'language idioma português english',
+        keywords: 'language idioma português english 语言 中文 chinese zh',
       },
       {
         category: 'account',
         target: 'local-accounts',
         label: t('prefs.localAccounts'),
         description: t('prefs.localAccountsDesc'),
-        keywords: 'account profile conta perfil local switch trocar',
+        keywords: 'account profile conta perfil local switch trocar 账户 账号 个人资料 切换',
       },
       {
         category: 'sidebar',
@@ -204,7 +205,7 @@ export function PreferencesModal() {
         target: 'ui-theme',
         label: t('prefs.uiTheme'),
         description: t('prefs.uiThemeDesc'),
-        keywords: 'theme tema colors cores light dark claro escuro',
+        keywords: 'theme tema colors cores light dark claro escuro 主题 颜色 浅色 深色',
       },
       {
         category: 'remoteControl',
@@ -253,7 +254,8 @@ export function PreferencesModal() {
         target: 'optional-features',
         label: t('prefs.features'),
         description: t('prefs.featuresDesc'),
-        keywords: 'features recursos modules módulos todo task tarefa git source control sidebar',
+        keywords:
+          'features recursos modules módulos todo task tarefa git source control sidebar 功能 模块 待办',
       },
       {
         category: 'plugins',
@@ -327,7 +329,15 @@ export function PreferencesModal() {
         target: 'agents',
         label: t('prefs.agentsTitle'),
         description: t('prefs.agentsDesc'),
-        keywords: 'agents agentes claude codex opencode shell',
+        keywords: 'agents agentes claude codex opencode shell 智能体 代理 代理程序',
+      },
+      {
+        category: 'terminal',
+        target: 'agent-canvas-permissions',
+        label: t('prefs.experimentalPermissions'),
+        description: t('prefs.experimentalPermissionsDesc'),
+        keywords:
+          'permission permissions ask bypass approval canvas sandbox worker skip dangerously permissão permissões aprovação 权限 审批',
       },
       {
         category: 'terminal',
@@ -336,6 +346,14 @@ export function PreferencesModal() {
         description: t('prefs.resetSessionDesc'),
         keywords:
           'reset session resume retomar resetar sessão última last recover recuperar resume crash boot',
+      },
+      {
+        category: 'integrations',
+        target: 'usage-access',
+        label: t('prefs.usageAccess'),
+        description: t('prefs.usageAccessDesc'),
+        keywords:
+          'usage quota limits consent privacy credentials claude codex antigravity uso limite privacidade credenciais',
       },
       {
         category: 'integrations',
@@ -385,7 +403,7 @@ export function PreferencesModal() {
         target: 'app-updates',
         label: t('prefs.aboutUpdatesTitle'),
         description: t('prefs.aboutUpdatesDesc'),
-        keywords: 'update atualização atualizar upgrade nova versão release check',
+        keywords: 'update atualização atualizar upgrade nova versão release check 更新 升级 版本',
       },
     ],
     [t],
@@ -418,7 +436,8 @@ export function PreferencesModal() {
     setCategory(initial)
     setQuery('')
     setResultCursor(0)
-    setPendingTarget(null)
+    // A caller can open the modal on one specific setting, the same way a search result does.
+    setPendingTarget(typeof modalContext?.target === 'string' ? modalContext.target : null)
   }, [open, modalContext])
 
   useEffect(() => {
@@ -427,6 +446,8 @@ export function PreferencesModal() {
 
   useEffect(() => {
     if (!pendingTarget) return
+    // Jumping to a folded section would land on a closed heading, so open it before scrolling.
+    setSectionCollapsed(pendingTarget, false)
     const frame = window.requestAnimationFrame(() => {
       const target = contentRef.current?.querySelector<HTMLElement>(
         `[data-setting-id="${pendingTarget}"]`,

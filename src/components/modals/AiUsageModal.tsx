@@ -70,24 +70,33 @@ export function AiUsageModal() {
   const closeModal = useUiStore((state) => state.closeModal)
   const setCodexUsage = useUiStore((state) => state.setCodexUsage)
   const setAntigravityUsage = useUiStore((state) => state.setAntigravityUsage)
+  const claudeAccess = useProjectsStore((state) => state.preferences.usageAccess.claude)
+  const codexAccess = useProjectsStore((state) => state.preferences.usageAccess.codex)
+  const antigravityAccess = useProjectsStore((state) => state.preferences.usageAccess.antigravity)
   const [editing, setEditing] = useState(false)
 
+  // Opening the modal refreshes only the providers whose usage reading is on.
   useEffect(() => {
     if (!open) return
     let cancelled = false
     // Claude writes its own result: a refused refresh keeps the last reading instead of blanking it.
-    void loadClaudeUsage(true)
-    void Promise.allSettled([getCachedCodexUsage(true), getCachedAntigravityUsage(true)]).then(
-      ([codex, antigravity]) => {
-        if (cancelled) return
-        setCodexUsage(codex.status === 'fulfilled' ? codex.value : null)
-        setAntigravityUsage(antigravity.status === 'fulfilled' ? antigravity.value : null)
-      },
-    )
+    if (claudeAccess) void loadClaudeUsage(true)
+    if (codexAccess) {
+      void getCachedCodexUsage(true).then(
+        (usage) => !cancelled && setCodexUsage(usage),
+        () => !cancelled && setCodexUsage(null),
+      )
+    }
+    if (antigravityAccess) {
+      void getCachedAntigravityUsage(true).then(
+        (usage) => !cancelled && setAntigravityUsage(usage),
+        () => !cancelled && setAntigravityUsage(null),
+      )
+    }
     return () => {
       cancelled = true
     }
-  }, [open, setAntigravityUsage, setCodexUsage])
+  }, [open, claudeAccess, codexAccess, antigravityAccess, setAntigravityUsage, setCodexUsage])
 
   return (
     <Modal

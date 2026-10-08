@@ -6,7 +6,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{mpsc, Mutex};
+use std::sync::{mpsc, LockResult, Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use super::util::{local_ip, peer_ip, tailscale_ip, tokens_equal};
@@ -77,11 +77,15 @@ struct MessageRate {
 }
 
 pub struct RemoteHub {
+    /// Serializes start, stop, and authenticated PTY writes, so a write is
+    /// either finished before a shutdown returns or rejected after it.
+    lifecycle: Mutex<()>,
     pairing_token: Mutex<String>,
     pairing_until: Mutex<Option<Instant>>,
     host: Mutex<String>,
     running: AtomicBool,
     generation: AtomicU64,
+    latest_control_request_id: AtomicU64,
     http_port: AtomicU16,
     ws_port: AtomicU16,
     next_session_id: AtomicUsize,
@@ -101,17 +105,19 @@ pub struct RemoteHub {
 impl RemoteHub {
     pub(crate) fn new() -> Self {
         Self {
+            lifecycle: Mutex::new(()),
             pairing_token: Mutex::new(nanoid::nanoid!(32)),
             pairing_until: Mutex::new(None),
             host: Mutex::new(local_ip()),
             running: AtomicBool::new(false),
             generation: AtomicU64::new(0),
+            latest_control_request_id: AtomicU64::new(0),
             http_port: AtomicU16::new(0),
             ws_port: AtomicU16::new(0),
             next_session_id: AtomicUsize::new(1),
             max_devices: AtomicUsize::new(1),
             session_expiry_secs: AtomicU64::new(DEFAULT_SESSION_EXPIRY_SECS),
-            read_only: AtomicBool::new(false),
+            read_only: AtomicBool::new(true),
             allow_shell_input: AtomicBool::new(false),
             use_tailscale: AtomicBool::new(false),
             connections: AtomicUsize::new(0),
@@ -131,41 +137,88 @@ impl RemoteHub {
         self.running.load(Ordering::SeqCst) && self.generation.load(Ordering::SeqCst) == generation
     }
 
-    pub(crate) fn begin_run(&self) -> bool {
-        self.running.swap(true, Ordering::SeqCst)
+    pub(crate) fn lock_lifecycle(&self) -> LockResult<MutexGuard<'_, ()>> {
+        self.lifecycle.lock()
     }
 
-    pub(crate) fn end_run(&self) {
+    /// Enable/disable requests carry a monotonically increasing id from the
+    /// frontend; only the newest one recorded is allowed to change state.
+    pub(crate) fn record_control_request(&self, request_id: u64) {
+        self.latest_control_request_id
+            .fetch_max(request_id, Ordering::SeqCst);
+    }
+
+    pub(crate) fn control_request_is_current(&self, request_id: u64) -> bool {
+        self.latest_control_request_id.load(Ordering::SeqCst) == request_id
+    }
+
+    /// Publishes both listener ports and only then reports the hub enabled.
+    /// Callers must already hold both bound listeners and the lifecycle lock.
+    pub(crate) fn activate(&self, http_port: u16, ws_port: u16) -> u64 {
+        let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
+        self.http_port.store(http_port, Ordering::SeqCst);
+        self.ws_port.store(ws_port, Ordering::SeqCst);
+        self.touch_activity();
+        self.running.store(true, Ordering::SeqCst);
+        generation
+    }
+
+    /// Callers must hold the lifecycle lock.
+    pub(crate) fn shutdown(&self) {
         self.running.store(false, Ordering::SeqCst);
-    }
-
-    pub(crate) fn next_generation(&self) -> u64 {
-        self.generation.fetch_add(1, Ordering::SeqCst) + 1
-    }
-
-    pub(crate) fn set_http_port(&self, port: u16) {
-        self.http_port.store(port, Ordering::SeqCst);
-    }
-
-    pub(crate) fn set_ws_port(&self, port: u16) {
-        self.ws_port.store(port, Ordering::SeqCst);
-    }
-
-    pub(crate) fn clear_http_port_if_current(&self, generation: u64) {
-        if self.generation.load(Ordering::SeqCst) == generation {
-            self.http_port.store(0, Ordering::SeqCst);
-        }
-    }
-
-    pub(crate) fn clear_ws_port_if_current(&self, generation: u64) {
-        if self.generation.load(Ordering::SeqCst) == generation {
-            self.ws_port.store(0, Ordering::SeqCst);
-        }
-    }
-
-    pub(crate) fn reset_ports(&self) {
+        self.generation.fetch_add(1, Ordering::SeqCst);
         self.http_port.store(0, Ordering::SeqCst);
         self.ws_port.store(0, Ordering::SeqCst);
+        self.revoke_all();
+        self.close_pairing_window();
+    }
+
+    /// Shuts down only if `generation` is still the live one, so a listener
+    /// thread that outlived its run cannot tear down a newer one. Returns
+    /// whether it shut anything down. Callers must hold the lifecycle lock.
+    pub(crate) fn fail_generation(&self, generation: u64) -> bool {
+        if self
+            .generation
+            .compare_exchange(
+                generation,
+                generation + 1,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            )
+            .is_err()
+        {
+            return false;
+        }
+        let was_running = self.running.swap(false, Ordering::SeqCst);
+        self.http_port.store(0, Ordering::SeqCst);
+        self.ws_port.store(0, Ordering::SeqCst);
+        self.revoke_all();
+        self.close_pairing_window();
+        was_running
+    }
+
+    /// Runs `write` only while `generation` is live and the session is still
+    /// valid, holding the lifecycle lock so a concurrent shutdown waits for
+    /// the write and every later write is refused. `Ok(false)` means the
+    /// write was not attempted.
+    pub(crate) fn with_active_session<F>(
+        &self,
+        generation: u64,
+        session_id: usize,
+        write: F,
+    ) -> Result<bool, String>
+    where
+        F: FnOnce() -> Result<(), String>,
+    {
+        let _lifecycle = self
+            .lifecycle
+            .lock()
+            .map_err(|_| "Remote control lifecycle lock is unavailable".to_string())?;
+        if !self.is_active(generation) || !self.session_alive(session_id) {
+            return Ok(false);
+        }
+        write()?;
+        Ok(true)
     }
 
     pub(crate) fn http_port(&self) -> u16 {
@@ -290,6 +343,7 @@ impl RemoteHub {
 
     pub(crate) fn info(&self) -> RemoteInfo {
         self.prune_expired();
+        let enabled = self.enabled();
         let http_port = self.http_port.load(Ordering::SeqCst);
         let ws_port = self.ws_port.load(Ordering::SeqCst);
         let host = self.host();
@@ -317,7 +371,7 @@ impl RemoteHub {
             })
             .unwrap_or_default();
         RemoteInfo {
-            enabled: self.enabled(),
+            enabled,
             connected_devices: devices.len(),
             online_devices: devices.iter().filter(|device| device.online).count(),
             max_devices: self.max_devices.load(Ordering::Relaxed),
@@ -334,8 +388,8 @@ impl RemoteHub {
             devices,
             pairing_url,
             qr_svg,
-            http_url: (http_port != 0).then(|| format!("http://{host}:{http_port}")),
-            ws_url: (ws_port != 0).then(|| format!("ws://{host}:{ws_port}")),
+            http_url: (enabled && http_port != 0).then(|| format!("http://{host}:{http_port}")),
+            ws_url: (enabled && ws_port != 0).then(|| format!("ws://{host}:{ws_port}")),
         }
     }
 
@@ -635,6 +689,134 @@ fn idle_expired(now_secs: u64, last_active_secs: u64, threshold_secs: u64) -> bo
 mod tests {
     use super::{idle_expired, RemoteHub};
     use std::cell::Cell;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{mpsc, Arc};
+    use std::thread;
+    use std::time::Duration;
+
+    #[test]
+    fn activation_reports_enabled_only_with_both_ports() {
+        let hub = RemoteHub::new();
+        assert!(!hub.info().enabled);
+
+        let generation = hub.activate(9340, 9341);
+        let info = hub.info();
+
+        assert!(info.enabled);
+        assert_eq!(generation, hub.generation.load(Ordering::SeqCst));
+        assert!(info
+            .http_url
+            .as_deref()
+            .is_some_and(|url| url.ends_with(":9340")));
+        assert!(info
+            .ws_url
+            .as_deref()
+            .is_some_and(|url| url.ends_with(":9341")));
+    }
+
+    #[test]
+    fn backend_defaults_to_read_only() {
+        assert!(RemoteHub::new().is_read_only());
+    }
+
+    #[test]
+    fn newer_control_requests_supersede_older_requests() {
+        let hub = RemoteHub::new();
+
+        hub.record_control_request(20);
+        hub.record_control_request(19);
+
+        assert!(hub.control_request_is_current(20));
+        assert!(!hub.control_request_is_current(19));
+    }
+
+    #[test]
+    fn shutdown_waits_for_an_authorized_write_and_blocks_later_writes() {
+        let hub = Arc::new(RemoteHub::new());
+        let generation = hub.activate(9340, 9341);
+        hub.open_pairing_window();
+        let token = hub.pairing_token.lock().expect("pairing token").clone();
+        let (session_id, _) = hub
+            .pair(&token, "Phone".into(), "127.0.0.1:1".into())
+            .expect("pairing should succeed");
+        let (write_started_tx, write_started_rx) = mpsc::channel();
+        let (finish_write_tx, finish_write_rx) = mpsc::channel::<()>();
+        let writer_hub = Arc::clone(&hub);
+        let writer = thread::spawn(move || {
+            writer_hub.with_active_session(generation, session_id, || {
+                write_started_tx.send(()).expect("announce write");
+                finish_write_rx.recv().expect("finish write");
+                Ok(())
+            })
+        });
+
+        write_started_rx.recv().expect("write should start");
+        let (shutdown_finished_tx, shutdown_finished_rx) = mpsc::channel();
+        let shutdown_hub = Arc::clone(&hub);
+        let shutdown = thread::spawn(move || {
+            let _lifecycle = shutdown_hub.lock_lifecycle().expect("lifecycle lock");
+            shutdown_hub.shutdown();
+            shutdown_finished_tx.send(()).expect("announce shutdown");
+        });
+
+        assert!(shutdown_finished_rx
+            .recv_timeout(Duration::from_millis(50))
+            .is_err());
+        finish_write_tx.send(()).expect("release write");
+        assert!(writer.join().expect("writer thread").expect("write result"));
+        shutdown_finished_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("shutdown should finish");
+        shutdown.join().expect("shutdown thread");
+
+        let wrote_after_shutdown = AtomicBool::new(false);
+        assert!(!hub
+            .with_active_session(generation, session_id, || {
+                wrote_after_shutdown.store(true, Ordering::SeqCst);
+                Ok(())
+            })
+            .expect("authorization check"));
+        assert!(!wrote_after_shutdown.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn shutdown_clears_ports_pairing_and_sessions() {
+        let hub = RemoteHub::new();
+        let generation = hub.activate(9340, 9341);
+        hub.open_pairing_window();
+        let pairing_token = hub.pairing_token.lock().expect("pairing token").clone();
+        let (_, session_token) = hub
+            .pair(&pairing_token, "Phone".into(), "127.0.0.1:5000".into())
+            .expect("device should pair");
+
+        hub.shutdown();
+        let info = hub.info();
+
+        assert!(!info.enabled);
+        assert!(hub.generation.load(Ordering::SeqCst) > generation);
+        assert_eq!(hub.http_port.load(Ordering::SeqCst), 0);
+        assert_eq!(hub.ws_port.load(Ordering::SeqCst), 0);
+        assert!(info.http_url.is_none());
+        assert!(info.ws_url.is_none());
+        assert!(!info.pairing_open);
+        assert!(hub.session_id_for(&session_token).is_none());
+    }
+
+    #[test]
+    fn a_stale_generation_cannot_shut_down_a_newer_run() {
+        let hub = RemoteHub::new();
+        let stale = hub.activate(9340, 9341);
+        hub.shutdown();
+        let live = hub.activate(9342, 9343);
+
+        assert!(!hub.fail_generation(stale));
+        assert!(hub.is_active(live));
+
+        assert!(hub.fail_generation(live));
+        assert!(!hub.enabled());
+        assert_eq!(hub.http_port.load(Ordering::SeqCst), 0);
+        assert_eq!(hub.ws_port.load(Ordering::SeqCst), 0);
+    }
 
     #[test]
     fn publish_does_not_build_payload_without_subscribers() {
@@ -670,7 +852,7 @@ mod tests {
     #[test]
     fn pairing_rejects_an_unknown_token_while_open() {
         let hub = RemoteHub::new();
-        hub.running.store(true, std::sync::atomic::Ordering::SeqCst);
+        hub.running.store(true, Ordering::SeqCst);
         hub.open_pairing_window();
 
         assert!(hub
@@ -681,7 +863,7 @@ mod tests {
     #[test]
     fn pairing_issues_a_session_token_and_closes_the_window() {
         let hub = RemoteHub::new();
-        hub.running.store(true, std::sync::atomic::Ordering::SeqCst);
+        hub.running.store(true, Ordering::SeqCst);
         hub.open_pairing_window();
         let token = hub.pairing_token.lock().expect("pairing token").clone();
 
@@ -697,7 +879,7 @@ mod tests {
     #[test]
     fn pairing_honours_the_device_limit() {
         let hub = RemoteHub::new();
-        hub.running.store(true, std::sync::atomic::Ordering::SeqCst);
+        hub.running.store(true, Ordering::SeqCst);
         hub.open_pairing_window();
         let token = hub.pairing_token.lock().expect("pairing token").clone();
         hub.pair(&token, "Phone".into(), "127.0.0.1:1".into())
@@ -714,7 +896,7 @@ mod tests {
     #[test]
     fn revoking_a_device_invalidates_its_session_token() {
         let hub = RemoteHub::new();
-        hub.running.store(true, std::sync::atomic::Ordering::SeqCst);
+        hub.running.store(true, Ordering::SeqCst);
         hub.open_pairing_window();
         let token = hub.pairing_token.lock().expect("pairing token").clone();
         let (id, session_token) = hub

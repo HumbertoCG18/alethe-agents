@@ -1,7 +1,7 @@
 //! The LAN WebSocket listener: per-device streaming of terminal output.
 
 use serde_json::{json, Value};
-use std::net::TcpStream;
+use std::net::{TcpListener, TcpStream};
 use std::sync::{mpsc, Arc};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -13,23 +13,17 @@ use tungstenite::{accept_hdr, Message};
 use crate::pty::PtySessions;
 
 use super::pty_bridge::{read_pty_size, read_scrollback};
-use super::util::bind_listener;
 use super::{
-    ConnectionGuard, RemoteHub, HTTP_END, HTTP_START, MAX_MESSAGE, MAX_SCROLLBACK,
-    SOCKET_TIMEOUT, WS_AUTH_TIMEOUT,
+    ConnectionGuard, RemoteHub, MAX_MESSAGE, MAX_SCROLLBACK, SOCKET_TIMEOUT, WS_AUTH_TIMEOUT,
 };
 
-pub(crate) fn run_websocket(app: AppHandle, hub: Arc<RemoteHub>, sessions: PtySessions, generation: u64) {
-    let host = hub.host();
-    let Some(listener) = bind_listener(&host, HTTP_START + 1, HTTP_END + 1) else {
-        eprintln!("[remote] unable to bind LAN WebSocket listener");
-        let _ = app.emit("remote://start-failed", ());
-        super::stop();
-        return;
-    };
-    let port = listener.local_addr().map(|addr| addr.port()).unwrap_or(0);
-    hub.set_ws_port(port);
-    let _ = listener.set_nonblocking(true);
+pub(crate) fn run_websocket(
+    listener: TcpListener,
+    app: AppHandle,
+    hub: Arc<RemoteHub>,
+    sessions: PtySessions,
+    generation: u64,
+) {
     while hub.is_active(generation) {
         let stream = match listener.accept() {
             Ok((stream, _)) => stream,
@@ -53,7 +47,12 @@ pub(crate) fn run_websocket(app: AppHandle, hub: Arc<RemoteHub>, sessions: PtySe
             handle_websocket(stream, hub, sessions, generation, address);
         });
     }
-    hub.clear_ws_port_if_current(generation);
+    // Reached with the generation still live only when the listener itself
+    // died; never leave remote control half up with one listener gone.
+    if super::stop_generation(&hub, generation) {
+        eprintln!("[remote] LAN WebSocket listener stopped unexpectedly");
+        let _ = app.emit("remote://start-failed", ());
+    }
 }
 
 fn allowed_origin(hub: &RemoteHub) -> String {

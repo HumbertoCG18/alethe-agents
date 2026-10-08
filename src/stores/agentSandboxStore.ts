@@ -3,6 +3,14 @@ import { nanoid } from 'nanoid'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 
 import {
+  codexApprovalAnswer,
+  codexThreadStartParams,
+  codexTurnStartParams,
+  interactivePermissionArgs,
+  oneShotArgs,
+} from '../lib/experimentalAgentPolicy'
+import { getLocale, translate } from '../lib/i18n'
+import {
   agentHooksEndpoint,
   agentHooksSettingsPath,
   agentHooksToken,
@@ -16,8 +24,11 @@ import {
   spawnPty,
   writePty,
 } from '../lib/tauri'
+import type { ExperimentalAgentPermissionMode } from '../lib/types'
+import { useProjectsStore } from './projectsStore'
 
-export type SandboxNodeStatus = 'starting' | 'idle' | 'working' | 'done' | 'error'
+/** `blocked`: an approval request was declined because nobody could answer it. */
+export type SandboxNodeStatus = 'starting' | 'idle' | 'working' | 'done' | 'error' | 'blocked'
 
 export type SandboxNode = {
   id: string
@@ -33,6 +44,8 @@ export type SandboxNode = {
   threadId?: string
   turnId?: string
   transport?: 'pty' | 'app-server'
+  /** Permission mode the worker was started with; later turns keep it. */
+  permissionMode?: ExperimentalAgentPermissionMode
   parentId?: string
   status: SandboxNodeStatus
   x: number
@@ -98,26 +111,36 @@ type SpawnPayload = {
   job_id?: string
 }
 
-const DEMO_NODES: Omit<SandboxNode, 'ptyId' | 'status' | 'lastMessage'>[] = [
-  {
-    id: 'lead',
-    label: 'Planner Claude · Haiku · YOLO',
-    role: 'planner',
-    command: 'claude',
-    extraArgs: [
-      '--model',
-      'haiku',
-      '--dangerously-skip-permissions',
-      '--append-system-prompt',
-      SPAWN_BRIDGE_PROMPT,
-    ],
-    x: 90,
-    y: 24,
-    width: 420,
-    height: 300,
-    color: 'var(--agent-claude)',
-  },
-]
+/** Read at each launch so a mode change applies to the next worker. */
+function currentPermissionMode(): ExperimentalAgentPermissionMode {
+  return useProjectsStore.getState().preferences.experimentalAgentPermissionMode
+}
+
+function demoNodes(
+  mode: ExperimentalAgentPermissionMode,
+): Omit<SandboxNode, 'ptyId' | 'status' | 'lastMessage'>[] {
+  return [
+    {
+      id: 'lead',
+      label: mode === 'bypass' ? 'Planner Claude · Haiku · YOLO' : 'Planner Claude · Haiku',
+      role: 'planner',
+      command: 'claude',
+      extraArgs: [
+        '--model',
+        'haiku',
+        ...interactivePermissionArgs('claude', mode),
+        '--append-system-prompt',
+        SPAWN_BRIDGE_PROMPT,
+      ],
+      permissionMode: mode,
+      x: 90,
+      y: 24,
+      width: 420,
+      height: 300,
+      color: 'var(--agent-claude)',
+    },
+  ]
+}
 
 const exitCleanups = new Map<string, () => void>()
 const outputCleanups = new Map<string, () => void>()
@@ -180,19 +203,22 @@ export const useAgentSandboxStore = create<AgentSandboxState>((set, get) => ({
   startDemo: async (cwd) => {
     get().stop()
     const generation = ++sandboxGeneration
+    // This demo sandbox is never recorded, deliberately: explicit `null` opts it out of capture
+    // regardless of the person's actual preference, rather than defaulting to it by accident.
     const [endpoint, token, settingsPath] = await Promise.all([
       agentHooksEndpoint(),
       agentHooksToken(),
-      agentHooksSettingsPath('sandbox-demo'),
+      agentHooksSettingsPath('sandbox-demo', true, null),
     ])
     if (generation !== sandboxGeneration) return
+    const leadNodes = demoNodes(currentPermissionMode())
     set({
       active: true,
       cwd,
       runningDemo: true,
       messages: [],
       groups: [],
-      nodes: DEMO_NODES.map((node) => ({
+      nodes: leadNodes.map((node) => ({
         ...node,
         ptyId: null,
         status: 'starting',
@@ -211,13 +237,14 @@ export const useAgentSandboxStore = create<AgentSandboxState>((set, get) => ({
       )
         return
       const task = payload.task?.trim()
+      const permissionMode = currentPermissionMode()
       const isCodexAppServer = payload.agent === 'codex' && payload.mode !== 'interactive'
       const automatedTaskArgs =
         task && payload.mode !== 'interactive'
           ? payload.agent === 'codex'
             ? undefined
             : payload.agent === 'claude'
-              ? ['--model', 'haiku', '--dangerously-skip-permissions', '-p', task]
+              ? ['--model', 'haiku', ...(oneShotArgs('claude', task, permissionMode) ?? [])]
               : undefined
           : undefined
       const node: SandboxNode = {
@@ -234,6 +261,7 @@ export const useAgentSandboxStore = create<AgentSandboxState>((set, get) => ({
         appServerId: isCodexAppServer ? `app-server-${nanoid(8)}` : undefined,
         jobId: isCodexAppServer ? (payload.job_id ?? `sandbox-job-${nanoid(10)}`) : undefined,
         transport: isCodexAppServer ? 'app-server' : 'pty',
+        permissionMode,
         parentId: payload.parent_id || 'lead',
         initialInput: task && !automatedTaskArgs && payload.agent !== 'shell' ? task : undefined,
         status: 'starting' as SandboxNodeStatus,
@@ -257,7 +285,7 @@ export const useAgentSandboxStore = create<AgentSandboxState>((set, get) => ({
             agent: node.command,
             cwd: payload.cwd || cwd,
             extraArgs: automatedTaskArgs
-              ? [...automatedTaskArgs.slice(0, -1), `<task ${task?.length ?? 0} chars>`]
+              ? automatedTaskArgs.map((arg) => (arg === task ? `<task ${task.length} chars>` : arg))
               : payload.agent === 'claude'
                 ? ['--model', 'haiku']
                 : [],
@@ -270,10 +298,10 @@ export const useAgentSandboxStore = create<AgentSandboxState>((set, get) => ({
               cwd: payload.cwd || cwd,
               command: node.command === 'shell' ? undefined : node.command,
               extraArgs: [
-                ...(automatedTaskArgs ??
-                  (payload.agent === 'claude'
-                    ? ['--model', 'haiku', '--dangerously-skip-permissions']
-                    : [])),
+                ...(automatedTaskArgs ?? [
+                  ...(payload.agent === 'claude' ? ['--model', 'haiku'] : []),
+                  ...interactivePermissionArgs(node.command, permissionMode),
+                ]),
                 ...(payload.agent === 'claude' ? ['--settings', settingsPath] : []),
               ],
               env: { ALETHE_AGENT_HOOKS_ENDPOINT: endpoint, ALETHE_AGENT_HOOKS_TOKEN: token },
@@ -320,6 +348,8 @@ export const useAgentSandboxStore = create<AgentSandboxState>((set, get) => ({
             let nextRequestId = 10
             let activeTurnId: string | null = null
             let initialTurnRequested = false
+            // Set when an approval request of the running turn was declined; cleared by the next turn.
+            let approvalDeclined = false
             const cleanup = await listenCodexAppServer(appServerId, (event) => {
               const method = typeof event.method === 'string' ? event.method : ''
               const params =
@@ -354,7 +384,7 @@ export const useAgentSandboxStore = create<AgentSandboxState>((set, get) => ({
                     item.id === node.id
                       ? {
                           ...item,
-                          status: 'working',
+                          status: approvalDeclined ? 'blocked' : 'working',
                           lastMessage: delta || item.lastMessage,
                           output: `${item.output ?? ''}${delta}`.slice(-16000),
                         }
@@ -363,6 +393,7 @@ export const useAgentSandboxStore = create<AgentSandboxState>((set, get) => ({
                 }))
               }
               if (method === 'turn/started') {
+                approvalDeclined = false
                 const turn =
                   params.turn && typeof params.turn === 'object'
                     ? (params.turn as Record<string, unknown>)
@@ -415,23 +446,46 @@ export const useAgentSandboxStore = create<AgentSandboxState>((set, get) => ({
                     item.id === node.id
                       ? {
                           ...item,
-                          status: 'idle',
+                          status: approvalDeclined ? 'blocked' : 'idle',
                           output: `${item.output ?? ''}\n\n[Alethe] Turn completed. Ready for another message.\n`,
                         }
                       : item,
                   ),
                 }))
               }
-              if (
-                method === 'item/commandExecution/requestApproval' ||
-                method === 'item/fileChange/requestApproval'
-              ) {
+              // This node has no UI to answer an approval, so the policy answers: bypass accepts,
+              // ask declines and leaves the worker visibly blocked.
+              const approval = codexApprovalAnswer(method, permissionMode)
+              if (approval) {
                 const requestId = event.id
                 if (requestId !== undefined)
                   void codexAppServerSend(appServerId, {
                     id: requestId,
-                    result: { decision: 'accept' },
-                  }).catch(() => {})
+                    result: { decision: approval.decision },
+                  }).catch((error) =>
+                    console.error('[sandbox] failed to answer Codex approval request', error),
+                  )
+                if (approval.decision === 'decline') {
+                  approvalDeclined = true
+                  const notice = translate(
+                    getLocale(),
+                    approval.kind === 'command'
+                      ? 'sandbox.approvalDeclinedCommand'
+                      : 'sandbox.approvalDeclinedFileChange',
+                  )
+                  set((state) => ({
+                    nodes: state.nodes.map((item) =>
+                      item.id === node.id
+                        ? {
+                            ...item,
+                            status: 'blocked',
+                            lastMessage: notice,
+                            output: `${item.output ?? ''}\n\n[Alethe] ${notice}\n`,
+                          }
+                        : item,
+                    ),
+                  }))
+                }
               }
               if (event.id === 2 && threadId && task && !initialTurnRequested) {
                 initialTurnRequested = true
@@ -439,11 +493,7 @@ export const useAgentSandboxStore = create<AgentSandboxState>((set, get) => ({
                 void codexAppServerSend(appServerId, {
                   id: requestId,
                   method: 'turn/start',
-                  params: {
-                    threadId,
-                    input: [{ type: 'text', text: task }],
-                    approvalPolicy: 'never',
-                  },
+                  params: codexTurnStartParams(threadId, task, permissionMode),
                 }).catch((error) => console.error('[sandbox] app-server turn failed', error))
               }
               if (event.type === 'transport_error' || event.type === 'transport_closed') {
@@ -466,11 +516,7 @@ export const useAgentSandboxStore = create<AgentSandboxState>((set, get) => ({
             await codexAppServerSend(appServerId, {
               id: 2,
               method: 'thread/start',
-              params: {
-                cwd: payload.cwd || cwd,
-                approvalPolicy: 'never',
-                sandbox: 'danger-full-access',
-              },
+              params: codexThreadStartParams(payload.cwd || cwd, permissionMode),
             })
           } else if (automatedTaskArgs && ptyId) {
             let outputUnlisten: UnlistenFn | null = null
@@ -527,7 +573,7 @@ export const useAgentSandboxStore = create<AgentSandboxState>((set, get) => ({
       })
     })
 
-    for (const node of DEMO_NODES) {
+    for (const node of leadNodes) {
       const ptyId = `sandbox-${node.id}-${nanoid(6)}`
       try {
         await spawnPty({
@@ -636,13 +682,11 @@ export const useAgentSandboxStore = create<AgentSandboxState>((set, get) => ({
         await codexAppServerSend(target.appServerId, {
           id: Date.now(),
           method: 'turn/start',
-          params: {
-            threadId: target.threadId,
-            input: [
-              { type: 'text', text: `[Message from ${source?.label ?? from}] ${text.trim()}` },
-            ],
-            approvalPolicy: 'never',
-          },
+          params: codexTurnStartParams(
+            target.threadId,
+            `[Message from ${source?.label ?? from}] ${text.trim()}`,
+            target.permissionMode ?? 'ask',
+          ),
         })
       } else if (target.ptyId) {
         await writePty(target.ptyId, agentInput(target.command, source?.label ?? from, text))

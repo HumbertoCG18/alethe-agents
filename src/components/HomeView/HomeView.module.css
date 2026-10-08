@@ -623,7 +623,7 @@
   place-items: center;
   font-size: 15px;
   font-weight: 600;
-  color: #fff;
+  color: var(--accent-on);
   background: var(--accent);
 }
 
@@ -851,7 +851,7 @@
   place-items: center;
   font-size: 15px;
   font-weight: 600;
-  color: #fff;
+  color: var(--accent-on);
   background: var(--accent);
 }
 
@@ -1476,6 +1476,10 @@
   font-family: var(--font-mono);
   font-size: 11px;
   color: var(--text-quaternary);
+}
+.usageEmptyAction {
+  composes: resetCreditButton;
+  margin-top: 6px;
 }
 
 /* ---- heatmap wrapper ---- */

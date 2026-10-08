@@ -606,3 +606,10 @@ select.input {
 :global([data-visual-style='clean']) .tabBtnActive {
   font-weight: 500;
 }
+
+.wslHint {
+  display: block;
+  margin-top: 7px;
+  color: var(--accent);
+  font-size: 10px;
+}

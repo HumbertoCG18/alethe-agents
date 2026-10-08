@@ -41,8 +41,16 @@ export async function remoteControlRevoke(): Promise<RemoteControlInfo> {
   return invoke<RemoteControlInfo>('remote_control_revoke')
 }
 
-export async function setRemoteControlEnabled(enabled: boolean): Promise<RemoteControlInfo> {
-  return invoke<RemoteControlInfo>('remote_control_set_enabled', { enabled })
+/**
+ * `requestId` must grow with every call: the backend only honours the newest
+ * request, so an older enable finishing late can never undo a disable. Rejects
+ * when the listeners could not be opened; remote control is then off.
+ */
+export async function setRemoteControlEnabled(
+  enabled: boolean,
+  requestId: number,
+): Promise<RemoteControlInfo> {
+  return invoke<RemoteControlInfo>('remote_control_set_enabled', { enabled, requestId })
 }
 
 export async function setRemoteControlMaxDevices(maxDevices: number): Promise<RemoteControlInfo> {
@@ -98,6 +106,7 @@ export async function remoteControlTailscaleStatus(): Promise<TailscaleStatus> {
   return invoke<TailscaleStatus>('remote_control_tailscale_status')
 }
 
+/** Rejects when a live reach-mode switch could not rebind; remote control is then off. */
 export async function setRemoteControlReachMode(useTailscale: boolean): Promise<RemoteControlInfo> {
   return invoke<RemoteControlInfo>('remote_control_set_reach_mode', { useTailscale })
 }
@@ -107,7 +116,7 @@ export function listenRemoteAutoDisabled(handler: () => void): Promise<UnlistenF
   return listen('remote://auto-disabled', () => handler())
 }
 
-/** Fires when the backend fails to bind its listener (port conflict, Tailscale not reachable, ...) and turns itself back off. */
+/** Fires when a live listener dies on its own and the backend turns remote control back off. */
 export function listenRemoteStartFailed(handler: () => void): Promise<UnlistenFn> {
   return listen('remote://start-failed', () => handler())
 }

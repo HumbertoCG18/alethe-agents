@@ -1,16 +1,17 @@
 import { Plus, X } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useReducer, useRef, useState } from 'react'
 
 import { useT } from '../../../lib/i18n'
 import { mcpErrorKey, parsePastedServer, unsupportedFor } from '../../../lib/mcp'
 import {
-  mcpRegistrySearch,
-  mcpUpsert,
   type McpCatalogEntry,
   type McpEnvInput,
   type McpInstallOption,
   type McpRegistryPage,
+  mcpRegistrySearch,
   type McpServerInput,
+  mcpUpsert,
+  openInBrowser,
 } from '../../../lib/tauri'
 import type { McpAgent, McpCapability, McpScope } from '../../../lib/types'
 import { AGENT_TYPE_LABELS, MCP_AGENTS } from '../../../lib/types'
@@ -18,6 +19,7 @@ import { useUiStore } from '../../../stores/uiStore'
 import controls from '../controls.module.css'
 import { Modal } from '../Modal'
 import styles from './AddServerFlow.module.css'
+import { registryReviewAllowsSubmit, registryReviewReducer } from './registryReview'
 
 type Source = 'manual' | 'paste' | 'registry'
 type TransportKind = 'stdio' | 'http' | 'sse'
@@ -174,6 +176,7 @@ export function AddServerFlow({
   const [paste, setPaste] = useState('')
   const [targets, setTargets] = useState<McpAgent[]>(availableAgents)
   const [busy, setBusy] = useState(false)
+  const [registryReview, dispatchRegistryReview] = useReducer(registryReviewReducer, null)
 
   useEffect(
     () => () => {
@@ -232,7 +235,11 @@ export function AddServerFlow({
   const selectable = targets.filter(
     (agent) => availableAgents.includes(agent) && !blockedByAgent.has(agent),
   )
-  const canSubmit = servers.length > 0 && selectable.length > 0 && !busy
+  const canSubmit =
+    servers.length > 0 &&
+    selectable.length > 0 &&
+    !busy &&
+    registryReviewAllowsSubmit(registryReview)
 
   const toggleTarget = (agent: McpAgent) =>
     setTargets((current) =>
@@ -309,7 +316,10 @@ export function AddServerFlow({
             role="tab"
             aria-selected={source === option}
             className={`${controls.tabBtn} ${source === option ? controls.tabBtnActive : ''}`}
-            onClick={() => setSource(option)}
+            onClick={() => {
+              setSource(option)
+              dispatchRegistryReview({ type: 'reset' })
+            }}
           >
             {t(
               option === 'manual'
@@ -325,6 +335,7 @@ export function AddServerFlow({
       {source === 'registry' ? (
         <RegistryPicker
           onPick={(entry, install) => {
+            dispatchRegistryReview({ type: 'select', entry })
             setName(entry.suggestedName)
             if (install.kind === 'stdio') {
               setKind('stdio')
@@ -477,6 +488,57 @@ export function AddServerFlow({
                 </button>
               </div>
             </div>
+
+            {registryReview ? (
+              <div className={styles.registryReview}>
+                <span>{t('mcp.registryReviewTitle')}</span>
+                <dl className={styles.registryMetadata}>
+                  <div>
+                    <dt>{t('mcp.registryReviewOrigin')}</dt>
+                    <dd>{registryReview.origin}</dd>
+                  </div>
+                  <div>
+                    <dt>{t('mcp.registryReviewName')}</dt>
+                    <dd>{registryReview.title}</dd>
+                  </div>
+                  <div>
+                    <dt>{t('mcp.registryReviewVersion')}</dt>
+                    <dd>{registryReview.version}</dd>
+                  </div>
+                  {registryReview.repositoryUrl ? (
+                    <div>
+                      <dt>{t('mcp.registryReviewRepository')}</dt>
+                      <dd>
+                        <button
+                          type="button"
+                          className={styles.registryLink}
+                          onClick={() => {
+                            if (registryReview.repositoryUrl) {
+                              void openInBrowser(registryReview.repositoryUrl)
+                            }
+                          }}
+                        >
+                          {registryReview.repositoryUrl}
+                        </button>
+                      </dd>
+                    </div>
+                  ) : null}
+                </dl>
+                <label className={styles.registryAcknowledgement}>
+                  <input
+                    type="checkbox"
+                    checked={registryReview.acknowledged}
+                    onChange={(event) =>
+                      dispatchRegistryReview({
+                        type: 'acknowledge',
+                        value: event.target.checked,
+                      })
+                    }
+                  />
+                  <span>{t('mcp.registryAcknowledgement')}</span>
+                </label>
+              </div>
+            ) : null}
           </>
         ) : (
           <label className={styles.field}>

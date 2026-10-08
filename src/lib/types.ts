@@ -23,6 +23,9 @@ export type BuiltinAgentType =
  */
 export type AgentType = BuiltinAgentType | (string & {})
 
+/** Providers whose subscription usage Alethe can read. */
+export type UsageProviderId = 'claude' | 'codex' | 'antigravity'
+
 export const AGENT_TYPE_LABELS: Record<BuiltinAgentType, string> = {
   claude: 'Claude Code',
   codex: 'Codex',
@@ -79,7 +82,31 @@ export function agentCliCommand(agent: AgentType): string | undefined {
   return mapped ?? agent
 }
 
-export type Locale = 'en' | 'pt-BR'
+/** Where a custom agent icon comes from: a built-in preset, a local .ico asset, or a PNG link. */
+export type CustomAgentIconSpec =
+  | { kind: 'preset'; key: string }
+  | { kind: 'file'; assetId: string }
+  | { kind: 'url'; href: string }
+
+/** User-defined custom agent stored in preferences. Never a built-in. */
+export type CustomAgentDefinition = {
+  /** Slug: ^[a-z0-9-]{2,32}$, unique, never a BuiltinAgentType. */
+  id: string
+  /** Display label shown everywhere the built-ins appear. */
+  label: string
+  /** CLI invocation as typed by the user: binary plus optional default args. */
+  cliCommand: string
+  /** Optional flag that skips permission prompts (e.g. --allow-all). */
+  unrestrictedFlag?: string | null
+  /** An `--agent-*` CSS custom property, including the leading dashes. */
+  accentToken?: string
+  /** Legacy icon preset key. Prefer `iconSpec`; kept so older files still render. */
+  icon?: string
+  /** Discriminated icon spec. Absent means the legacy `icon` preset key. */
+  iconSpec?: CustomAgentIconSpec
+}
+
+export type Locale = 'en' | 'pt-BR' | 'zh-CN'
 
 export type LayoutMode = 'auto' | 'spotlight' | 'sidebar' | 'grid'
 
@@ -145,7 +172,15 @@ export type SetupWalkthroughStep = 'project' | 'appearance'
 export const SETUP_WALKTHROUGH_STEPS: SetupWalkthroughStep[] = ['project', 'appearance']
 
 export type FeatureId =
-  'browser' | 'graphify' | 'aiMemory' | 'mcp' | 'playwright' | 'orchestrator' | 'prs' | 'gsdSync'
+  | 'browser'
+  | 'graphify'
+  | 'aiMemory'
+  | 'mcp'
+  | 'playwright'
+  | 'orchestrator'
+  | 'prs'
+  | 'gsdSync'
+  | 'wsl'
 
 export type TodoItem = {
   id: string
@@ -235,6 +270,13 @@ export const UNRESTRICTED_FLAG: Record<BuiltinAgentType, string | null> = {
   codewhale: null,
 }
 
+/**
+ * How the experimental Agent Canvas and Agent Sandbox workers handle permissions: `ask` keeps the
+ * agent's own checks, `bypass` lets it run commands and edit files without asking. The arguments
+ * each mode maps to live in `experimentalAgentPolicy.ts`.
+ */
+export type ExperimentalAgentPermissionMode = 'ask' | 'bypass'
+
 export type PaneKind =
   | 'terminal'
   | 'markdown'
@@ -287,6 +329,13 @@ export type Terminal = {
   laneVisible: boolean | null
   /** Keeps terminal controls in a fixed topbar instead of revealing them on hover. */
   topbarPinned?: boolean
+  /**
+   * Set once the user renames this pane through the sidebar's Rename action. Sidebar rows
+   * otherwise prefer a live auto-derived title (the Claude session title, or the active
+   * sub-tab's agent-type name) over `name` — this flag lets an explicit rename win instead of
+   * being silently shadowed by that.
+   */
+  customName?: boolean
 
   lastUsedAt?: number
 
@@ -340,6 +389,11 @@ export type PaneGroup = {
   paneIds: string[]
   /** Dedicated groups keep related panes together without changing the project's outer layout. */
   kind?: 'orchestration'
+  /**
+   * The terminal an orchestration board was opened for. A terminal that was already grouped brings
+   * its group along, so it is not always the first pane.
+   */
+  plannerId?: string
 }
 
 export type OrphanWorktree = {
@@ -532,6 +586,24 @@ export type TerminalCreationPreset = {
 
 export const ROUTER9_DEFAULT_PORT = 20128
 
+/** When a message shortcut shows on a worker. */
+export type ShortcutRule = 'any' | 'finished' | 'finishedIsolated'
+
+/** A one-click instruction for the planner, written into its terminal for the person to edit. */
+export type OrchestratorShortcut = {
+  id: string
+  name: string
+  text: string
+  rule: ShortcutRule
+}
+
+/** One named body of engineering rules handed to workers. `general` always applies. */
+export type RuleSet = {
+  id: string
+  name: string
+  text: string
+}
+
 /** Which 9router install Alethe runs: the one it manages, or one the user installed themselves. */
 export type Router9Source = 'managed' | 'external'
 
@@ -561,7 +633,7 @@ export type OrchestrationRole = {
   agent: 'codex' | 'claude'
   /** null runs the CLI's default model. */
   model: string | null
-  /** Codex reasoning effort; null keeps the CLI's setting. Always null for Claude. */
+  /** Reasoning effort, as the chosen CLI names it; null keeps the CLI's setting. */
   effort: string | null
   /** Codex read-only sandbox. Always false for Claude. */
   readOnly: boolean
@@ -605,6 +677,7 @@ export type Preferences = {
   windowOpacity: number
   terminalTheme: Theme | null
   enabledAgents: Record<AgentType, boolean>
+  customAgents: CustomAgentDefinition[]
   onboardingDone: boolean
 
   workspaceFlat: boolean
@@ -624,6 +697,13 @@ export type Preferences = {
   alwaysStartOnHome: boolean
 
   alwaysStartUnrestricted: boolean
+  /**
+   * Permission mode of the experimental Agent Canvas and Agent Sandbox workers. A per-machine
+   * choice: it is deliberately left out of cloud sync.
+   */
+  experimentalAgentPermissionMode: ExperimentalAgentPermissionMode
+  /** Last scope chosen in the handoff dialog. */
+  handoffScope: HandoffScope
   /** Last terminal configuration submitted through the creation modal. */
   lastTerminalCreation: TerminalCreationPreset | null
 
@@ -636,11 +716,17 @@ export type Preferences = {
   /** Each sidebar's icon order (empty: the default order) and the icons the user hid. */
   sidebarIcons: { left: string[]; right: string[]; hidden: string[] }
 
-  /** Credenciais locais do Spotify Developer Dashboard para Now Playing. */
+  /** Non-secret Spotify Developer Dashboard identifier for Now Playing. */
   spotifyClientId: string
+  /** Runtime-only input. Persistence strips it after the backend migrates legacy values. */
   spotifyClientSecret: string
   /** Exibe a atividade atual do Alethe no perfil do Discord. */
   discordRichPresenceEnabled: boolean
+  /**
+   * Consent to read each provider's usage: doing so uses the credentials of the installed CLI and
+   * contacts the provider. Off for a new profile; nothing reads a provider that is off.
+   */
+  usageAccess: Record<UsageProviderId, boolean>
   /** Usage cards shown in the AI usage details modal and the home usage strip. */
   usageShowClaude: boolean
   usageShowCodex: boolean
@@ -717,12 +803,25 @@ export type Preferences = {
 
   nativeTerminalMacos?: boolean
   /**
+   * Absolute path to the binary plain shell tabs spawn. Null keeps the per-platform auto-detect
+   * (`pwsh` → `powershell` on Windows, `$SHELL` elsewhere).
+   */
+  shellPath: string | null
+  /** Font stack for the terminal. A Nerd Font is required for prompts such as oh-my-posh. */
+  terminalFontFamily: string
+  /**
    * v3 — perfil de heap do Node.js para agentes (Claude, Codex, OpenCode).
    * Injeta --max-old-space-size e UV_THREADPOOL_SIZE no ambiente do PTY.
    */
   nodeHeapProfile?: 'conservative' | 'balanced' | 'performance'
 
   gsdSyncModelChain?: string[]
+
+  /** `null` means "use Alethe's built-ins"; any array — including an empty one — is the person's own list. */
+  orchestratorShortcuts: OrchestratorShortcut[] | null
+
+  /** null means "use Alethe's"; any array — empty included — is the person's own list. */
+  workerRuleSets: RuleSet[] | null
 
   router9?: Router9Preferences
 
@@ -782,6 +881,9 @@ export type ProjectsFile = {
   cliPaths: Partial<Record<AgentType, string>>
 }
 
+/** Ships with Windows and macOS; none of these carry Powerline or Nerd Font glyphs. */
+export const DEFAULT_TERMINAL_FONT_FAMILY = 'Cascadia Mono, Consolas, "Courier New", monospace'
+
 export const DEFAULT_PREFERENCES: Preferences = {
   language: 'en',
   uiTheme: 'elite-indigo',
@@ -807,6 +909,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
     grok: true,
     codewhale: true,
   },
+  customAgents: [],
   onboardingDone: false,
   workspaceFlat: false,
   fullscreenContainerId: null,
@@ -817,6 +920,8 @@ export const DEFAULT_PREFERENCES: Preferences = {
   accountCreated: false,
   alwaysStartOnHome: false,
   alwaysStartUnrestricted: false,
+  experimentalAgentPermissionMode: 'ask',
+  handoffScope: 'full',
   lastTerminalCreation: null,
   topbarStyle: 'classic',
   viewPlacements: {},
@@ -824,6 +929,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   spotifyClientId: '',
   spotifyClientSecret: '',
   discordRichPresenceEnabled: false,
+  usageAccess: { claude: false, codex: false, antigravity: false },
   usageShowClaude: true,
   usageShowCodex: true,
   usageShowAntigravity: true,
@@ -849,6 +955,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
     playwright: false,
     orchestrator: false,
     prs: true,
+    wsl: true,
   },
   orchestration: {
     roles: [],
@@ -887,6 +994,10 @@ export const DEFAULT_PREFERENCES: Preferences = {
     spawnGraceSeconds: 120,
   },
   nodeHeapProfile: 'balanced',
+  orchestratorShortcuts: null,
+  workerRuleSets: null,
+  shellPath: null,
+  terminalFontFamily: DEFAULT_TERMINAL_FONT_FAMILY,
   pomodoroWorkMinutes: 25,
   pomodoroShortBreakMinutes: 5,
   pomodoroLongBreakMinutes: 15,
@@ -977,6 +1088,12 @@ export const PROVIDER_MODELS: Record<BuiltinAgentType, { id: string; label: stri
 }
 
 export type McpScope = 'global' | 'project'
+
+/**
+ * How much of a conversation a handoff carries to the other agent: everything, or only the
+ * messages the user wrote. The backend treats any other value as `user-only`.
+ */
+export type HandoffScope = 'full' | 'user-only'
 
 export type McpAgent = Extract<
   BuiltinAgentType,

@@ -7,8 +7,8 @@ use tauri::AppHandle;
 use crate::pty::PtySessions;
 
 use super::{
-    hub, start, stop, RemoteInfo, TailscaleStatus, MAX_REMOTE_DEVICES, MAX_SESSION_EXPIRY_SECS,
-    MIN_SESSION_EXPIRY_SECS,
+    hub, restart, start, stop, RemoteInfo, TailscaleStatus, MAX_REMOTE_DEVICES,
+    MAX_SESSION_EXPIRY_SECS, MIN_SESSION_EXPIRY_SECS,
 };
 
 #[tauri::command]
@@ -92,22 +92,22 @@ pub fn remote_control_set_reach_mode(
     app: AppHandle,
     sessions: tauri::State<'_, PtySessions>,
     use_tailscale: bool,
-) -> RemoteInfo {
+) -> Result<RemoteInfo, String> {
     let remote = hub();
     let changed = remote.use_tailscale() != use_tailscale;
     remote.set_use_tailscale(use_tailscale);
-    if changed && remote.enabled() {
-        // The listeners are bound to a specific host resolved at start() time;
+    if changed {
+        // The listeners are bound to a specific host resolved at start time;
         // flipping the flag alone would leave them on the old address, so a
         // live mode switch has to rebind through a full stop/start. Only do
         // this when the mode actually changed — this command is re-sent on
         // every preference sync, and restarting unconditionally would drop
         // paired devices and close the pairing window on unrelated changes
-        // (read-only, shell input, max devices, ...).
-        stop();
-        start(app, Arc::clone(sessions.inner()));
+        // (read-only, shell input, max devices, ...). `restart` is a no-op
+        // while remote control is off, and leaves it off if rebinding fails.
+        restart(app, Arc::clone(sessions.inner()))?;
     }
-    remote.info()
+    Ok(remote.info())
 }
 
 #[tauri::command]
@@ -117,17 +117,22 @@ pub fn remote_control_revoke_device(device_id: usize) -> RemoteInfo {
     remote.info()
 }
 
+/// `request_id` orders enable/disable requests: the newest id recorded is
+/// authoritative, so an older request finishing late can never undo it. An
+/// `Err` means the listeners could not be opened and remote control is off.
 #[tauri::command]
 pub fn remote_control_set_enabled(
     app: AppHandle,
     sessions: tauri::State<'_, PtySessions>,
     enabled: bool,
-) -> RemoteInfo {
+    request_id: u64,
+) -> Result<RemoteInfo, String> {
     let remote = hub();
+    remote.record_control_request(request_id);
     if enabled {
-        start(app, Arc::clone(sessions.inner()));
+        start(app, Arc::clone(sessions.inner()), request_id)?;
     } else {
-        stop();
+        stop(request_id);
     }
-    remote.info()
+    Ok(remote.info())
 }

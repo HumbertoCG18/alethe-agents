@@ -274,6 +274,7 @@ export function TitleBar() {
   const activeProfileId = useProjectsStore((s) => s.activeProfileId)
   const preferences = useProjectsStore((s) => s.preferences)
   const setPreferences = useProjectsStore((s) => s.setPreferences)
+  const usageAccess = preferences.usageAccess
   const rightSidebarTabs = useSidebarViews('right')
   const rightPanelEnabled = preferences.enabledFeatures.mcp || rightSidebarTabs.length > 0
   const toggleWorkspaceTabPinned = useProjectsStore((s) => s.toggleWorkspaceTabPinned)
@@ -338,7 +339,9 @@ export function TitleBar() {
     }
   }, [tracker])
 
+  // Each provider polls only while its usage reading is on: off schedules no timer at all.
   useEffect(() => {
+    if (!usageAccess.claude) return
     let cancelled = false
     let interval: number | null = null
     const tick = async () => {
@@ -357,9 +360,10 @@ export function TitleBar() {
       window.clearTimeout(startupDelay)
       if (interval !== null) window.clearInterval(interval)
     }
-  }, [tracker])
+  }, [tracker, usageAccess.claude])
 
   useEffect(() => {
+    if (!usageAccess.codex) return
     let cancelled = false
     let interval: number | null = null
     let consecutiveFailures = 0
@@ -390,9 +394,10 @@ export function TitleBar() {
       window.clearTimeout(startupDelay)
       if (interval !== null) window.clearInterval(interval)
     }
-  }, [setCodexUsage, tracker])
+  }, [setCodexUsage, tracker, usageAccess.codex])
 
   useEffect(() => {
+    if (!usageAccess.antigravity) return
     let cancelled = false
     let interval: number | null = null
     const tick = async () => {
@@ -419,7 +424,7 @@ export function TitleBar() {
       window.clearTimeout(startupDelay)
       if (interval !== null) window.clearInterval(interval)
     }
-  }, [setAntigravityUsage, tracker])
+  }, [setAntigravityUsage, tracker, usageAccess.antigravity])
 
   const win = getCurrentWindow()
 

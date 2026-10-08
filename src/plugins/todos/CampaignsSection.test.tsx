@@ -114,7 +114,7 @@ vi.mock('../../lib/tauri', async (importOriginal) => ({
   }),
   ensureTodoTemplate: vi.fn(async () => {}),
   // The backend finishes a cancelled worker at once: the next snapshot shows it cancelled.
-  orchestratorCancel: vi.fn(async (jobId: string) => {
+  orchestratorCancelJob: vi.fn(async (jobId: string) => {
     orchestrator.jobs = orchestrator.jobs.map((job) =>
       job.id === jobId ? { ...job, status: 'cancelled' } : job,
     )
@@ -128,7 +128,7 @@ import {
   findRelativePath,
   listDirectory,
   openInFileExplorer,
-  orchestratorCancel,
+  orchestratorCancelJob,
   orchestratorJobs,
   readTextFile,
   recordFrontendError,
@@ -1259,7 +1259,7 @@ describe('Campaign controls', () => {
     fireEvent.click(button('Pause campaign', 'OITO')!)
     await waitFor(() => expect(writePty).toHaveBeenCalledTimes(1))
     expect(writePty).toHaveBeenCalledWith('pty-a', '\x1b')
-    expect(orchestratorCancel).not.toHaveBeenCalled()
+    expect(orchestratorCancelJob).not.toHaveBeenCalled()
     expect(askConfirm).not.toHaveBeenCalled()
   })
 
@@ -1290,7 +1290,7 @@ describe('Campaign controls', () => {
     expect(askConfirm.mock.calls[0][0]).toContain('OITO')
     await act(async () => {})
     expect(writePty).not.toHaveBeenCalled()
-    expect(orchestratorCancel).not.toHaveBeenCalled()
+    expect(orchestratorCancelJob).not.toHaveBeenCalled()
     expect(agentTerminals()).toHaveLength(3)
     expect(fs.files.get(REGISTRY)).toBe(text)
 
@@ -1310,7 +1310,7 @@ describe('Campaign controls', () => {
     expect(writePty).toHaveBeenCalledWith('pty-a', '\x1b')
     expect(
       vi
-        .mocked(orchestratorCancel)
+        .mocked(orchestratorCancelJob)
         .mock.calls.map(([id]) => id)
         .sort(),
     ).toEqual(['job-blocked', 'job-queued', 'job-run'])
@@ -1383,7 +1383,7 @@ describe('Campaign controls', () => {
       ),
     )
     expect(writePty).not.toHaveBeenCalled()
-    expect(orchestratorCancel).not.toHaveBeenCalled()
+    expect(orchestratorCancelJob).not.toHaveBeenCalled()
     expect(agentTerminals()).toHaveLength(1)
     expect(campaignRegistryWrite).not.toHaveBeenCalled()
     expect(fs.files.get(REGISTRY)).toBe(text)
@@ -1400,7 +1400,7 @@ describe('Campaign controls', () => {
       { id: 'job-gone', task: 'OITO-05', status: 'queued', cwd: 'C:\\repo' },
     ]
     // Refused; accepted but still live in the next snapshot; and cancelled.
-    vi.mocked(orchestratorCancel)
+    vi.mocked(orchestratorCancelJob)
       .mockRejectedValueOnce('refused')
       .mockResolvedValueOnce(null)
       .mockImplementationOnce(async () => {
@@ -1488,7 +1488,7 @@ describe('Campaign controls', () => {
       // Another repository's worker on the same id never counts.
       { id: 'elsewhere', task: 'OITO-08', status: 'running', cwd: OTHER_REPO },
     ]
-    vi.mocked(orchestratorCancel).mockImplementationOnce(async () => {
+    vi.mocked(orchestratorCancelJob).mockImplementationOnce(async () => {
       orchestrator.jobs = [
         { id: 'old', task: 'OITO-02', status: 'cancelled', cwd: 'C:\\repo' },
         { id: 'new', task: 'OITO-02', status: 'running', cwd: 'C:\\repo-feature' },
@@ -1507,7 +1507,7 @@ describe('Campaign controls', () => {
           'Workers still live on OITO-02: those tasks stay in progress.',
       ),
     )
-    expect(orchestratorCancel).toHaveBeenCalledTimes(1)
+    expect(orchestratorCancelJob).toHaveBeenCalledTimes(1)
     expect(task('OITO-02')?.estado).toBe('em execução')
     expect(campaignRegistryWrite).not.toHaveBeenCalled()
   })

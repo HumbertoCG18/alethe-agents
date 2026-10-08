@@ -14,7 +14,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { useT } from '../../lib/i18n'
 import { useProjectsStore } from '../../stores/projectsStore'
-import { useAgentSandboxStore } from '../../stores/agentSandboxStore'
+import { type SandboxNodeStatus, useAgentSandboxStore } from '../../stores/agentSandboxStore'
 import { useUiStore } from '../../stores/uiStore'
 import { XTermView } from '../XTermView'
 import styles from './AgentSandbox.module.css'
@@ -22,7 +22,7 @@ import { Dropdown } from '../ui/Dropdown'
 
 export function AgentSandbox() {
   const t = useT()
-  const statusLabel = (status: 'starting' | 'idle' | 'working' | 'done' | 'error') => {
+  const statusLabel = (status: SandboxNodeStatus) => {
     switch (status) {
       case 'starting':
         return t('sandbox.statusStarting')
@@ -34,6 +34,8 @@ export function AgentSandbox() {
         return t('sandbox.statusDone')
       case 'error':
         return t('sandbox.statusError')
+      case 'blocked':
+        return t('sandbox.statusBlocked')
     }
   }
   const activeProjectId = useProjectsStore((state) => state.activeProjectId)

@@ -1,7 +1,7 @@
 /** Workspace and navigation actions extracted from the main store. */
 import { nanoid } from 'nanoid'
 
-import { translate } from '../lib/i18n'
+import { LOCALES, translate } from '../lib/i18n'
 import {
   activeProjectGrid,
   DEFAULT_GRID_ID,
@@ -872,8 +872,9 @@ function validGridName(
   const key = name.toLocaleLowerCase()
   return (
     Boolean(name) &&
-    ![translate('en', 'projectGrid.default'), translate('pt-BR', 'projectGrid.default')].some(
-      (label) => label.toLocaleLowerCase() === key,
+    // The default grid's name in every language, so no locale can create a second one.
+    !LOCALES.some(
+      (locale) => translate(locale.id, 'projectGrid.default').toLocaleLowerCase() === key,
     ) &&
     !projectGrids(project).some(
       (grid) => grid.id !== exceptId && grid.name.toLocaleLowerCase() === key,

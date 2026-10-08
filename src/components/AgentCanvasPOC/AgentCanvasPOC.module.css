@@ -498,6 +498,13 @@
   white-space: pre-wrap;
 }
 
+/* Why an ask-mode one-shot worker may have ended without doing its task. */
+.workerPermissionNote {
+  font: 10px var(--font-sans);
+  line-height: 1.4;
+  color: var(--status-waiting);
+}
+
 .codexExpandHint {
   display: inline-flex;
   align-items: center;
@@ -1203,6 +1210,29 @@
 }
 
 /* Pill de economia por roteamento (verde — bom). */
+.permissionPill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font: 11px var(--font-mono);
+  padding: 2px 8px;
+  border-radius: 999px;
+  color: var(--fg-muted);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  cursor: pointer;
+}
+
+.permissionPill:hover {
+  border-color: var(--border-strong);
+}
+
+.permissionPillBypass {
+  color: var(--status-waiting);
+  background: var(--status-waiting-soft);
+  border-color: var(--status-waiting);
+}
+
 .savingsPill {
   display: inline-flex;
   align-items: center;

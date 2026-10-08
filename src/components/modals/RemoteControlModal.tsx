@@ -1,19 +1,20 @@
 import { Smartphone, Wifi, WifiOff } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 
+import { useT } from '../../lib/i18n'
+import { requestRemoteControlPreference } from '../../lib/remoteControlConsent'
 import {
   openRemoteControlPairing,
+  type RemoteControlInfo,
   remoteControlInfo,
   remoteControlRevoke,
   remoteControlTailscaleStatus,
-  type RemoteControlInfo,
   type TailscaleStatus,
 } from '../../lib/tauri'
-import { useT } from '../../lib/i18n'
 import { useProjectsStore } from '../../stores/projectsStore'
 import { useUiStore } from '../../stores/uiStore'
-import { Modal } from './Modal'
 import controls from './controls.module.css'
+import { Modal } from './Modal'
 import styles from './RemoteControlModal.module.css'
 import { RemoteControlSettingsFields } from './RemoteControlSettingsFields'
 
@@ -82,7 +83,7 @@ export function RemoteControlModal() {
             <button
               type="button"
               className={`${controls.btn} ${controls.btnDanger}`}
-              onClick={() => setPreferences({ remoteEnabled: false })}
+              onClick={() => requestRemoteControlPreference(false, preferences, setPreferences, t)}
               disabled={busy}
             >
               <WifiOff size={14} />
@@ -92,7 +93,7 @@ export function RemoteControlModal() {
             <button
               type="button"
               className={`${controls.btn} ${controls.btnPrimary}`}
-              onClick={() => setPreferences({ remoteEnabled: true })}
+              onClick={() => requestRemoteControlPreference(true, preferences, setPreferences, t)}
               disabled={busy}
             >
               <Wifi size={14} />

@@ -129,7 +129,7 @@ CI runs the frontend tests, the typecheck/build, and `cargo check` + `cargo test
 Linux, and macOS. If those four commands pass locally, CI will almost certainly be green.
 
 > `npm run build` also **validates translations** — see [House rules](#house-rules). A missing
-> `pt-BR` key is a type error, not a runtime surprise.
+> `pt-BR` or `zh-CN` key is a type error, not a runtime surprise.
 
 ### Writing tests
 
@@ -158,7 +158,7 @@ src/                  React 18 + TypeScript frontend
   lib/                Pure logic, no React. Best place to start reading.
     tauri.ts          Every backend `invoke` call goes through here
     types.ts          Domain types (Project, Group, Terminal, GridLayout…)
-    i18n/             messages/en.ts (source of truth) + messages/pt-BR.ts
+    i18n/             messages/en.ts (source of truth) + pt-BR.ts, zh-CN.ts
   styles/theme.css    Design tokens for all 12 themes
 
 src-tauri/src/        Rust + Tauri backend
@@ -188,9 +188,9 @@ These five come up in review more than anything else. Following them makes your 
 merge, which is exactly what you want.
 
 **1. Every visible string goes through `t()`.**
-Add the key to `src/lib/i18n/messages/en.ts` (source of truth) **and**
-`src/lib/i18n/messages/pt-BR.ts`. `pt-BR.ts` is typed against `en.ts`, so a missing translation
-fails `npm run build`. Never hardcode user-facing text in a component.
+Add the key to `src/lib/i18n/messages/en.ts` (source of truth) **and** to every other locale,
+`src/lib/i18n/messages/pt-BR.ts` and `src/lib/i18n/messages/zh-CN.ts`. Each is typed against
+`en.ts`, so a missing translation fails `npm run build`. Never hardcode user-facing text in a component.
 
 **2. Colors and spacing come from tokens — never literals.**
 Use the CSS custom properties in `src/styles/theme.css` (`--bg`, `--fg`, `--accent`, `--border`,
@@ -272,8 +272,8 @@ details.
 You're missing MSVC. Install the Visual Studio Build Tools "Desktop development with C++"
 workload. For a full installer build you may need to run from a `vcvars64` shell.
 
-**`npm run build` fails with a type error in `pt-BR.ts`.**
-You added an i18n key to `en.ts` and not to `pt-BR.ts`. That's rule 1 — this failure is the guard
+**`npm run build` fails with a type error in `pt-BR.ts` or `zh-CN.ts`.**
+You added an i18n key to `en.ts` and not to every locale. That's rule 1 — this failure is the guard
 rail working as designed.
 
 **`npm run dev` opens, but terminals and projects don't work.**

@@ -21,6 +21,7 @@ function job(
     plannerId: null,
     agent: 'codex',
     runLabel: null,
+    rules: null,
     spec: 'spec',
     cwd: 'C:/repo',
     status: 'running',
@@ -110,6 +111,19 @@ describe('groupRuns', () => {
       job({ id: 'job-02', runId: 'run-a', runLabel: ' refactor pty ' }),
     ])
     expect(run.label).toBe('refactor pty')
+  })
+
+  it('carries no rule set when no worker in the run was briefed with one', () => {
+    const [run] = groupRuns([job({ id: 'job-01', runId: 'run-a' })])
+    expect(run.rules).toBeNull()
+  })
+
+  it('takes the rule set from the first worker that has one', () => {
+    const [run] = groupRuns([
+      job({ id: 'job-01', runId: 'run-a', rules: '   ' }),
+      job({ id: 'job-02', runId: 'run-a', rules: ' frontend ' }),
+    ])
+    expect(run.rules).toBe('frontend')
   })
 
   it('reports the worst state among the workers of a run', () => {
@@ -373,6 +387,16 @@ describe('boardPlannerIds', () => {
 
   it("lists the grouped terminal's ptys, its active tab first", () => {
     expect(boardPlannerIds(project, 'board')).toEqual(['pty-zulu-2', 'pty-zulu-1'])
+  })
+
+  it('follows the terminal the board was started on, even when it is not the first pane', () => {
+    const grouped = {
+      ...project,
+      paneGroups: [
+        { id: 'g1', kind: 'orchestration', paneIds: ['alpha', 'zulu', 'board'], plannerId: 'zulu' },
+      ],
+    } as Project
+    expect(boardPlannerIds(grouped, 'board')).toEqual(['pty-zulu-2', 'pty-zulu-1'])
   })
 
   it('has no preference for a board that is not grouped with a terminal', () => {

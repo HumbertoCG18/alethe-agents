@@ -29,6 +29,7 @@ import {
 } from '../../lib/tauri'
 import { agentLabel, resolveAgentCliCommand } from '../../lib/agentProviders'
 import type { AgentRuntimeProfile, AgentType, Theme } from '../../lib/types'
+import { wslTargetFor } from '../../lib/wsl'
 import { useProjectsStore } from '../../stores/projectsStore'
 import { useUiStore } from '../../stores/uiStore'
 import { AgentInstallButton } from '../AgentInstall/AgentInstallButton'
@@ -119,6 +120,8 @@ export function XTermView({
     command && command !== 'shell' ? (s.cliPaths[command] ?? null) : null,
   )
   const setCliPath = useProjectsStore((s) => s.setCliPath)
+  const wslEnabled = useProjectsStore((s) => s.preferences.enabledFeatures.wsl)
+  const wslTarget = wslTargetFor(cwd, wslEnabled)
 
   const onSpawnedRef = useRef(onSpawned)
   const onSessionIdRef = useRef(onSessionId)
@@ -467,14 +470,17 @@ export function XTermView({
             agent={commandNotFound as AgentType}
             label={agentLabel(commandNotFound)}
             onInstalled={() => setRetryKey((value) => value + 1)}
+            cwd={cwd}
           />
-          <button
-            type="button"
-            className={styles.overlayBtn}
-            onClick={() => void configurePath(commandNotFound as AgentType)}
-          >
-            {t('xterm.configurePath')}
-          </button>
+          {wslTarget ? null : (
+            <button
+              type="button"
+              className={styles.overlayBtn}
+              onClick={() => void configurePath(commandNotFound as AgentType)}
+            >
+              {t('xterm.configurePath')}
+            </button>
+          )}
         </div>
       ) : null}
       {linkActions

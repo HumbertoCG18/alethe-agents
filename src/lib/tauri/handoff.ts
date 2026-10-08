@@ -1,5 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 
+import type { HandoffScope } from '../types'
+
 export type HandoffProvider = 'claude' | 'codex'
 
 export type HandoffDraft = {
@@ -26,6 +28,7 @@ export function prepareAgentHandoff(args: {
   targetProvider: HandoffProvider
   sourceSessionId?: string
   cwd: string
+  scope: HandoffScope
 }): Promise<HandoffDraft> {
   return invoke<HandoffDraft>('prepare_agent_handoff', args)
 }

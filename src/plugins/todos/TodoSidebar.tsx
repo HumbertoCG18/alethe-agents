@@ -304,7 +304,7 @@ export function TodoSidebar() {
     tab === 'personal'
       ? [{ name: null, done: completed.length, total: todos.length, more: false }]
       : tab === 'night'
-        ? diary
+        ? diary && nightTasks.some((id) => !doneNow.has(id))
           ? [
               {
                 name: t('todo.night.title', { date: nightDay(diary.date, locale) }),

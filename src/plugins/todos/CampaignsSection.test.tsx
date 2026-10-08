@@ -3533,6 +3533,17 @@ describe('Active campaign step', () => {
     expect(bar()).toBeNull()
   })
 
+  it('hides the Night tab bar once every night task is concluded', async () => {
+    fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    night(['OITO-01', 'ok'])
+    openTerminal('C:\\repo', 'claude', 'OITO')
+    useTodosStore.setState({ tab: 'night' })
+    render(<TodoSidebar />)
+    await waitFor(() => expect(listDirectory).toHaveBeenCalledWith(NIGHTS))
+    await act(async () => {})
+    expect(screen.queryByRole('progressbar')).toBeNull()
+  })
+
   it('hides the Night tab bar without a diary', async () => {
     fs.files.set(REGISTRY, JSON.stringify(exemplo))
     useTodosStore.setState({ tab: 'night' })

@@ -353,7 +353,7 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
   button in the header shows it while a file is open, and picking a file opens it.
 - **Night tab: concluded tasks under Completed.** Entries of the latest night whose task is already
   concluded in the registry move to a collapsed Completed section, so the night lists only what is
-  still open.
+  still open. Its progress bar is hidden once every task of the night is concluded.
 - **Fresher agent lines and tab titles, lighter Remote Control.** A campaign agent's line and
   pending question in the Todo panel, and the titles of Claude Code and Codex tabs, now follow the
   session as its transcript grows, instead of waiting for the agent to stop or for a timer. Each

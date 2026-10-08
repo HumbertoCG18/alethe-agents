@@ -44,10 +44,21 @@ fn powershell_single_quoted(value: &str) -> String {
     quoted
 }
 
+/// Whether the shell accepts PowerShell's own switches. Matched on the file stem so an absolute
+/// override such as `C:\Program Files\PowerShell\7\pwsh.exe` is recognized just like a bare `pwsh`.
+/// Both separators are split on: a Windows path can reach a Unix build through a synced
+/// `projects.json`, where `std::path` would not treat the backslashes as separators.
+fn is_powershell(shell: &str) -> bool {
+    let name = shell.rsplit(['/', '\\']).next().unwrap_or(shell);
+    let stem = name.rsplit_once('.').map_or(name, |(stem, _)| stem);
+    stem.eq_ignore_ascii_case("pwsh") || stem.eq_ignore_ascii_case("powershell")
+}
+
 pub fn command_builder_for_terminal(
     initial_command: Option<&str>,
     resolved_launcher: Option<&str>,
     extra_args: &[String],
+    command_line: Option<&str>,
 ) -> CommandBuilder {
     let trimmed = initial_command
         .map(str::trim)
@@ -89,12 +100,21 @@ pub fn command_builder_for_terminal(
             }
         }
         None => {
-            let shell = default_shell();
+            // A plain shell tab carries no command, so `resolved_launcher` is the shell the user
+            // picked in Preferences. `pty.rs` only forwards it after confirming it is a real file.
+            let shell = resolved_launcher
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+                .unwrap_or_else(default_shell);
             let mut builder = CommandBuilder::new(&shell);
-            if shell.eq_ignore_ascii_case("pwsh.exe")
-                || shell.eq_ignore_ascii_case("powershell.exe")
-            {
+            if is_powershell(&shell) {
                 builder.arg("-NoLogo");
+            }
+            // An orchestrator shell: the line runs through the shell and the PTY ends with it, so
+            // the board can tell a running service from one that exited.
+            if let Some(line) = command_line.map(str::trim).filter(|line| !line.is_empty()) {
+                builder.arg(if cfg!(windows) { "-Command" } else { "-lc" });
+                builder.arg(line);
             }
             builder
         }
@@ -356,8 +376,17 @@ fn linux_user_bin_dirs() -> Vec<PathBuf> {
         dirs.push(home.join(".volta").join("bin"));
         dirs.push(home.join(".local").join("share").join("pnpm"));
     }
+    if let Some(volta_home) = env::var_os("VOLTA_HOME").map(PathBuf::from) {
+        dirs.push(volta_home.join("bin"));
+    }
     if let Some(pnpm_home) = env::var_os("PNPM_HOME").map(PathBuf::from) {
         dirs.push(pnpm_home);
+    }
+    let fnm_root = env::var_os("FNM_DIR").map(PathBuf::from).or_else(|| {
+        env::var_os("HOME").map(|h| PathBuf::from(h).join(".local").join("share").join("fnm"))
+    });
+    if let Some(root) = fnm_root {
+        dirs.extend(fnm_alias_bin_dirs(&root));
     }
     // nvm installs one versioned bin dir per node release; pick every one
     // newest first (same pattern as `fnm_version_dirs`).
@@ -389,6 +418,22 @@ fn linux_user_bin_dirs() -> Vec<PathBuf> {
             }
         }
     }
+    dirs
+}
+
+/// fnm on Linux keeps one symlink per alias under `<root>/aliases`, each pointing at an installed
+/// node version. The `default` alias is the version a new shell gets, so it goes first.
+#[cfg(target_os = "linux")]
+fn fnm_alias_bin_dirs(root: &std::path::Path) -> Vec<PathBuf> {
+    let Ok(entries) = fs::read_dir(root.join("aliases")) else {
+        return Vec::new();
+    };
+    let mut dirs: Vec<PathBuf> = entries
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path().join("bin"))
+        .filter(|bin| bin.is_dir())
+        .collect();
+    dirs.sort_by_key(|bin| !bin.parent().is_some_and(|alias| alias.ends_with("default")));
     dirs
 }
 
@@ -1096,7 +1141,7 @@ mod tests {
         )
         .unwrap();
         let builder =
-            command_builder_for_terminal(Some("probe"), Some(&script.to_string_lossy()), args);
+            command_builder_for_terminal(Some("probe"), Some(&script.to_string_lossy()), args, None);
         let argv = builder.get_argv();
         let output = std::process::Command::new(&argv[0])
             .args(&argv[1..])
@@ -1128,6 +1173,73 @@ mod tests {
         .map(|arg| arg.to_string())
         .collect();
         assert_eq!(argv_through_terminal_shell(&args), args);
+    }
+
+    fn argv_of(builder: &CommandBuilder) -> Vec<String> {
+        builder
+            .get_argv()
+            .iter()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect()
+    }
+
+    #[test]
+    fn a_shell_given_a_command_line_runs_it_and_exits_with_it() {
+        let argv = argv_of(&command_builder_for_terminal(None, None, &[], Some("npm run dev")));
+        assert_eq!(argv.last().map(String::as_str), Some("npm run dev"), "{argv:?}");
+        let flag = if cfg!(windows) { "-Command" } else { "-lc" };
+        assert_eq!(argv[argv.len() - 2], flag, "{argv:?}");
+    }
+
+    #[test]
+    fn a_plain_shell_stays_interactive() {
+        let argv = argv_of(&command_builder_for_terminal(None, None, &[], None));
+        assert!(!argv.iter().any(|arg| arg == "-Command" || arg == "-lc"), "{argv:?}");
+    }
+
+    #[test]
+    fn recognizes_powershell_by_file_stem() {
+        for shell in [
+            "pwsh",
+            "pwsh.exe",
+            "PowerShell.exe",
+            r"C:\Program Files\PowerShell\7\pwsh.exe",
+            "/usr/bin/pwsh",
+        ] {
+            assert!(is_powershell(shell), "expected a PowerShell shell: {shell}");
+        }
+
+        for shell in ["bash", "/bin/zsh", "nu.exe", "cmd.exe", "fish", ""] {
+            assert!(!is_powershell(shell), "expected a non-PowerShell shell: {shell}");
+        }
+    }
+
+    #[test]
+    fn plain_shell_tab_uses_the_configured_shell() {
+        let shell = if cfg!(windows) { "nu.exe" } else { "/bin/zsh" };
+        let builder = command_builder_for_terminal(None, Some(shell), &[], None);
+        assert_eq!(builder.get_argv()[0], shell);
+        // A non-PowerShell shell must not inherit PowerShell's switches.
+        assert_eq!(builder.get_argv().len(), 1);
+    }
+
+    #[test]
+    fn plain_shell_tab_falls_back_to_the_default_shell() {
+        for override_value in [None, Some("")] {
+            let builder = command_builder_for_terminal(None, override_value, &[], None);
+            assert_eq!(builder.get_argv()[0], default_shell().as_str());
+        }
+    }
+
+    #[test]
+    fn powershell_override_keeps_the_nologo_switch() {
+        let shell = if cfg!(windows) {
+            r"C:\Program Files\PowerShell\7\pwsh.exe"
+        } else {
+            "/usr/bin/pwsh"
+        };
+        let builder = command_builder_for_terminal(None, Some(shell), &[], None);
+        assert_eq!(builder.get_argv()[1], "-NoLogo");
     }
 
     #[test]
@@ -1199,6 +1311,25 @@ mod tests {
     fn resolves_cli_launcher_on_unix() {
         assert!(find_windows_cli_launcher("sh").is_some());
         assert!(find_windows_cli_launcher("non_existent_binary_xyz_123").is_none());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn fnm_aliases_resolve_to_their_bin_dirs_with_the_default_first() {
+        let root = std::env::temp_dir().join(format!("alethe-fnm-{}", std::process::id()));
+        for alias in ["lts-latest", "default", "v20"] {
+            std::fs::create_dir_all(root.join("aliases").join(alias).join("bin"))
+                .expect("create alias bin dir");
+        }
+        // An alias whose target is gone has no bin dir and is skipped.
+        std::fs::create_dir_all(root.join("aliases").join("stale")).expect("create stale alias");
+
+        let dirs = fnm_alias_bin_dirs(&root);
+
+        assert_eq!(dirs.len(), 3, "{dirs:?}");
+        assert_eq!(dirs[0], root.join("aliases").join("default").join("bin"));
+        assert!(fnm_alias_bin_dirs(&root.join("missing")).is_empty());
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// With the Linux user-bin-dirs fallback, an agent installed via
@@ -1283,7 +1414,7 @@ mod tests {
         // Alethe itself started from a Claude Code session: its environment holds the session.
         std::env::set_var("CLAUDE_CODE_CHILD_SESSION", "1");
         std::env::set_var("CLAUDE_CODE_SESSION_ID", "outer");
-        let builder = command_builder_for_terminal(Some("claude"), None, &[]);
+        let builder = command_builder_for_terminal(Some("claude"), None, &[], None);
         let mut worker = std::process::Command::new("claude");
         crate::orchestrator_core::scrub_claude_session_command(&mut worker);
         std::env::remove_var("CLAUDE_CODE_CHILD_SESSION");

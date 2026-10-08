@@ -28,6 +28,31 @@ const TEARDOWN_NORMAL: u8 = 0;
 const TEARDOWN_KILLED: u8 = 1;
 const TEARDOWN_SUSPENDED: u8 = 2;
 const TEARDOWN_RESTARTED: u8 = 3;
+const CHILD_EXIT_POLL_MS: u64 = 150;
+const CHILD_EXIT_GRACE_MS: u128 = 500;
+
+fn watcher_should_close(child_exited: bool, elapsed_since_exit_ms: u128) -> bool {
+    child_exited && elapsed_since_exit_ms >= CHILD_EXIT_GRACE_MS
+}
+
+fn exit_reason(teardown: u8) -> &'static str {
+    match teardown {
+        TEARDOWN_KILLED => "killed",
+        TEARDOWN_SUSPENDED => "suspended",
+        TEARDOWN_RESTARTED => "restarted",
+        _ => "exited",
+    }
+}
+
+fn child_has_exited(child: &Arc<Mutex<Box<dyn portable_pty::Child + Send + Sync>>>) -> bool {
+    match child.lock() {
+        Ok(mut child) => child
+            .try_wait()
+            .map(|status| status.is_some())
+            .unwrap_or(true),
+        Err(_) => true,
+    }
+}
 
 /// supervisor no modo manual.
 const SPAWN_MIN_AVAILABLE_MB: f64 = 400.0;
@@ -259,6 +284,8 @@ pub async fn spawn_pty(
 
     // canvas) — nunca polui o ambiente global nem outros terminais.
     env: Option<std::collections::HashMap<String, String>>,
+    // Set only by orchestrator shells: the line the shell runs and exits with.
+    command_line: Option<String>,
 ) -> Result<SpawnPtyResponse, String> {
     // OUTRO comando IPC (spawn de outro terminal, poll do GSD Sync, leitura de
 
@@ -295,39 +322,53 @@ pub async fn spawn_pty(
             .map_err(|error| error.to_string())?;
 
         let resolve_started = Instant::now();
-        // 1. Se frontend mandou override (user configurou via cliPaths), usa ele
-                                                                                 
-                                                               
-        let resolved_launcher = if let Some(override_path) = launcher_override
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(PathBuf::from)
-            .filter(|p| p.is_file())
-        {
-            Some(override_path.to_string_lossy().to_string())
+        let wsl_target = if cfg!(windows) {
+            cwd.as_deref().and_then(crate::wsl::wsl_target)
         } else {
-            requested_command
-                .as_deref()
-                .and_then(|raw| {
-                    let trimmed = raw.trim();
-                    if trimmed.is_empty() {
-                        return None;
-                    }
-                    find_windows_cli_launcher(trimmed)
-                })
-                .map(|path| path.to_string_lossy().to_string())
+            None
         };
-        let mut command = command_builder_for_terminal(
-            requested_command.as_deref(),
-            resolved_launcher.as_deref(),
-            &extras,
-        );
-        if let Some(extra_env) = env.as_ref() {
-            for (key, value) in extra_env {
-                command.env(key, value);
+        let mut resolved_launcher: Option<String> = None;
+        let mut command = if let Some(target) = wsl_target.as_ref() {
+            crate::wsl::command_builder_for_wsl(
+                target,
+                requested_command.as_deref(),
+                &extras,
+                env.as_ref(),
+            )
+        } else {
+            resolved_launcher = if let Some(override_path) = launcher_override
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(PathBuf::from)
+                .filter(|p| p.is_file())
+            {
+                Some(override_path.to_string_lossy().to_string())
+            } else {
+                requested_command
+                    .as_deref()
+                    .and_then(|raw| {
+                        let trimmed = raw.trim();
+                        if trimmed.is_empty() {
+                            return None;
+                        }
+                        find_windows_cli_launcher(trimmed)
+                    })
+                    .map(|path| path.to_string_lossy().to_string())
+            };
+            let mut command = command_builder_for_terminal(
+                requested_command.as_deref(),
+                resolved_launcher.as_deref(),
+                &extras,
+                command_line.as_deref(),
+            );
+            if let Some(extra_env) = env.as_ref() {
+                for (key, value) in extra_env {
+                    command.env(key, value);
+                }
             }
-        }
+            command
+        };
         let resolve_ms = resolve_started.elapsed().as_millis();
         let builder_ms = spawn_started.elapsed().as_millis();
         let effective_path_preview = command
@@ -404,6 +445,28 @@ pub async fn spawn_pty(
         // de emitir. Resultado: 1 evento IPC + 1 push_scrollback por LOTE em vez de
                                                                                
         let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<u8>>(1024);
+        let watch_child_exit = wsl_target.is_some();
+        let child_gone = Arc::new(tokio::sync::Notify::new());
+        if watch_child_exit {
+            let watch_child = Arc::clone(&child);
+            let watch_signal = Arc::clone(&child_gone);
+            thread::spawn(move || {
+                let mut exited_at: Option<Instant> = None;
+                loop {
+                    if exited_at.is_none() && child_has_exited(&watch_child) {
+                        exited_at = Some(Instant::now());
+                    }
+                    let elapsed = exited_at
+                        .map(|at| at.elapsed().as_millis())
+                        .unwrap_or_default();
+                    if watcher_should_close(exited_at.is_some(), elapsed) {
+                        watch_signal.notify_one();
+                        return;
+                    }
+                    thread::sleep(Duration::from_millis(CHILD_EXIT_POLL_MS));
+                }
+            });
+        }
 
         tauri::async_runtime::spawn(async move {
         tokio::task::spawn_blocking(move || {
@@ -490,7 +553,20 @@ pub async fn spawn_pty(
         loop {
                                                                              
                                                                              
-            let Some(first) = rx.recv().await else { break };
+            let received = tokio::select! {
+                biased;
+                chunk = rx.recv() => chunk,
+                _ = child_gone.notified() => {
+                    let _ = append_spawn_log(
+                        &debug_app,
+                        &format!(
+                            "pty {debug_id}: closed by the child watcher (the pty master never reached EOF)"
+                        ),
+                    );
+                    None
+                }
+            };
+            let Some(first) = received else { break };
             batch.extend_from_slice(&first);
 
                                                                            
@@ -658,12 +734,7 @@ pub async fn spawn_pty(
             .ok()
             .and_then(|mut child| child.wait().ok())
             .map(|status| status.exit_code() as i32);
-        let reason = match teardown_reason {
-            TEARDOWN_KILLED => "killed",
-            TEARDOWN_SUSPENDED => "suspended",
-            TEARDOWN_RESTARTED => "restarted",
-            _ => "exited",
-        };
+        let reason = exit_reason(teardown_reason);
         let _ = event_app.emit(&exit_event_name, PtyExitPayload { code, reason });
         remote_hub.publish(&scrollback_id, || {
             serde_json::json!({ "type": "pty_exit", "ptyId": &scrollback_id, "reason": reason })
@@ -686,13 +757,15 @@ pub async fn spawn_pty(
         let _ = append_spawn_log(
             &app,
             &format!(
-                "spawn id={id} command={:?} launcher={:?} memory_wait_ms={memory_wait_ms} resolve_ms={resolve_ms} builder_ms={builder_ms} shell_spawn_ms={shell_spawn_ms} total_ms={} path_preview={effective_path_preview:?}",
+                "spawn id={id} command={:?} launcher={:?} wsl_distro={:?} memory_wait_ms={memory_wait_ms} resolve_ms={resolve_ms} builder_ms={builder_ms} shell_spawn_ms={shell_spawn_ms} total_ms={} path_preview={effective_path_preview:?}",
                 requested_command,
                 resolved_launcher,
+                wsl_target.as_ref().map(|target| target.distro.as_str()),
                 spawn_started.elapsed().as_millis()
             ),
         );
 
+        let child_for_watch = Arc::clone(&child);
         let session = PtySession {
             pty_id: id.clone(),
             master: Arc::new(Mutex::new(pair.master)),
@@ -713,6 +786,49 @@ pub async fn spawn_pty(
             .map_err(|_| "PTY sessions lock poisoned".to_string())?
             .insert(id.clone(), session);
 
+        // A PTY that runs a one-shot line (an installer, an orchestrator shell) is supposed to end
+        // with its command — but nothing here would notice. Teardown is only ever started by the
+        // app (kill, restart, suspend), and the reader does not reach EOF on its own while this
+        // process still holds the master's writer open, so a child that exits by itself leaves the
+        // session registered forever and `pty://exit` is never emitted: an install that finished
+        // sits on "installing" until the app is restarted. Watching the child closes that gap.
+        // Interactive shells keep the old behaviour, since they end only when the app says so.
+        if command_line.is_some() {
+            let watch_sessions = Arc::clone(&sessions);
+            let watch_child = Arc::clone(&child_for_watch);
+            let watch_id = id.clone();
+            thread::spawn(move || loop {
+                thread::sleep(Duration::from_millis(250));
+                let exited = watch_child
+                    .lock()
+                    .ok()
+                    .and_then(|mut child| child.try_wait().ok())
+                    .flatten()
+                    .is_some();
+                if !exited {
+                    // Someone else (kill, restart) already took the session: stop watching.
+                    let known = watch_sessions
+                        .lock()
+                        .map(|sessions| sessions.contains_key(&watch_id))
+                        .unwrap_or(false);
+                    if !known {
+                        break;
+                    }
+                    continue;
+                }
+                // Dropping the session releases the master and its writer, which ends the reader and
+                // runs the ordinary teardown: the exit is emitted with its code and reason.
+                let session = watch_sessions
+                    .lock()
+                    .ok()
+                    .and_then(|mut sessions| sessions.remove(&watch_id));
+                if let Some(session) = session {
+                    terminate_session(session);
+                }
+                break;
+            });
+        }
+
         Ok(SpawnPtyResponse { id })
     })
     .await
@@ -729,7 +845,10 @@ pub async fn spawn_pty(
 /// that same global lock, so a single slow kill stops every terminal in the app from accepting a
 /// keystroke while output, which never touches the lock, keeps arriving.
 fn kill_tree_without_holding_child(child: &Arc<Mutex<Box<dyn portable_pty::Child + Send + Sync>>>) {
-    let pid = child.lock().ok().and_then(|mut child| child.process_id());
+    // Scoped so the guard is visibly dropped before the kill, not merely at the end of a line.
+    let pid = {
+        child.lock().ok().and_then(|mut child| child.process_id())
+    };
     if let Some(pid) = pid {
         kill_process_tree(pid);
     }
@@ -783,6 +902,7 @@ pub async fn restart_pty(
     extra_args: Option<Vec<String>>,
     launcher_override: Option<String>,
     env: Option<HashMap<String, String>>,
+    command_line: Option<String>,
 ) -> Result<SpawnPtyResponse, String> {
     // apagar o scrollback antigo rodava direto no corpo async, fora de
 
@@ -820,6 +940,7 @@ pub async fn restart_pty(
         extra_args,
         launcher_override,
         env,
+        command_line,
     )
     .await
 }
@@ -1478,7 +1599,7 @@ fn scrollback_writer() -> &'static std::sync::mpsc::Sender<ScrollbackWrite> {
     })
 }
 
-fn wait_for_scrollback_writer() -> Result<(), String> {
+pub(crate) fn wait_for_scrollback_writer() -> Result<(), String> {
     let (done_tx, done_rx) = std::sync::mpsc::channel();
     scrollback_writer()
         .send(ScrollbackWrite::Barrier(done_tx))
@@ -2027,6 +2148,78 @@ mod tests {
                         .lock()"
             ),
             "the process snapshot must use try_lock: it holds the lock every keystroke needs"
+        );
+    }
+
+    #[test]
+    fn exit_reason_reports_exited_when_no_teardown_was_requested() {
+        assert_eq!(exit_reason(TEARDOWN_NORMAL), "exited");
+    }
+
+    #[test]
+    fn exit_reason_preserves_every_teardown_flag() {
+        assert_eq!(exit_reason(TEARDOWN_KILLED), "killed");
+        assert_eq!(exit_reason(TEARDOWN_SUSPENDED), "suspended");
+        assert_eq!(exit_reason(TEARDOWN_RESTARTED), "restarted");
+    }
+
+    #[test]
+    fn the_watcher_never_closes_a_session_whose_child_is_still_running() {
+        assert!(!watcher_should_close(false, 0));
+        assert!(!watcher_should_close(false, 10_000));
+    }
+
+    /// The child can die with its last lines still buffered, so closing on the spot would
+    /// truncate an installer's or an agent's final output.
+    #[test]
+    fn the_watcher_waits_out_the_drain_grace_before_closing() {
+        assert!(!watcher_should_close(true, 0));
+        assert!(!watcher_should_close(true, 499));
+        assert!(watcher_should_close(true, 500));
+        assert!(watcher_should_close(true, 1_500));
+    }
+
+    /// Same invariant the kill path has: the snapshot and keystroke paths queue behind this lock,
+    /// so the watcher may only peek at the child and must sleep with the guard released.
+    #[test]
+    fn the_child_watcher_never_holds_the_child_lock_across_a_wait() {
+        let source = include_str!("pty.rs");
+        let probe = source
+            .split("fn child_has_exited")
+            .nth(1)
+            .expect("the watcher probe exists");
+        let probe = &probe[..probe.find("\n}").unwrap_or(probe.len())];
+
+        assert!(
+            probe.contains("try_wait"),
+            "the watcher must poll the child, never block on it"
+        );
+        assert!(
+            !probe.contains("child.wait()"),
+            "a blocking wait under the child lock stalls every terminal in the app"
+        );
+        assert!(
+            !probe.contains("thread::sleep"),
+            "the poll sleep must run outside the child lock"
+        );
+    }
+
+    #[test]
+    fn the_child_watcher_is_scoped_to_wsl_sessions() {
+        let source = include_str!("pty.rs");
+        let spawn = source
+            .split("let watch_child_exit = wsl_target.is_some();")
+            .nth(1)
+            .expect("the watcher is gated on the WSL target");
+        let body = &spawn[..spawn.len().min(600)];
+
+        assert!(
+            body.contains("if watch_child_exit {"),
+            "the watcher thread must only be spawned for WSL sessions"
+        );
+        assert!(
+            body.contains("child_has_exited"),
+            "the gated block must be the one that polls the child"
         );
     }
 

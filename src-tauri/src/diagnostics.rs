@@ -433,8 +433,10 @@ mod windows_clipboard {
 }
 
 /// Backend de clipboard pra Linux/BSD via ferramentas de linha de comando
-/// (`wl-paste`/`wl-copy` no Wayland, `xclip` no X11) — sem essas ferramentas
-/// instaladas, os comandos de clipboard retornam erro em vez de panicar.
+/// On Linux the clipboard can be accessed through external tools (`wl-paste`/
+/// `wl-copy` on Wayland, `xclip` on X11) or — on KDE — through the Klipper
+/// D-Bus service via `qdbus`.  When none of these is available the commands
+/// return a clear error instead of panicking.
 #[cfg(all(unix, not(target_os = "macos")))]
 mod unix_clipboard {
     use std::io::Write;
@@ -446,34 +448,106 @@ mod unix_clipboard {
         std::env::var_os("WAYLAND_DISPLAY").is_some()
     }
 
-    fn paste_tool() -> Result<&'static str, String> {
-        let (tool, package) = if wayland() {
-            ("wl-paste", "wl-clipboard")
-        } else {
-            ("xclip", "xclip")
-        };
-        which::which(tool)
-            .map(|_| tool)
-            .map_err(|_| format!("{tool} não encontrado no PATH (pacote `{package}`)"))
+    /// `qdbus` ships as `qdbus6` (or `qdbus-qt6`) on Plasma 6, and as `qdbus` before it.
+    fn qdbus() -> Option<&'static str> {
+        ["qdbus6", "qdbus-qt6", "qdbus"]
+            .into_iter()
+            .find(|name| which::which(name).is_ok())
     }
 
-    fn copy_tool() -> Result<&'static str, String> {
-        let (tool, package) = if wayland() {
-            ("wl-copy", "wl-clipboard")
-        } else {
-            ("xclip", "xclip")
-        };
-        which::which(tool)
-            .map(|_| tool)
-            .map_err(|_| format!("{tool} não encontrado no PATH (pacote `{package}`)"))
+    /// Klipper, KDE Plasma's clipboard manager, answers over D-Bus with no extra package. Listing
+    /// its interface is enough to know it is there, without reading the clipboard to find out.
+    fn klipper_available() -> bool {
+        qdbus().is_some_and(|qdbus| {
+            Command::new(qdbus)
+                .args(["org.kde.klipper", "/klipper"])
+                .output()
+                .is_ok_and(|output| output.status.success())
+        })
     }
 
-    /// Lista os mimetypes disponíveis no clipboard (equivalente a
-    /// IsClipboardFormatAvailable, mas descobrindo tudo de uma vez).
+    fn klipper_read_text() -> Result<String, String> {
+        let qdbus = qdbus().ok_or_else(missing_tool_error)?;
+        let output = Command::new(qdbus)
+            .args(["org.kde.klipper", "/klipper", "getClipboardContents"])
+            .output()
+            .map_err(|e| format!("failed to run {qdbus}: {e}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "{qdbus} getClipboardContents failed (exit {})",
+                output.status.code().unwrap_or(-1)
+            ));
+        }
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    }
+
+    fn klipper_write_text(text: &str) -> Result<(), String> {
+        let qdbus = qdbus().ok_or_else(missing_tool_error)?;
+        // One argument, straight to qdbus: no shell reads the text, and it never touches the disk,
+        // where a temporary file in a shared folder could be read by another user.
+        let output = Command::new(qdbus)
+            .args(["org.kde.klipper", "/klipper", "setClipboardContents", text])
+            .output()
+            .map_err(|e| format!("failed to run {qdbus}: {e}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "{qdbus} setClipboardContents failed (exit {})",
+                output.status.code().unwrap_or(-1)
+            ));
+        }
+        Ok(())
+    }
+
+    /// The session's own tool first: `wl-paste` on Wayland, and `xclip` on X11, which XWayland
+    /// also serves. Klipper carries only text, so it is used only when neither is installed;
+    /// preferring it would lose image and file paste on a KDE desktop that has the tools.
+    fn paste_tool() -> Option<&'static str> {
+        let native: &[&'static str] = if wayland() {
+            &["wl-paste", "xclip"]
+        } else {
+            &["xclip"]
+        };
+        native
+            .iter()
+            .copied()
+            .find(|tool| which::which(tool).is_ok())
+            .or_else(|| klipper_available().then_some("klipper"))
+    }
+
+    fn copy_tool() -> Option<&'static str> {
+        let native: &[&'static str] = if wayland() {
+            &["wl-copy", "xclip"]
+        } else {
+            &["xclip"]
+        };
+        native
+            .iter()
+            .copied()
+            .find(|tool| which::which(tool).is_ok())
+            .or_else(|| klipper_available().then_some("klipper"))
+    }
+
+    fn missing_tool_error() -> String {
+        if wayland() {
+            "No clipboard tool found — install `wl-clipboard` (provides wl-paste/wl-copy) \
+             or ensure Klipper is running (KDE Plasma default)"
+                .to_string()
+        } else {
+            "No clipboard tool found — install `xclip`, or run Klipper (KDE Plasma default)"
+                .to_string()
+        }
+    }
+
+    /// Lists the MIME types available in the clipboard (equivalent to
+    /// `IsClipboardFormatAvailable` but discovering everything at once).
     fn list_types() -> Vec<String> {
-        let Ok(tool) = paste_tool() else {
+        let Some(tool) = paste_tool() else {
             return Vec::new();
         };
+        if tool == "klipper" {
+            // Klipper is text-only — report a single text/plain type.
+            return vec!["text/plain".to_string()];
+        }
         let output = if tool == "wl-paste" {
             Command::new("wl-paste").arg("--list-types").output()
         } else {
@@ -496,7 +570,20 @@ mod unix_clipboard {
     }
 
     fn read_type(mime: &str) -> Result<Vec<u8>, String> {
-        let tool = paste_tool()?;
+        let Some(tool) = paste_tool() else {
+            return Err(missing_tool_error());
+        };
+        if tool == "klipper" {
+            // Klipper only exposes text/plain through D-Bus.
+            if mime == "text/plain" || mime.starts_with("text/plain") {
+                return klipper_read_text().map(|s| s.into_bytes());
+            }
+            return Err(
+                "Image/file clipboard content requires `wl-clipboard` (Wayland) \
+                 or `xclip` (X11) — Klipper only supports text"
+                    .to_string(),
+            );
+        }
         let output = if tool == "wl-paste" {
             Command::new("wl-paste")
                 .args(["--type", mime, "--no-newline"])
@@ -508,16 +595,16 @@ mod unix_clipboard {
         }
         .map_err(|e| e.to_string())?;
         if !output.status.success() {
-            return Err(format!("falha ao ler clipboard ({mime})"));
+            return Err(format!("Failed to read clipboard ({mime})"));
         }
         Ok(output.stdout)
     }
 
-    /// `text/uri-list` é o mimetype padrão que gerenciadores de arquivo
-    /// (Nautilus, Dolphin, Thunar, ...) usam ao copiar arquivos: uma lista de
-    /// URIs `file://` separadas por linha, com comentários opcionais em `#`.
-    /// GNOME/Nautilus às vezes só expõe `x-special/gnome-copied-files`
-    /// (mesmo formato, com uma linha extra "copy"/"cut" no início).
+    /// `text/uri-list` is the MIME type file managers (Nautilus, Dolphin,
+    /// Thunar, …) use when files are copied: a list of `file://` URIs
+    /// separated by newlines, with optional `#` comments.
+    /// GNOME/Nautilus sometimes only exposes `x-special/gnome-copied-files`
+    /// (same format, with an extra "copy"/"cut" line at the top).
     fn parse_uri_list(raw: &str) -> Vec<String> {
         raw.lines()
             .map(str::trim)
@@ -544,7 +631,7 @@ mod unix_clipboard {
             return Ok(ClipboardPayload::Empty);
         }
 
-        // Mesma ordem de prioridade do backend Windows: arquivos > imagem > texto.
+        // Same priority order as the Windows backend: files > images > text.
         let uri_mime = ["text/uri-list", "x-special/gnome-copied-files"]
             .into_iter()
             .find(|mime| types.iter().any(|t| t == mime));
@@ -556,10 +643,10 @@ mod unix_clipboard {
             }
         }
 
-        // image/png cobre a esmagadora maioria dos casos reais (screenshots,
-        // "copiar imagem" no navegador). Formatos crus como image/bmp ou
-        // image/jpeg não são reencodados aqui de propósito, pra não exigir
-        // features extras da crate `image` só pra esse caminho.
+        // image/png covers the vast majority of real-world cases (screenshots,
+        // "copy image" in browsers).  Raw formats like image/bmp or
+        // image/jpeg are intentionally not re-encoded here to avoid requiring
+        // extra `image` crate features for this path.
         if types.iter().any(|t| t == "image/png") {
             let bytes = read_type("image/png")?;
             if !bytes.is_empty() {
@@ -585,7 +672,14 @@ mod unix_clipboard {
     }
 
     pub fn write_text(text: &str) -> Result<(), String> {
-        let tool = copy_tool()?;
+        let Some(tool) = copy_tool() else {
+            return Err(missing_tool_error());
+        };
+
+        if tool == "klipper" {
+            return klipper_write_text(text);
+        }
+
         let mut command = if tool == "wl-copy" {
             Command::new("wl-copy")
         } else {
@@ -607,7 +701,7 @@ mod unix_clipboard {
 
         let status = child.wait().map_err(|e| e.to_string())?;
         if !status.success() {
-            return Err(format!("{tool} retornou erro"));
+            return Err(format!("{tool} returned error"));
         }
         Ok(())
     }

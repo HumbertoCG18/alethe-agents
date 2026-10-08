@@ -11,7 +11,7 @@ import { armAgentPrompt, recordAgentActivityInput } from '../../lib/activityTrac
 import { cliPathMatchesAgent } from '../../lib/agentCliPath'
 import { AgentCompletionMonitor } from '../../lib/agentCompletionMonitor'
 import { deliverOpenCodePrompt } from '../../lib/agentPromptDelivery'
-import { resolveAgentCliCommand } from '../../lib/agentProviders'
+import { resolveAgentCliCommand, resolveCustomAgentArgs } from '../../lib/agentProviders'
 import { preparePtyRuntimeLaunch } from '../../lib/agentRuntimeAdapter'
 import {
   type ClaudeLaunchExtras,
@@ -21,7 +21,9 @@ import {
 } from '../../lib/claudeMcpConfigs'
 import { claudeSessionFromHook } from '../../lib/claudeSessionTracking'
 import { getLocale, translate } from '../../lib/i18n'
+import { isOrchestratorShellPty } from '../../lib/orchestratorShells'
 import { isWindows } from '../../lib/platform'
+import { ptyLaunchTarget } from '../../lib/ptyLaunchTarget'
 import { usePtyPanelVisible } from '../../lib/ptyVisibility'
 import { router9EnvFor } from '../../lib/router9'
 import {
@@ -50,6 +52,7 @@ import {
   codexMcpConfigWrite,
   createCursorChat,
   findCliLauncher,
+  findWslCli,
   graphifyCodexConfigWrite,
   graphifyEnsureGraph,
   graphifyOpenCodeConfigWrite,
@@ -77,6 +80,7 @@ import {
   isShellAgentType,
   type Theme,
 } from '../../lib/types'
+import { wslTargetFor } from '../../lib/wsl'
 import type { AgentHookPayload } from '../../stores/agentCanvasStore'
 import { useProjectsStore } from '../../stores/projectsStore'
 import { useTerminalsStore } from '../../stores/terminalsStore'
@@ -499,7 +503,8 @@ export function useXtermSession(params: {
     let inputFlushScheduled = false
     let inputWriteChain = Promise.resolve()
 
-    const resourcePolicy = useProjectsStore.getState().preferences.resourcePolicy
+    const preferences = useProjectsStore.getState().preferences
+    const resourcePolicy = preferences.resourcePolicy
     const terminal = new Terminal({
       cursorBlink: !readOnly,
 
@@ -514,7 +519,7 @@ export function useXtermSession(params: {
       // Match the Windows ConPTY backend when configuring terminal repaint behavior.
 
       ...(isWindows() ? { windowsPty: { backend: 'conpty' as const, buildNumber: 22000 } } : {}),
-      fontFamily: 'Cascadia Mono, Consolas, "Courier New", monospace',
+      fontFamily: preferences.terminalFontFamily,
       fontSize: 14,
       theme: getXtermTheme(terminalTheme),
     })
@@ -964,7 +969,13 @@ export function useXtermSession(params: {
       terminal.options.fontSize = currentFontSize
       scheduleResize(true)
     }
+    const onFontChanged = () => {
+      terminal.options.fontFamily = useProjectsStore.getState().preferences.terminalFontFamily
+      // Cell metrics come from the font, so the pane refits before the PTY hears a new size.
+      scheduleResize(true)
+    }
     window.addEventListener('alethe:zoom-changed', onZoomChanged)
+    window.addEventListener('alethe:terminal-font-changed', onFontChanged)
     window.addEventListener('alethe:terminal-resize-request', onResizeRequest)
 
     const initialFitTimer = window.setTimeout(() => {
@@ -1201,9 +1212,38 @@ export function useXtermSession(params: {
           return
         }
 
+        // Only the board starts an orchestrator shell. A view that outlived it, such as one left
+        // open across an app restart, must not spawn an empty shell under its id.
+        if (isOrchestratorShellPty(ptyId)) {
+          terminal.write(`\r\n${translate(getLocale(), 'orchestrator.shell.viewGone')}\r\n`)
+          setBootPhase('ready')
+          return
+        }
+
         let launcherOverride: string | undefined
         let autoLauncher: string | null = null
-        if (command && command !== 'shell') {
+        const wslTarget = wslTargetFor(
+          cwd,
+          useProjectsStore.getState().preferences.enabledFeatures.wsl,
+        )
+        // A plain WSL tab is a shell there too: the backend opens the distro's login shell.
+        if (command && !isShellAgentType(command) && wslTarget) {
+          const auto = await findWslCli(
+            wslTarget.distro,
+            resolveAgentCliCommand(command) ?? command,
+          )
+          console.info(
+            `[pty-launch] ${command} findWslCli(${wslTarget.distro}) → ${auto ?? 'null (NOT FOUND)'}`,
+          )
+          if (!auto) {
+            console.warn(
+              `[pty-launch] ${command} unresolved — showing the not-found overlay and staying offline`,
+            )
+            setCommandNotFound(command)
+            useTerminalsStore.getState().setStatus(ptyId, 'offline')
+            return
+          }
+        } else if (command && command !== 'shell') {
           if (cliPathOverride) {
             if (cliPathMatchesAgent(command, cliPathOverride)) {
               launcherOverride = cliPathOverride
@@ -1231,6 +1271,11 @@ export function useXtermSession(params: {
               return
             }
             autoLauncher = auto
+          }
+        } else {
+          launcherOverride = ptyLaunchTarget(command).launcherOverride
+          if (launcherOverride) {
+            console.info(`[pty-launch] shell using override: ${launcherOverride}`)
           }
         }
 
@@ -1322,8 +1367,14 @@ export function useXtermSession(params: {
           }
           if (disposed) return
         }
+        const customDefaultArgs = command ? resolveCustomAgentArgs(command) : []
         const preparedRuntime = command
-          ? preparePtyRuntimeLaunch(command, runtimeProfile, extraArgs ?? [], env)
+          ? preparePtyRuntimeLaunch(
+              command,
+              runtimeProfile,
+              [...customDefaultArgs, ...(extraArgs ?? [])],
+              env,
+            )
           : { args: extraArgs ?? [], env }
 
         // Read at spawn time rather than through a selector: the PTY environment is fixed when the
@@ -1359,8 +1410,9 @@ export function useXtermSession(params: {
           if (disposed) return
         }
 
-        // Codex and OpenCode read in-repo config files instead, written once here.
-        if (graphifyRepo && (command === 'codex' || command === 'opencode')) {
+        // Codex and OpenCode read in-repo config files instead, written once here. Graphify and
+        // ai-memory run Windows-side binaries over Windows paths, so neither crosses into a distro.
+        if (graphifyRepo && !wslTarget && (command === 'codex' || command === 'opencode')) {
           void graphifyEnsureGraph(graphifyRepo).catch(() => undefined)
           if (command === 'opencode') {
             await graphifyOpenCodeConfigWrite(graphifyRepo).catch(() => {})
@@ -1371,7 +1423,12 @@ export function useXtermSession(params: {
         }
 
         const aiMemoryEnabled = useProjectsStore.getState().preferences.enabledFeatures.aiMemory
-        if (aiMemoryEnabled && cwd && (command === 'codex' || command === 'opencode')) {
+        if (
+          aiMemoryEnabled &&
+          cwd &&
+          !wslTarget &&
+          (command === 'codex' || command === 'opencode')
+        ) {
           const status = await aiMemoryDetect().catch(() => undefined)
           if (status?.installed) {
             if (command === 'opencode') {
@@ -1395,7 +1452,7 @@ export function useXtermSession(params: {
           if (disposed) return
 
           // Registers this Codex terminal as a planner too, so it can call alethe_delegate.
-          await codexMcpConfigWrite(cwd, ptyId, plannerLabelFor(ptyId), command).catch(
+          await codexMcpConfigWrite(cwd, ptyId, plannerLabelFor(ptyId, command), command).catch(
             () => undefined,
           )
           if (disposed) return
@@ -1405,6 +1462,7 @@ export function useXtermSession(params: {
         if (
           command === 'opencode' &&
           cwd &&
+          !wslTarget &&
           gsdWatcherEnabled &&
           preferences.enabledFeatures.gsdSync
         ) {
@@ -1750,6 +1808,7 @@ export function useXtermSession(params: {
       document.removeEventListener('visibilitychange', restoreLastTerminalFocus)
       container.removeEventListener('contextmenu', onContextMenu)
       window.removeEventListener('alethe:zoom-changed', onZoomChanged)
+      window.removeEventListener('alethe:terminal-font-changed', onFontChanged)
       window.removeEventListener('alethe:terminal-resize-request', onResizeRequest)
       ro.disconnect()
       if (resizeTimer !== null) window.clearTimeout(resizeTimer)

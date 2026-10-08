@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 
+import { withUsageAccess } from '../usageAccess'
 import type { ModelCost } from './sessions'
 
 export type ClaudeUsageWindow = {
@@ -22,13 +23,13 @@ export type ClaudeUsage = {
 }
 
 export async function getClaudeUsage(): Promise<ClaudeUsage> {
-  return invoke<ClaudeUsage>('get_claude_usage')
+  return withUsageAccess('claude', () => invoke<ClaudeUsage>('get_claude_usage'))
 }
 
 export type CodexUsageWindow = {
   used_percent: number
   window_minutes: number
-  /** Epoch em milissegundos (0 = desconhecido). */
+  /** Epoch in milliseconds (0 = unknown). */
   resets_at_ms: number
 }
 
@@ -60,11 +61,13 @@ export function codexHeadlineWindow(usage: CodexUsage): CodexUsageWindow {
 }
 
 export async function getCodexUsage(): Promise<CodexUsage> {
-  return invoke<CodexUsage>('get_codex_usage')
+  return withUsageAccess('codex', () => invoke<CodexUsage>('get_codex_usage'))
 }
 
 export async function consumeCodexResetCredit(creditId?: string): Promise<CodexUsage> {
-  return invoke<CodexUsage>('consume_codex_reset_credit', { creditId })
+  return withUsageAccess('codex', () =>
+    invoke<CodexUsage>('consume_codex_reset_credit', { creditId }),
+  )
 }
 
 export type AntigravityQuotaBucket = {
@@ -84,7 +87,7 @@ export type AntigravityUsage = {
 }
 
 export async function getAntigravityUsage(): Promise<AntigravityUsage> {
-  return invoke<AntigravityUsage>('get_antigravity_usage')
+  return withUsageAccess('antigravity', () => invoke<AntigravityUsage>('get_antigravity_usage'))
 }
 
 export type ModelRate = {

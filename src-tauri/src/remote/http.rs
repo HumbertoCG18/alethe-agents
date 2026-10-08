@@ -4,7 +4,7 @@
 use serde::Deserialize;
 use serde_json::json;
 use std::io::{Read, Write};
-use std::net::TcpStream;
+use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
@@ -15,11 +15,11 @@ use crate::pty::PtySessions;
 
 use super::appearance::{projects_document, remote_appearance, selected_brand_icon};
 use super::pty_bridge::{read_pty_size, read_scrollback, write_remote};
-use super::util::{bind_listener, query_value, sanitize_remote_message};
+use super::util::{query_value, sanitize_remote_message};
 use super::workspace::{pty_agent, pty_is_shared, shared_tab, workspace_snapshot};
 use super::{
-    ConnectionGuard, RemoteHub, HTTP_END, HTTP_START, IDLE_DISABLE_SECS, MAX_BODY, MAX_MESSAGE,
-    MAX_REQUEST, MAX_SCROLLBACK, MAX_STATIC_ASSET, SOCKET_TIMEOUT,
+    ConnectionGuard, RemoteHub, IDLE_DISABLE_SECS, MAX_BODY, MAX_MESSAGE, MAX_REQUEST,
+    MAX_SCROLLBACK, MAX_STATIC_ASSET, SOCKET_TIMEOUT,
 };
 
 const MAX_TRANSCRIPT_EVENTS: usize = 160;
@@ -27,33 +27,24 @@ const CACHE_NO_STORE: &str = "no-store";
 const CACHE_IMMUTABLE: &str = "public, max-age=31536000, immutable";
 
 pub(crate) fn run_http(
+    listener: TcpListener,
     app: AppHandle,
     hub: Arc<RemoteHub>,
     sessions: PtySessions,
     generation: u64,
 ) {
-    let host = hub.host();
-    let Some(listener) = bind_listener(&host, HTTP_START, HTTP_END) else {
-        eprintln!("[remote] unable to bind LAN HTTP listener");
-        let _ = app.emit("remote://start-failed", ());
-        super::stop();
-        return;
-    };
-    let port = listener.local_addr().map(|addr| addr.port()).unwrap_or(0);
-    hub.set_http_port(port);
-    eprintln!("[remote] LAN client available at http://{host}:{port}");
-    let _ = listener.set_nonblocking(true);
     while hub.is_active(generation) {
         let stream = match listener.accept() {
             Ok((stream, _)) => stream,
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                 if hub.is_idle(IDLE_DISABLE_SECS) {
-                    eprintln!(
-                        "[remote] auto-disabling after {}s with no paired device",
-                        IDLE_DISABLE_SECS
-                    );
-                    let _ = app.emit("remote://auto-disabled", ());
-                    super::stop();
+                    if super::stop_generation(&hub, generation) {
+                        eprintln!(
+                            "[remote] auto-disabled after {}s with no paired device",
+                            IDLE_DISABLE_SECS
+                        );
+                        let _ = app.emit("remote://auto-disabled", ());
+                    }
                     break;
                 }
                 thread::sleep(Duration::from_millis(50));
@@ -73,7 +64,7 @@ pub(crate) fn run_http(
         let app = app.clone();
         thread::spawn(move || {
             let _guard = guard;
-            if let Err(error) = handle_http(&mut stream, &app, &hub, &sessions) {
+            if let Err(error) = handle_http(&mut stream, &app, &hub, &sessions, generation) {
                 eprintln!("[remote] HTTP request failed: {error}");
                 let _ = respond(
                     &mut stream,
@@ -84,7 +75,12 @@ pub(crate) fn run_http(
             }
         });
     }
-    hub.clear_http_port_if_current(generation);
+    // Reached with the generation still live only when the listener itself
+    // died; never leave remote control half up with one listener gone.
+    if super::stop_generation(&hub, generation) {
+        eprintln!("[remote] LAN HTTP listener stopped unexpectedly");
+        let _ = app.emit("remote://start-failed", ());
+    }
 }
 
 fn handle_http(
@@ -92,6 +88,7 @@ fn handle_http(
     app: &AppHandle,
     hub: &Arc<RemoteHub>,
     sessions: &PtySessions,
+    generation: u64,
 ) -> Result<(), String> {
     let address = stream
         .peer_addr()
@@ -103,6 +100,14 @@ fn handle_http(
             429,
             "application/json",
             r#"{"error":"Too many failed attempts"}"#,
+        );
+    }
+    if !hub.is_active(generation) {
+        return respond(
+            stream,
+            403,
+            "application/json",
+            r#"{"error":"Remote control is disabled"}"#,
         );
     }
     let (head, body) = read_request(stream)?;
@@ -173,7 +178,7 @@ fn handle_http(
         };
         hub.clear_auth_failures(&address);
         return handle_api(
-            stream, app, hub, sessions, session_id, method, target, &body,
+            stream, app, hub, sessions, generation, session_id, method, target, &body,
         );
     }
 
@@ -290,6 +295,7 @@ fn handle_api(
     app: &AppHandle,
     hub: &Arc<RemoteHub>,
     sessions: &PtySessions,
+    generation: u64,
     session_id: usize,
     method: &str,
     target: &str,
@@ -456,7 +462,12 @@ fn handle_api(
                     )
                 }
             };
-        write_remote(sessions, &payload.pty_id, &input)?;
+        let written = hub.with_active_session(generation, session_id, || {
+            write_remote(sessions, &payload.pty_id, &input)
+        })?;
+        if !written {
+            return respond_session_inactive(stream);
+        }
         let device_name = hub.device_name(session_id);
         eprintln!(
             "[remote] {device_name} (device {session_id}) answered an interactive question in {}",
@@ -516,7 +527,12 @@ fn handle_api(
                 r#"{"error":"Unknown agent control action"}"#,
             );
         }
-        write_remote(sessions, &payload.pty_id, "\x03")?;
+        let written = hub.with_active_session(generation, session_id, || {
+            write_remote(sessions, &payload.pty_id, "\x03")
+        })?;
+        if !written {
+            return respond_session_inactive(stream);
+        }
         let device_name = hub.device_name(session_id);
         eprintln!(
             "[remote] {device_name} (device {session_id}) interrupted {}",
@@ -578,7 +594,12 @@ fn handle_api(
                 r#"{"error":"Sending commands to shell terminals is disabled"}"#,
             );
         }
-        write_remote(sessions, &payload.pty_id, &format!("{text}\r"))?;
+        let written = hub.with_active_session(generation, session_id, || {
+            write_remote(sessions, &payload.pty_id, &format!("{text}\r"))
+        })?;
+        if !written {
+            return respond_session_inactive(stream);
+        }
         let device_name = hub.device_name(session_id);
         eprintln!(
             "[remote] {device_name} (device {session_id}) sent {} chars to {}",
@@ -597,6 +618,17 @@ fn handle_api(
         return respond(stream, 204, "text/plain", "");
     }
     respond(stream, 404, "application/json", r#"{"error":"Not found"}"#)
+}
+
+/// The session was revoked or remote control was turned off between
+/// authentication and the PTY write, so the write was not attempted.
+fn respond_session_inactive(stream: &mut TcpStream) -> Result<(), String> {
+    respond(
+        stream,
+        401,
+        "application/json",
+        r#"{"error":"Remote session is no longer active"}"#,
+    )
 }
 
 #[derive(Deserialize)]

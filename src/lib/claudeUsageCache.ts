@@ -1,6 +1,7 @@
 import { useUiStore } from '../stores/uiStore'
 import { type ClaudeUsage, getClaudeUsage } from './tauri'
 import { makeTtlCache } from './ttlCache'
+import { isUsageAccessOff } from './usageAccess'
 
 const TTL_MS = 60_000
 
@@ -19,6 +20,12 @@ export async function loadClaudeUsage(force = false): Promise<ClaudeUsage | null
     setClaudeUsageError(null)
     return usage
   } catch (error) {
+    // Turned off is a choice, not a failure: leave nothing on screen and report no error.
+    if (isUsageAccessOff(error)) {
+      setClaudeUsage(null)
+      setClaudeUsageError(null)
+      return null
+    }
     const missingToken = String(error).includes('no_token')
     if (missingToken) setClaudeUsage(null)
     setClaudeUsageError(missingToken ? 'no_token' : 'unavailable')

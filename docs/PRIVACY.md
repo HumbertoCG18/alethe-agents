@@ -137,15 +137,19 @@ configuration, and unrestricted/approval mode before launching it.
 ## Handoff artifacts and redaction limits
 
 A Claude-to-Codex or Codex-to-Claude handoff reads the selected provider's local session history and
-builds an editable Markdown context packet. It can include user and assistant messages, clipped tool
-calls/output, working-directory and Git metadata, and the source session identifier. Before showing
-the draft, Alethe applies regular-expression redaction for several common token, credential, header,
-and private-key patterns.
+builds an editable Markdown context packet. The dialog offers two scopes and remembers the last one
+chosen. **Full conversation**, the default, can include user and assistant messages, clipped tool
+calls/output, working-directory and Git metadata including the names of changed files, and the source
+session identifier. **Only my messages** includes the user-authored messages, the working directory,
+branch, commit, a count of changed entries and a numeric diff summary, and the source session
+identifier; assistant messages, tool calls and tool output are left out. Before showing the draft,
+Alethe applies regular-expression redaction for several common token, credential, header, and
+private-key patterns, and applies it again to the edited packet when it is saved.
 
 That redaction is best effort, not a guarantee. Unusual secrets, confidential prose, source code,
 paths, identifiers, or credentials split across text can remain. Review and edit the draft before
 starting the target agent. Materializing a handoff writes
-`handoffs/<handoffId>/context.md`; Alethe requests cleanup after the first target turn or when the pane
+`handoffs/<handoffId>/context.md`, owner-only on Unix and never over an existing file; Alethe requests cleanup after the first target turn or when the pane
 closes, but a crash or interrupted flow can leave the file behind until manual/profile deletion. The
 target agent then reads the packet and may send its contents to that agent's provider under the
 provider's terms.

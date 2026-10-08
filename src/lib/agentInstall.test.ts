@@ -1,13 +1,16 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   AGENT_INSTALL_CATALOG,
+  installArgv,
+  installCommandLine,
   installMethodsFor,
   installShellLine,
   type InstallToolchain,
   needsNodeToolchain,
   nodeInstallMethods,
   uninstallMethodsFor,
+  wslInstallMethodsFor,
 } from './agentInstall'
 
 const BARE: InstallToolchain = {
@@ -180,10 +183,71 @@ describe('non-interactive installers', () => {
   })
 })
 
+describe('installCommandLine', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('forwards the installer’s own exit status on Windows', () => {
+    vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' })
+    // Without this, PowerShell reports success for an installer that failed, and the run is
+    // recorded as a working install that is not there.
+    expect(installCommandLine('npm install -g opencode-ai')).toBe(
+      'npm install -g opencode-ai; exit $LASTEXITCODE',
+    )
+  })
+
+  it('hands a POSIX shell the bare command, whose status is already the shell’s', () => {
+    vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)' })
+    expect(installCommandLine('npm install -g opencode-ai')).toBe('npm install -g opencode-ai')
+  })
+})
+
 describe('installShellLine', () => {
   it('closes the shell so the runner can detect completion', () => {
     expect(installShellLine('npm install -g opencode-ai')).toBe(
       'npm install -g opencode-ai; exit\r',
     )
+  })
+})
+
+describe('wslInstallMethodsFor', () => {
+  it('keeps only the methods that also work inside a distro', () => {
+    expect(wslInstallMethodsFor('claude')).toEqual([
+      { id: 'npm', command: 'npm install -g @anthropic-ai/claude-code', requires: 'npm' },
+    ])
+    expect(wslInstallMethodsFor('opencode')).toEqual([
+      { id: 'npm', command: 'npm install -g opencode-ai', requires: 'npm' },
+    ])
+  })
+
+  it('yields nothing when every method is Windows-only', () => {
+    expect(wslInstallMethodsFor('antigravity')).toEqual([])
+  })
+})
+
+describe('installArgv', () => {
+  it('splits a plain npm command into program and argv', () => {
+    expect(installArgv('npm install -g @openai/codex')).toEqual({
+      program: 'npm',
+      args: ['install', '-g', '@openai/codex'],
+    })
+  })
+
+  it('refuses commands that only a shell can run', () => {
+    expect(installArgv('curl -fsSL https://example.com/i.sh | bash')).toBeNull()
+    expect(installArgv('a; b')).toBeNull()
+    expect(installArgv('irm https://example.com/install.ps1 | iex')).toBeNull()
+    expect(installArgv('echo $HOME')).toBeNull()
+    expect(installArgv('npm install -g "my pkg"')).toBeNull()
+  })
+
+  it('ignores padding and rejects an empty command', () => {
+    expect(installArgv('  npm   install  -g   opencode-ai ')).toEqual({
+      program: 'npm',
+      args: ['install', '-g', 'opencode-ai'],
+    })
+    expect(installArgv('')).toBeNull()
+    expect(installArgv('   ')).toBeNull()
   })
 })

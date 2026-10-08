@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 
-import { DEFAULT_PREFERENCES, EMPTY_PROJECTS_FILE } from '../lib/types'
+import {
+  DEFAULT_PREFERENCES,
+  DEFAULT_TERMINAL_FONT_FAMILY,
+  EMPTY_PROJECTS_FILE,
+} from '../lib/types'
 import { migrate, normalizePreferences, normalizeTodos } from './projectsStore.migrations'
 
 describe('preference normalization', () => {
@@ -34,6 +38,53 @@ describe('preference normalization', () => {
         sidebarIcons: junk as unknown as typeof DEFAULT_PREFERENCES.sidebarIcons,
       }).sidebarIcons,
     ).toEqual({ left: ['files'], right: [], hidden: ['jev'] })
+  })
+
+  it('starts experimental agent workers in ask mode for new and existing profiles', () => {
+    expect(DEFAULT_PREFERENCES.experimentalAgentPermissionMode).toBe('ask')
+    expect(normalizePreferences({}).experimentalAgentPermissionMode).toBe('ask')
+    expect(
+      normalizePreferences({
+        ...DEFAULT_PREFERENCES,
+        experimentalAgentPermissionMode: 'yolo' as never,
+      }).experimentalAgentPermissionMode,
+    ).toBe('ask')
+  })
+
+  it('keeps a chosen bypass mode for experimental agent workers', () => {
+    expect(
+      normalizePreferences({ ...DEFAULT_PREFERENCES, experimentalAgentPermissionMode: 'bypass' })
+        .experimentalAgentPermissionMode,
+    ).toBe('bypass')
+  })
+
+  it('backfills the shell and terminal font of a file saved before they existed', () => {
+    const preferences = normalizePreferences({})
+
+    expect(preferences.shellPath).toBeNull()
+    expect(preferences.terminalFontFamily).toBe(DEFAULT_TERMINAL_FONT_FAMILY)
+  })
+
+  it('keeps a configured shell and trims it', () => {
+    const preferences = normalizePreferences({
+      ...DEFAULT_PREFERENCES,
+      shellPath: '  C:\\Program Files\\PowerShell\\7\\pwsh.exe  ',
+      terminalFontFamily: '  CaskaydiaCove Nerd Font  ',
+    })
+
+    expect(preferences.shellPath).toBe('C:\\Program Files\\PowerShell\\7\\pwsh.exe')
+    expect(preferences.terminalFontFamily).toBe('CaskaydiaCove Nerd Font')
+  })
+
+  it('falls back when the shell or the font was cleared to a blank string', () => {
+    const preferences = normalizePreferences({
+      ...DEFAULT_PREFERENCES,
+      shellPath: '   ',
+      terminalFontFamily: '',
+    })
+
+    expect(preferences.shellPath).toBeNull()
+    expect(preferences.terminalFontFamily).toBe(DEFAULT_TERMINAL_FONT_FAMILY)
   })
 
   it('disables legacy automatic parking preferences', () => {
@@ -244,6 +295,19 @@ describe('preference normalization', () => {
     })
   })
 
+  it('hands off the full conversation by default and narrows an unknown scope', () => {
+    expect(normalizePreferences(undefined).handoffScope).toBe('full')
+    expect(normalizePreferences({}).handoffScope).toBe('full')
+    expect(normalizePreferences({ ...DEFAULT_PREFERENCES }).handoffScope).toBe('full')
+    expect(
+      normalizePreferences({ ...DEFAULT_PREFERENCES, handoffScope: 'user-only' }).handoffScope,
+    ).toBe('user-only')
+    expect(
+      normalizePreferences({ ...DEFAULT_PREFERENCES, handoffScope: 'everything' as 'full' })
+        .handoffScope,
+    ).toBe('user-only')
+  })
+
   it('keeps Discord Rich Presence opt-in while preserving an existing choice', () => {
     expect(normalizePreferences(undefined).discordRichPresenceEnabled).toBe(false)
     expect(
@@ -339,6 +403,19 @@ describe('todos normalization', () => {
       prRepo: 'o/r',
     })
     expect(todos.find((t) => t.id === 'b')).not.toHaveProperty('prUrl')
+  })
+
+  it('drops a legacy Spotify Client Secret while retaining the non-secret Client ID', () => {
+    const sentinel = 'legacy-client-secret-sentinel'
+    const preferences = normalizePreferences({
+      ...DEFAULT_PREFERENCES,
+      spotifyClientId: 'public-client-id',
+      spotifyClientSecret: sentinel,
+    })
+
+    expect(preferences.spotifyClientId).toBe('public-client-id')
+    expect(preferences.spotifyClientSecret).toBe('')
+    expect(JSON.stringify(preferences)).not.toContain(sentinel)
   })
 })
 
@@ -485,5 +562,62 @@ describe('projects file migration', () => {
       'tab-mix': null,
     })
     expect(active(migrated.workspace.closedTabs ?? [])).toEqual({ 'closed-b': 'b' })
+  })
+
+  it('starts a profile with no saved file with every usage provider off', () => {
+    const off = { claude: false, codex: false, antigravity: false }
+    expect(EMPTY_PROJECTS_FILE.preferences.usageAccess).toEqual(off)
+    expect(normalizePreferences(undefined).usageAccess).toEqual(off)
+  })
+
+  it('keeps every usage provider on for a file saved before the usage consent existed', () => {
+    const { usageAccess: _usageAccess, ...savedBeforeConsent } = DEFAULT_PREFERENCES
+    const on = { claude: true, codex: true, antigravity: true }
+
+    for (const version of [6, 8, 9]) {
+      const migrated = migrate({ ...EMPTY_PROJECTS_FILE, version, preferences: savedBeforeConsent })
+      expect(migrated.preferences.usageAccess).toEqual(on)
+    }
+    const withoutPreferences = migrate({ ...EMPTY_PROJECTS_FILE, preferences: undefined })
+    expect(withoutPreferences.preferences.usageAccess).toEqual(on)
+  })
+
+  it('keeps a saved usage choice, and leaves a provider it does not name off', () => {
+    const saved = (usageAccess: unknown) =>
+      migrate({
+        ...EMPTY_PROJECTS_FILE,
+        preferences: { ...DEFAULT_PREFERENCES, usageAccess },
+      }).preferences.usageAccess
+
+    expect(saved({ claude: false, codex: false, antigravity: false })).toEqual({
+      claude: false,
+      codex: false,
+      antigravity: false,
+    })
+    expect(saved({ claude: true, codex: false, antigravity: true })).toEqual({
+      claude: true,
+      codex: false,
+      antigravity: true,
+    })
+    expect(saved({ codex: true })).toEqual({ claude: false, codex: true, antigravity: false })
+  })
+
+  it('does not turn usage back on when a migrated file is loaded again', () => {
+    const { usageAccess: _usageAccess, ...savedBeforeConsent } = DEFAULT_PREFERENCES
+    const first = migrate({ ...EMPTY_PROJECTS_FILE, version: 8, preferences: savedBeforeConsent })
+    const turnedOff = {
+      ...first,
+      preferences: {
+        ...first.preferences,
+        usageAccess: { ...first.preferences.usageAccess, codex: false },
+      },
+    }
+
+    const reloaded = migrate(JSON.parse(JSON.stringify(turnedOff)))
+    expect(reloaded.preferences.usageAccess).toEqual({
+      claude: true,
+      codex: false,
+      antigravity: true,
+    })
   })
 })

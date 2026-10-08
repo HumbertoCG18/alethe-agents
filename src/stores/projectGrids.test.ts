@@ -137,6 +137,9 @@ describe('named project grids', () => {
     const backend = store().createProjectGrid(p.id, 'Backend')!
     expect(store().createProjectGrid(p.id, ' backend ')).toBeNull()
     expect(store().createProjectGrid(p.id, 'Default')).toBeNull()
+    // The default grid's name in the other languages is taken too.
+    expect(store().createProjectGrid(p.id, 'Padrão')).toBeNull()
+    expect(store().createProjectGrid(p.id, '默认')).toBeNull()
     expect(store().renameProjectGrid(p.id, backend, 'API')).toBe(true)
     expect(store().renameProjectGrid(p.id, DEFAULT_GRID_ID, 'Other')).toBe(false)
     await store().deleteProjectGrid(p.id, DEFAULT_GRID_ID, 'delete')

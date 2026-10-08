@@ -25,16 +25,34 @@ beforeEach(() => {
 
 afterEach(cleanup)
 
-// The detached board reads projects.json once and again every time the main window saves it, so
-// new planners, restarts and deleted panes reach it (#247).
+// The detached board reads projects.json once and again after the main window saves it, so new
+// planners, restarts and deleted panes reach it (#247).
 describe('OrchestrationWindow', () => {
-  it('reads the projects again whenever the main window saves them', async () => {
+  it('reads the projects again after the main window saves them, once per burst', async () => {
     render(<OrchestrationWindow terminalId="orchestrator-abc" />)
     await vi.waitFor(() => expect(listeners.has('projects://saved')).toBe(true))
     expect(hydrate).toHaveBeenCalledTimes(1)
 
-    await act(async () => listeners.get('projects://saved')?.())
+    vi.useFakeTimers()
+    try {
+      // A busy main window saves every half second; each save would otherwise reread the file.
+      await act(async () => {
+        listeners.get('projects://saved')?.()
+        await vi.advanceTimersByTimeAsync(500)
+        listeners.get('projects://saved')?.()
+      })
+      expect(hydrate).toHaveBeenCalledTimes(1)
 
-    expect(hydrate).toHaveBeenCalledTimes(2)
+      await act(() => vi.advanceTimersByTimeAsync(500))
+      expect(hydrate).toHaveBeenCalledTimes(2)
+
+      await act(async () => {
+        listeners.get('projects://saved')?.()
+        await vi.advanceTimersByTimeAsync(1_000)
+      })
+      expect(hydrate).toHaveBeenCalledTimes(3)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

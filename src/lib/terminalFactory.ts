@@ -62,6 +62,7 @@ export function makeDefaultTerminal(args: {
     runtimeProfile?: AgentRuntimeProfile
     useRouter9?: boolean
     campaignId?: string
+    ptyId?: string
   }
   worktreeAgentId?: string
   gsdSyncViewer?: boolean
@@ -89,7 +90,7 @@ export function makeDefaultTerminal(args: {
         name: args.firstTab.type,
         cwd: args.firstTab.cwd,
         lastUsedAt: now,
-        ptyId: null,
+        ptyId: args.firstTab.ptyId ?? null,
         extraArgs: args.firstTab.extraArgs,
         initialInput: args.firstTab.initialInput,
         handoff: args.firstTab.handoff,
@@ -193,6 +194,18 @@ export function touchTerminalUsage(terminal: Terminal, tabId = terminal.activeTa
     activeTabId,
     tabs: terminal.tabs.map((tab) => (tab.id === activeTabId ? { ...tab, lastUsedAt: now } : tab)),
   }
+}
+
+/**
+ * Sidebar rows prefer a live auto-derived title — Claude's own session title, or the active
+ * sub-tab's agent-type name — over the terminal's own `name`. That makes sense for an
+ * unrenamed pane, but it silently shadows an explicit rename forever, since the sub-tab name is
+ * always truthy. `customName` (set only by the rename action) lets that explicit choice win.
+ */
+export function sidebarTerminalDisplayName(terminal: Terminal, chatTitle: string | null): string {
+  if (terminal.customName) return terminal.name
+  const activeTab = terminal.tabs.find((tab) => tab.id === terminal.activeTabId) ?? terminal.tabs[0]
+  return chatTitle ?? activeTab?.name ?? terminal.name
 }
 
 export function pickMostRecentTab(terminal: Terminal, excludeTabId?: string): SubTab | null {

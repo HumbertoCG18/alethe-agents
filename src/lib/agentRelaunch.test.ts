@@ -40,6 +40,21 @@ describe('relaunchAgentPty', () => {
     expect(hasOrchestratorTools('pty-1')).toBe(true)
   })
 
+  it('hands a Claude inside WSL its MCP servers and hooks in guest form', async () => {
+    await relaunchAgentPty({
+      ptyId: 'pty-1',
+      agent: 'claude',
+      cwd: '\\\\wsl.localhost\\Ubuntu\\home\\dev\\repo',
+    })
+
+    const args = vi.mocked(restartPty).mock.calls[0][0].extraArgs ?? []
+    expect(args).toEqual(
+      expect.arrayContaining(['--mcp-config', '/mnt/c/Temp/orchestrator-mcp.json']),
+    )
+    expect(args).toEqual(expect.arrayContaining(['--settings', '/mnt/c/Temp/hooks.json']))
+    expect(args.some((arg) => arg.includes('C:\\'))).toBe(false)
+  })
+
   it('records nothing when the restart fails', async () => {
     vi.mocked(restartPty).mockRejectedValueOnce(new Error('spawn failed'))
 

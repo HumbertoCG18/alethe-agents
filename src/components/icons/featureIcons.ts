@@ -8,6 +8,7 @@ import {
   Share2,
   Sparkles,
   SquareMousePointer,
+  SquareTerminal,
 } from 'lucide-react'
 
 import type { FeatureId } from '../../lib/types'
@@ -22,4 +23,5 @@ export const FEATURE_ICONS: Record<FeatureId, LucideIcon> = {
   aiMemory: BrainCircuit,
   gsdSync: Sparkles,
   prs: GitPullRequest,
+  wsl: SquareTerminal,
 }

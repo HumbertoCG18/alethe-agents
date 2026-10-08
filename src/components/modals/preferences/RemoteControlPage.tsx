@@ -12,6 +12,7 @@ import {
   type TailscaleStatus,
 } from '../../../lib/tauri'
 import { useT } from '../../../lib/i18n'
+import { requestRemoteControlPreference } from '../../../lib/remoteControlConsent'
 import { useProjectsStore } from '../../../stores/projectsStore'
 import controls from '../controls.module.css'
 import styles from './RemoteControlPage.module.css'
@@ -107,7 +108,14 @@ export function RemoteControlPage() {
           <button
             type="button"
             className={`${controls.btn} ${enabled ? controls.btnDanger : controls.btnPrimary}`}
-            onClick={() => setPreferences({ remoteEnabled: !preferences.remoteEnabled })}
+            onClick={() =>
+              requestRemoteControlPreference(
+                !preferences.remoteEnabled,
+                preferences,
+                setPreferences,
+                t,
+              )
+            }
             disabled={busy}
           >
             {enabled ? t('remote.disable') : t('remote.enable')}

@@ -1,18 +1,18 @@
 use regex::Regex;
 use serde::Serialize;
 use serde_json::Value;
-use std::fs;
-use std::io::{BufRead, BufReader};
+use std::fs::{self, OpenOptions};
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::OnceLock;
 use tauri::AppHandle;
 
-use crate::provider_common::normalize_cwd;
+use crate::provider_common::{normalize_cwd, provider_scope, ProviderScope};
 
 const MAX_SOURCE_LINE_BYTES: usize = 2 * 1024 * 1024;
 const DRAFT_CHAR_LIMIT: usize = 48_000;
 const MATERIALIZED_BYTE_LIMIT: usize = 64 * 1024;
+const HANDOFF_ID_ATTEMPTS: usize = 16;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Provider {
@@ -33,6 +33,25 @@ impl Provider {
         match self {
             Self::Claude => "claude",
             Self::Codex => "codex",
+        }
+    }
+}
+
+/// How much of the source conversation a handoff carries to the other agent.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HandoffScope {
+    /// User and assistant messages, tool activity and filename-bearing Git detail.
+    Full,
+    /// User-authored messages and counts-only Git metadata.
+    UserOnly,
+}
+
+impl HandoffScope {
+    /// Only the exact full-scope name widens the transfer; anything else is restrictive.
+    fn parse(value: &str) -> Self {
+        match value {
+            "full" => Self::Full,
+            _ => Self::UserOnly,
         }
     }
 }
@@ -412,6 +431,10 @@ fn codex_session_meta(path: &Path) -> Option<(String, String)> {
     ))
 }
 
+fn session_matches_scope(scope: &ProviderScope, session_cwd: &str) -> bool {
+    scope.normalize(session_cwd) == scope.match_key()
+}
+
 pub(crate) fn resolve_source_file(
     provider: Provider,
     cwd: &str,
@@ -448,22 +471,26 @@ pub(crate) fn resolve_source_file(
             }
         }
         Provider::Codex => {
-            let Some(root) = crate::codex_sessions::codex_sessions_dir() else {
-                return Err("Codex sessions directory is unavailable".to_string());
-            };
-            let mut files = Vec::new();
-            crate::codex_sessions::collect_jsonl_files(&root, &mut files);
-            for path in files {
-                let Some((id, session_cwd)) = codex_session_meta(&path) else {
-                    continue;
-                };
-                if normalize_cwd(&session_cwd) != normalized {
-                    continue;
+            let scope = provider_scope(cwd, &[".codex", "sessions"]);
+            match scope {
+                Some(scope) => {
+                    let mut files = Vec::new();
+                    crate::codex_sessions::collect_jsonl_files(&scope.root, &mut files);
+                    for path in files {
+                        let Some((id, session_cwd)) = codex_session_meta(&path) else {
+                            continue;
+                        };
+                        if !session_matches_scope(&scope, &session_cwd) {
+                            continue;
+                        }
+                        let modified = fs::metadata(&path)
+                            .and_then(|metadata| metadata.modified())
+                            .unwrap_or(std::time::UNIX_EPOCH);
+                        candidates.push((id, path, modified));
+                    }
                 }
-                let modified = fs::metadata(&path)
-                    .and_then(|metadata| metadata.modified())
-                    .unwrap_or(std::time::UNIX_EPOCH);
-                candidates.push((id, path, modified));
+                None if crate::wsl::wsl_target(cwd).is_some() => {}
+                None => return Err("Codex sessions directory is unavailable".to_string()),
             }
         }
     }
@@ -485,7 +512,7 @@ pub(crate) fn resolve_source_file(
 }
 
 fn run_git(cwd: &str, args: &[&str]) -> Option<String> {
-    let output = Command::new("git")
+    let output = crate::git_control::git_process(cwd, &[])
         .arg("-C")
         .arg(cwd)
         .args(args)
@@ -498,15 +525,30 @@ fn run_git(cwd: &str, args: &[&str]) -> Option<String> {
     (!text.is_empty()).then_some(text)
 }
 
-fn workspace_context(cwd: &str) -> String {
+fn workspace_context(cwd: &str, scope: HandoffScope) -> String {
     let Some(root) = run_git(cwd, &["rev-parse", "--show-toplevel"]) else {
         return "- Git repository: not detected\n".to_string();
     };
     let branch = run_git(cwd, &["branch", "--show-current"]).unwrap_or_else(|| "detached".into());
     let head = run_git(cwd, &["rev-parse", "--short", "HEAD"]).unwrap_or_else(|| "unknown".into());
-    let status = run_git(cwd, &["status", "--short"]).unwrap_or_else(|| "clean".into());
-    let stat = run_git(cwd, &["diff", "--stat", "HEAD"]).unwrap_or_else(|| "none".into());
-    format!("- Repository root: {root}\n- Branch: {branch}\n- HEAD: {head}\n- Working tree:\n```text\n{}\n```\n- Diff stat:\n```text\n{}\n```\n", clipped(&status, 5_000), clipped(&stat, 5_000))
+    if scope == HandoffScope::Full {
+        let status = run_git(cwd, &["status", "--short"]).unwrap_or_else(|| "clean".into());
+        let stat = run_git(cwd, &["diff", "--stat", "HEAD"]).unwrap_or_else(|| "none".into());
+        return format!("- Repository root: {root}\n- Branch: {branch}\n- HEAD: {head}\n- Working tree:\n```text\n{}\n```\n- Diff stat:\n```text\n{}\n```\n", clipped(&status, 5_000), clipped(&stat, 5_000));
+    }
+    // Status and diff output name files, so the restrictive scope keeps only their counts.
+    let changed_entries = run_git(cwd, &["status", "--porcelain=v1"])
+        .map(|status| status.lines().count())
+        .unwrap_or(0);
+    let diff_summary = run_git(cwd, &["diff", "--shortstat", "HEAD"])
+        .unwrap_or_else(|| "no unstaged or staged line changes".into());
+    format!(
+        "- Repository root: {}\n- Branch: {}\n- HEAD: {}\n- Changed working-tree entries: {changed_entries}\n- Diff summary: {}\n",
+        clipped(&root.replace(['\r', '\n'], " "), 1_000),
+        clipped(&branch.replace(['\r', '\n'], " "), 250),
+        clipped(&head.replace(['\r', '\n'], " "), 100),
+        clipped(&diff_summary.replace(['\r', '\n'], " "), 250),
+    )
 }
 
 fn redaction_patterns() -> &'static Vec<Regex> {
@@ -540,13 +582,28 @@ fn append_section(output: &mut String, heading: &str, body: &str) {
     output.push('\n');
 }
 
+/// Returns the capsule with the number of events it carries and the number it leaves out.
 fn render_capsule(
     source: Provider,
     target: Provider,
     session_id: &str,
     cwd: &str,
     events: &[HandoffEvent],
-) -> (String, usize) {
+    scope: HandoffScope,
+) -> (String, usize, usize) {
+    match scope {
+        HandoffScope::Full => render_full_capsule(source, target, session_id, cwd, events),
+        HandoffScope::UserOnly => render_user_capsule(source, target, session_id, cwd, events),
+    }
+}
+
+fn render_full_capsule(
+    source: Provider,
+    target: Provider,
+    session_id: &str,
+    cwd: &str,
+    events: &[HandoffEvent],
+) -> (String, usize, usize) {
     let user_events: Vec<&HandoffEvent> =
         events.iter().filter(|event| event.role == "user").collect();
     let original = user_events
@@ -598,7 +655,11 @@ fn render_capsule(
         .collect::<Vec<_>>()
         .join("\n\n");
     append_section(&mut output, "Recent conversation", &recent);
-    append_section(&mut output, "Current workspace", &workspace_context(cwd));
+    append_section(
+        &mut output,
+        "Current workspace",
+        &workspace_context(cwd, HandoffScope::Full),
+    );
     let included = events.len().min(18) + user_events.len().min(14);
     let omitted = events.len().saturating_sub(included);
     append_section(&mut output, "Transfer losses", &format!("- Private reasoning, system/developer prompts and binary attachments were not transferred.\n- Large tool results were clipped.\n- Approximate events omitted by the capsule budget: {omitted}.\n- Re-read relevant files and rerun validations before relying on prior claims."));
@@ -609,7 +670,51 @@ fn render_capsule(
             .collect();
         output.push_str("\n\n[Capsule truncated at the Alethe safety limit.]\n");
     }
-    (output, omitted)
+    (output, events.len().saturating_sub(omitted), omitted)
+}
+
+fn render_user_capsule(
+    source: Provider,
+    target: Provider,
+    session_id: &str,
+    cwd: &str,
+    events: &[HandoffEvent],
+) -> (String, usize, usize) {
+    let user_events: Vec<&HandoffEvent> =
+        events.iter().filter(|event| event.role == "user").collect();
+    let mut output = format!("# Alethe Agent Handoff v1\n\n- Source: {}\n- Destination: {}\n- Source session: {}\n- Working directory: {}\n\n> This capsule contains user-authored messages and non-content workspace metadata only. Re-read relevant files and rerun validations before acting.\n", source.as_str(), target.as_str(), session_id, cwd);
+    append_section(
+        &mut output,
+        "Current workspace",
+        &workspace_context(cwd, HandoffScope::UserOnly),
+    );
+    output.push_str("\n## User-authored messages\n");
+
+    let mut included = 0;
+    for (index, event) in user_events.iter().enumerate() {
+        let entry = format!(
+            "\n### User message {}\n\n{}\n",
+            index + 1,
+            event.text.trim()
+        );
+        if output.chars().count() + entry.chars().count() + 512 <= DRAFT_CHAR_LIMIT {
+            output.push_str(&entry);
+            included += 1;
+        }
+    }
+
+    let omitted = events.len().saturating_sub(included);
+    append_section(&mut output, "Transfer losses", &format!("- Events included: {included}.\n- Events omitted: {omitted}.\n- Assistant messages, tool calls, tool results, private reasoning, system/developer prompts, and binary attachments were not transferred.\n- User messages that exceeded the capsule budget were not transferred."));
+    (output, included, omitted)
+}
+
+fn handoff_title(events: &[HandoffEvent], source: Provider) -> (String, usize) {
+    let title = events
+        .iter()
+        .find(|event| event.role == "user")
+        .map(|event| clipped(&event.text.replace(['\r', '\n'], " "), 80))
+        .unwrap_or_else(|| format!("{} handoff", source.as_str()));
+    redact(title)
 }
 
 #[tauri::command]
@@ -618,8 +723,10 @@ pub async fn prepare_agent_handoff(
     target_provider: String,
     source_session_id: Option<String>,
     cwd: String,
+    scope: String,
 ) -> Result<HandoffDraft, String> {
     tokio::task::spawn_blocking(move || {
+        let scope = HandoffScope::parse(&scope);
         let source = Provider::parse(&source_provider)?;
         let target = Provider::parse(&target_provider)?;
         if source == target {
@@ -631,14 +738,10 @@ pub async fn prepare_agent_handoff(
         if !events.iter().any(|event| event.role == "user") {
             return Err("the selected session has no transferable user messages".to_string());
         }
-        let title = events
-            .iter()
-            .find(|event| event.role == "user")
-            .map(|event| clipped(&event.text.replace(['\r', '\n'], " "), 80))
-            .unwrap_or_else(|| format!("{} handoff", source.as_str()));
-        let (rendered, omitted_event_count) =
-            render_capsule(source, target, &resolved_id, &cwd, &events);
-        let (content, redaction_count) = redact(rendered);
+        let (title, title_redaction_count) = handoff_title(&events, source);
+        let (rendered, included_event_count, omitted_event_count) =
+            render_capsule(source, target, &resolved_id, &cwd, &events, scope);
+        let (content, content_redaction_count) = redact(rendered);
         Ok(HandoffDraft {
             source_provider: source.as_str().to_string(),
             target_provider: target.as_str().to_string(),
@@ -646,9 +749,9 @@ pub async fn prepare_agent_handoff(
             cwd,
             title,
             content,
-            included_event_count: events.len().saturating_sub(omitted_event_count),
+            included_event_count,
             omitted_event_count,
-            redaction_count,
+            redaction_count: title_redaction_count + content_redaction_count,
             used_fallback,
         })
     })
@@ -668,11 +771,7 @@ fn validate_handoff_id(value: &str) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
-pub async fn materialize_agent_handoff(
-    app: AppHandle,
-    content: String,
-) -> Result<HandoffArtifact, String> {
+fn finalize_materialized_content(content: &str) -> Result<String, String> {
     if content.trim().is_empty() {
         return Err("handoff content is empty".to_string());
     }
@@ -681,20 +780,73 @@ pub async fn materialize_agent_handoff(
             "handoff content exceeds {MATERIALIZED_BYTE_LIMIT} bytes"
         ));
     }
-    let root = crate::paths::profile_data_dir(&app)?.join("handoffs");
-    tokio::task::spawn_blocking(move || {
-        let handoff_id = nanoid::nanoid!(16);
+    Ok(redact(content.to_string()).0)
+}
+
+fn create_private_dir(path: &Path) -> std::io::Result<()> {
+    let mut builder = fs::DirBuilder::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    builder.create(path)
+}
+
+fn create_private_file(path: &Path, content: &[u8]) -> std::io::Result<()> {
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(path)?;
+    file.write_all(content)?;
+    file.sync_all()
+}
+
+fn materialize_in_root(
+    root: &Path,
+    content: &str,
+    mut next_id: impl FnMut() -> String,
+) -> Result<HandoffArtifact, String> {
+    let content = finalize_materialized_content(content)?;
+    fs::create_dir_all(root).map_err(|error| error.to_string())?;
+
+    for _ in 0..HANDOFF_ID_ATTEMPTS {
+        let handoff_id = next_id();
+        validate_handoff_id(&handoff_id)?;
         let context_dir = root.join(&handoff_id);
-        fs::create_dir_all(&context_dir).map_err(|error| error.to_string())?;
+        match create_private_dir(&context_dir) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error.to_string()),
+        }
+
         let context_path = context_dir.join("context.md");
-        let temporary = context_dir.join("context.md.tmp");
-        fs::write(&temporary, content).map_err(|error| error.to_string())?;
-        fs::rename(&temporary, &context_path).map_err(|error| error.to_string())?;
-        Ok(HandoffArtifact {
+        if let Err(error) = create_private_file(&context_path, content.as_bytes()) {
+            let _ = fs::remove_dir_all(&context_dir);
+            return Err(error.to_string());
+        }
+        return Ok(HandoffArtifact {
             handoff_id,
             context_dir: context_dir.to_string_lossy().to_string(),
             context_path: context_path.to_string_lossy().to_string(),
-        })
+        });
+    }
+
+    Err("could not allocate a unique handoff id".to_string())
+}
+
+#[tauri::command]
+pub async fn materialize_agent_handoff(
+    app: AppHandle,
+    content: String,
+) -> Result<HandoffArtifact, String> {
+    let root = crate::paths::profile_data_dir(&app)?.join("handoffs");
+    tokio::task::spawn_blocking(move || {
+        materialize_in_root(&root, &content, || nanoid::nanoid!(16))
     })
     .await
     .map_err(|error| format!("materialize_agent_handoff task failed: {error}"))?
@@ -735,44 +887,166 @@ mod tests {
         assert!(output.contains("[REDACTED]"));
     }
 
+    fn event(role: &'static str, text: &str) -> HandoffEvent {
+        HandoffEvent {
+            role,
+            text: text.into(),
+            question_set_id: None,
+            questions: None,
+        }
+    }
+
+    fn mixed_events() -> Vec<HandoffEvent> {
+        vec![
+            event("user", "Build the feature"),
+            event("assistant", "assistant-only-confidential-content"),
+            event("tool", "tool-argument-confidential-content"),
+            event("tool-result", "tool-result-confidential-content"),
+            event("user", "Keep the old terminal open"),
+        ]
+    }
+
     #[test]
-    fn capsule_prioritizes_user_requests() {
-        let events = vec![
-            HandoffEvent {
-                role: "user",
-                text: "Build the feature".into(),
-                question_set_id: None,
-                questions: None,
-            },
-            HandoffEvent {
-                role: "assistant",
-                text: "Implemented parser".into(),
-                question_set_id: None,
-                questions: None,
-            },
-            HandoffEvent {
-                role: "tool",
-                text: "cargo test".into(),
-                question_set_id: None,
-                questions: None,
-            },
-            HandoffEvent {
-                role: "user",
-                text: "Keep the old terminal open".into(),
-                question_set_id: None,
-                questions: None,
-            },
-        ];
-        let (capsule, _) = render_capsule(
+    fn only_the_exact_full_name_selects_the_full_scope() {
+        assert_eq!(HandoffScope::parse("full"), HandoffScope::Full);
+        assert_eq!(HandoffScope::parse("user-only"), HandoffScope::UserOnly);
+        assert_eq!(HandoffScope::parse(""), HandoffScope::UserOnly);
+        assert_eq!(HandoffScope::parse("Full"), HandoffScope::UserOnly);
+        assert_eq!(HandoffScope::parse(" full "), HandoffScope::UserOnly);
+        assert_eq!(HandoffScope::parse("everything"), HandoffScope::UserOnly);
+    }
+
+    #[test]
+    fn user_only_capsule_includes_only_user_messages_and_counts_omissions() {
+        let events = mixed_events();
+        let (capsule, included, omitted) = render_capsule(
             Provider::Claude,
             Provider::Codex,
             "session-1",
             "C:\\repo",
             &events,
+            HandoffScope::UserOnly,
         );
         assert!(capsule.contains("Build the feature"));
         assert!(capsule.contains("Keep the old terminal open"));
+        assert!(!capsule.contains("assistant-only-confidential-content"));
+        assert!(!capsule.contains("tool-argument-confidential-content"));
+        assert!(!capsule.contains("tool-result-confidential-content"));
+        assert_eq!(included, 2);
+        assert_eq!(omitted, 3);
+        assert!(capsule.contains("Events included: 2"));
+        assert!(capsule.contains("Events omitted: 3"));
+    }
+
+    #[test]
+    fn full_capsule_keeps_assistant_and_tool_activity() {
+        let events = mixed_events();
+        let (capsule, included, omitted) = render_capsule(
+            Provider::Claude,
+            Provider::Codex,
+            "session-1",
+            "C:\\repo",
+            &events,
+            HandoffScope::Full,
+        );
+        assert!(capsule.contains("Build the feature"));
+        assert!(capsule.contains("Keep the old terminal open"));
+        assert!(capsule.contains("assistant-only-confidential-content"));
+        assert!(capsule.contains("tool-argument-confidential-content"));
+        assert!(capsule.contains("tool-result-confidential-content"));
         assert!(capsule.contains("Private reasoning"));
+        assert_eq!(included, 5);
+        assert_eq!(omitted, 0);
+    }
+
+    #[test]
+    fn only_the_full_scope_names_changed_files() {
+        let root = std::env::temp_dir().join(format!(
+            "alethe-handoff-workspace-test-{}",
+            nanoid::nanoid!(8)
+        ));
+        fs::create_dir_all(&root).expect("create repository directory");
+        let cwd = root.to_string_lossy().to_string();
+        let initialized = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&cwd)
+            .args(["init", "--quiet"])
+            .status()
+            .expect("run git init");
+        assert!(initialized.success());
+        fs::write(root.join("confidential-file-name.txt"), "body").expect("write untracked file");
+
+        let full = workspace_context(&cwd, HandoffScope::Full);
+        let user_only = workspace_context(&cwd, HandoffScope::UserOnly);
+        fs::remove_dir_all(&root).expect("remove repository directory");
+
+        assert!(full.contains("confidential-file-name.txt"));
+        assert!(!user_only.contains("confidential-file-name.txt"));
+        assert!(user_only.contains("Changed working-tree entries: 1"));
+    }
+
+    #[test]
+    fn redacts_generated_title() {
+        let events = vec![event(
+            "user",
+            "Implement this TOKEN=definitely-fake-title-secret safely",
+        )];
+        let (title, count) = handoff_title(&events, Provider::Claude);
+        assert_eq!(count, 1);
+        assert!(title.contains("[REDACTED]"));
+        assert!(!title.contains("definitely-fake-title-secret"));
+    }
+
+    #[test]
+    fn final_materialization_redacts_renderer_edits() {
+        let content = "Edited packet TOKEN=definitely-fake-renderer-secret";
+        let finalized = finalize_materialized_content(content).expect("content should be accepted");
+        assert!(finalized.contains("[REDACTED]"));
+        assert!(!finalized.contains("definitely-fake-renderer-secret"));
+    }
+
+    #[test]
+    fn materialization_retries_collisions_without_overwrite() {
+        let root = std::env::temp_dir().join(format!(
+            "alethe-handoff-materialize-test-{}",
+            nanoid::nanoid!(8)
+        ));
+        let collision_dir = root.join("collision");
+        fs::create_dir_all(&collision_dir).expect("create collision directory");
+        let marker = collision_dir.join("context.md");
+        fs::write(&marker, "existing").expect("write collision marker");
+        let mut ids = ["collision", "fresh"].into_iter();
+
+        let artifact = materialize_in_root(&root, "safe content", || {
+            ids.next().expect("an id should be available").to_string()
+        })
+        .expect("materialization should retry");
+
+        assert_eq!(artifact.handoff_id, "fresh");
+        assert_eq!(fs::read_to_string(&marker).unwrap(), "existing");
+        assert_eq!(
+            fs::read_to_string(&artifact.context_path).unwrap(),
+            "safe content"
+        );
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let dir_mode = fs::metadata(&artifact.context_dir)
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777;
+            let file_mode = fs::metadata(&artifact.context_path)
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777;
+            assert_eq!(dir_mode, 0o700);
+            assert_eq!(file_mode, 0o600);
+        }
+
+        fs::remove_dir_all(root).expect("remove test directory");
     }
 
     #[test]
@@ -844,5 +1118,47 @@ mod tests {
             claude[0].question_set_id.as_deref(),
             Some("toolu-claude-42")
         );
+    }
+}
+
+#[cfg(test)]
+mod session_scope_tests {
+    use super::*;
+    use crate::provider_common::provider_scope_from;
+
+    fn windows_scope(cwd: &str) -> ProviderScope {
+        provider_scope_from(
+            cwd,
+            Some(Path::new(r"C:\Users\dev")),
+            None,
+            None,
+            &[".codex", "sessions"],
+        )
+        .expect("a windows cwd with a windows home resolves")
+    }
+
+    #[test]
+    fn a_windows_cwd_matches_a_session_recorded_with_another_case_or_slashes() {
+        let scope = windows_scope(r"C:\projects\acme");
+        if cfg!(windows) {
+            assert!(session_matches_scope(&scope, r"C:/Projects/Acme"));
+        }
+        assert!(session_matches_scope(&scope, r"C:\projects\acme"));
+        assert!(!session_matches_scope(&scope, r"C:\projects\other"));
+    }
+
+    #[test]
+    fn a_guest_cwd_matches_only_the_exact_guest_path_the_agent_recorded() {
+        let scope = provider_scope_from(
+            r"\\wsl.localhost\Ubuntu\home\dev\projects\app",
+            Some(Path::new(r"C:\Users\dev")),
+            Some(Path::new(r"\\wsl.localhost\Ubuntu\home\dev")),
+            Some("/home/dev/projects/app"),
+            &[".codex", "sessions"],
+        )
+        .expect("a wsl cwd with a resolved distro home resolves");
+
+        assert!(session_matches_scope(&scope, "/home/dev/projects/app"));
+        assert!(!session_matches_scope(&scope, "/home/dev/projects/App"));
     }
 }

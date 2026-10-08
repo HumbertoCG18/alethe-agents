@@ -101,6 +101,7 @@ function AgentCanvasInner() {
     (s) => s.preferences.terminalTheme ?? s.preferences.uiTheme,
   )
   const uiTheme = useProjectsStore((s) => s.preferences.uiTheme)
+  const permissionMode = useProjectsStore((s) => s.preferences.experimentalAgentPermissionMode)
   const nodes = useAgentCanvasStore((s) => s.nodes)
   const tasks = useAgentCanvasStore((s) => s.tasks)
   const teamName = useAgentCanvasStore((s) => s.teamName)
@@ -479,6 +480,13 @@ function AgentCanvasInner() {
             done={done}
             lastEventAt={lastEventAt}
             hooksEndpoint={hooksEndpoint}
+            permissionMode={permissionMode}
+            onOpenPermissionSettings={() =>
+              useUiStore.getState().openModal_('preferences', {
+                category: 'terminal',
+                target: 'agent-canvas-permissions',
+              })
+            }
             onOpenCodexWorker={() => spawnCodexWorker(t('ws.workerManual'), { open: true })}
             onClear={clearCanvas}
             clearDisabled={nodes.length === 0 && taskList.length === 0}

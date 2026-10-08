@@ -1,9 +1,12 @@
 import { PiggyBank, RotateCcw } from 'lucide-react'
+import { useState } from 'react'
 
 import { PTY_ENV } from '../../lib/agentCanvasConfig'
 import { orchestrationRules } from '../../lib/agentCanvasUtils'
+import { interactivePermissionArgs } from '../../lib/experimentalAgentPolicy'
 import { useT } from '../../lib/i18n'
 import type { Theme } from '../../lib/types'
+import { useProjectsStore } from '../../stores/projectsStore'
 import { XTermView } from '../XTermView'
 import styles from './AgentCanvasPOC.module.css'
 
@@ -42,15 +45,25 @@ export function SessionTerminalDock({
   onClaudeExit,
 }: SessionTerminalDockProps) {
   const t = useT()
+  const permissionMode = useProjectsStore((s) => s.preferences.experimentalAgentPermissionMode)
+  // The lead keeps the mode it was started with: its arguments are fixed for the life of the PTY,
+  // so a later change of the preference only shows a restart hint.
+  const [launch, setLaunch] = useState({ ptyId: session.ptyId, mode: permissionMode })
+  if (launch.ptyId !== session.ptyId) setLaunch({ ptyId: session.ptyId, mode: permissionMode })
+  const launchMode = launch.ptyId === session.ptyId ? launch.mode : permissionMode
+  const permissionArgs = interactivePermissionArgs('claude', launchMode)
   return (
     <div className={styles.terminalDock}>
       <div className={styles.terminalHeader}>
         <span className={styles.terminalLabel}>
-          claude --dangerously-skip-permissions · teams on
+          {['claude', ...permissionArgs].join(' ')} · teams on
         </span>
         <span className={styles.terminalCwd}>{session.folder}</span>
         {restartHint ? (
           <span className={styles.economyHint}>{t('ws.agentsChangedRestart')}</span>
+        ) : null}
+        {launchMode !== permissionMode ? (
+          <span className={styles.economyHint}>{t('ws.permissionsChangedRestart')}</span>
         ) : null}
         {claudeExited !== null ? (
           <span className={styles.terminalExited}>
@@ -82,7 +95,7 @@ export function SessionTerminalDock({
             command="claude"
             cwd={session.folder}
             extraArgs={[
-              '--dangerously-skip-permissions',
+              ...permissionArgs,
               '--settings',
               hooksSettingsPath,
               '--append-system-prompt',

@@ -22,6 +22,7 @@ function renderTab(id: string | null) {
   render(
     <PlannerTab
       group={group(id)}
+      shells={[]}
       selected
       theme="dark"
       onSelect={() => {}}

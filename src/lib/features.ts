@@ -38,6 +38,12 @@ export const FEATURES: readonly FeatureDefinition[] = [
     keywordsKey: 'features.playwright.keywords',
   },
   {
+    id: 'wsl',
+    titleKey: 'features.wsl.title',
+    descriptionKey: 'features.wsl.description',
+    keywordsKey: 'features.wsl.keywords',
+  },
+  {
     id: 'orchestrator',
     titleKey: 'features.orchestrator.title',
     descriptionKey: 'features.orchestrator.description',
@@ -114,6 +120,7 @@ export function normalizeEnabledFeatures(
       // Opt-in: OpenCode-only, and it polls the worktrees of every watched project.
       gsdSync: raw.enabledFeatures.gsdSync ?? false,
       prs: raw.enabledFeatures.prs ?? true,
+      wsl: raw.enabledFeatures.wsl ?? true,
     }
   }
   return {
@@ -125,5 +132,6 @@ export function normalizeEnabledFeatures(
     orchestrator: false,
     gsdSync: false,
     prs: true,
+    wsl: true,
   }
 }

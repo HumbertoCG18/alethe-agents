@@ -4,6 +4,8 @@ import {
   Frame,
   PiggyBank,
   Plus,
+  ShieldCheck,
+  ShieldOff,
   Trash2,
   Wallet,
   ZoomIn,
@@ -21,6 +23,7 @@ import { costClassFor } from '../../lib/agentCanvasUtils'
 import { fmtTokens, fmtUsd } from '../../lib/costFormat'
 import { useT } from '../../lib/i18n'
 import { type ClaudeUsage, type CodexUsage, hasCodexWindow } from '../../lib/tauri'
+import type { ExperimentalAgentPermissionMode } from '../../lib/types'
 import { CodexIcon } from '../icons/AgentIcons'
 import styles from './AgentCanvasPOC.module.css'
 import { UsageDropdown, type UsageTab } from './UsageDropdown'
@@ -54,6 +57,9 @@ type CanvasTopBarProps = {
   lastEventAt: number | null
   hooksEndpoint: string | null
 
+  permissionMode: ExperimentalAgentPermissionMode
+  onOpenPermissionSettings: () => void
+
   onOpenCodexWorker: () => void
   onClear: () => void
   clearDisabled: boolean
@@ -84,6 +90,8 @@ export function CanvasTopBar({
   done,
   lastEventAt,
   hooksEndpoint,
+  permissionMode,
+  onOpenPermissionSettings,
   onOpenCodexWorker,
   onClear,
   clearDisabled,
@@ -194,6 +202,23 @@ export function CanvasTopBar({
             ? ''
             : ` · ${t('ws.waitingHooks', { endpoint: hooksEndpoint?.replace('http://127.0.0.1', ':') ?? '...' })}`}
         </span>
+        <button
+          type="button"
+          className={
+            permissionMode === 'bypass'
+              ? `${styles.permissionPill} ${styles.permissionPillBypass}`
+              : styles.permissionPill
+          }
+          onClick={onOpenPermissionSettings}
+          title={
+            permissionMode === 'bypass'
+              ? t('ws.permissionsBypassTitle')
+              : t('ws.permissionsAskTitle')
+          }
+        >
+          {permissionMode === 'bypass' ? <ShieldOff size={12} /> : <ShieldCheck size={12} />}
+          {permissionMode === 'bypass' ? t('ws.permissionsBypass') : t('ws.permissionsAsk')}
+        </button>
         <button
           type="button"
           className={styles.clearButton}

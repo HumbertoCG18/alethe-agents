@@ -2,7 +2,7 @@ import { ExternalLink, GitPullRequest, LoaderCircle, RefreshCw } from 'lucide-re
 import { useCallback, useEffect, useState } from 'react'
 
 import { useT } from '../../lib/i18n'
-import { githubPrListMine, type MyPullRequestSummary, openInBrowser } from '../../lib/tauri'
+import { githubPrListForProject, type MyPullRequestSummary, openInBrowser } from '../../lib/tauri'
 import { getProjectRepoRoot } from '../../lib/terminalFactory'
 import { useTodosStore } from '../../plugins/todos/store'
 import { useProjectsStore } from '../../stores/projectsStore'
@@ -17,6 +17,8 @@ export function PullRequestsSidebar() {
   )
   const repo = getProjectRepoRoot(activeProject)
   const [prs, setPrs] = useState<MyPullRequestSummary[]>([])
+  // False when the project's folder could not be listed and the account-wide list was used.
+  const [scoped, setScoped] = useState(Boolean(repo))
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -24,7 +26,9 @@ export function PullRequestsSidebar() {
     setLoading(true)
     setError(null)
     try {
-      setPrs(await githubPrListMine(repo))
+      const result = await githubPrListForProject(repo)
+      setPrs(result.prs)
+      setScoped(result.scoped)
     } catch (err) {
       setError(String(err))
     } finally {
@@ -45,8 +49,8 @@ export function PullRequestsSidebar() {
         <div className={styles.heading}>
           <GitPullRequest size={16} />
           <span>{t('prs.title')}</span>
-          <span className={styles.scope} title={repo || undefined}>
-            {repo
+          <span className={styles.scope} title={scoped ? repo || undefined : undefined}>
+            {scoped
               ? t('prs.scopeProject', { project: activeProject?.name ?? '' })
               : t('prs.scopeAll')}
           </span>
@@ -77,7 +81,7 @@ export function PullRequestsSidebar() {
               <GitPullRequest size={20} />
             </div>
             <strong>{t('prs.emptyTitle')}</strong>
-            <span>{repo ? t('prs.emptyDescriptionProject') : t('prs.emptyDescription')}</span>
+            <span>{scoped ? t('prs.emptyDescriptionProject') : t('prs.emptyDescription')}</span>
           </div>
         ) : (
           <div className={styles.list}>

@@ -1,8 +1,14 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 
-import { INSTALL_SHELL_ENV, installShellLine, type InstallMethod } from '../lib/agentInstall'
+import {
+  INSTALL_SHELL_ENV,
+  installArgv,
+  installShellLine,
+  type InstallMethod,
+} from '../lib/agentInstall'
 import {
   agentCliVersion,
+  findWslCli,
   killPty,
   listenPtyData,
   listenPtyExit,
@@ -12,6 +18,8 @@ import {
 } from '../lib/tauri'
 import { resolveAgentCliCommand } from '../lib/agentProviders'
 import type { AgentType } from '../lib/types'
+import { wslTargetFor } from '../lib/wsl'
+import { useProjectsStore } from '../stores/projectsStore'
 
 export type AgentInstallStatus = 'idle' | 'running' | 'success' | 'failed'
 
@@ -78,7 +86,17 @@ export function useAgentOperationBusy(): string | null {
  * differs when the same screen also installs something else for that agent — the Node toolchain —
  * which must not look like the agent's own run or the two would be allowed to run together.
  */
-export function useAgentInstall(agent: AgentType, lockKey: string = agent) {
+export type AgentInstallTarget = {
+  /** A folder inside a WSL distro installs into that distro instead of on Windows. */
+  cwd?: string | null
+}
+
+export function useAgentInstall(
+  agent: AgentType,
+  lockKey: string = agent,
+  target?: AgentInstallTarget,
+) {
+  const targetCwd = target?.cwd ?? null
   const [status, setStatus] = useState<AgentInstallStatus>('idle')
   const [log, setLog] = useState('')
   const [shadowConflict, setShadowConflict] = useState<AgentInstallShadowConflict | null>(null)
@@ -130,10 +148,16 @@ export function useAgentInstall(agent: AgentType, lockKey: string = agent) {
       setStatus('running')
       setBusyAgent(lockKey)
 
+      const wslTarget = wslTargetFor(
+        targetCwd,
+        useProjectsStore.getState().preferences.enabledFeatures.wsl,
+      )
       const command = method.verifyCommand ?? resolveAgentCliCommand(agent)
       // Only meaningful for an update of something already on PATH — a fresh install has
       // nothing to compare against, and verifyAbsent (uninstall) checks absence, not a version.
-      const beforeVersion = command && !method.verifyAbsent ? await agentCliVersion(command) : null
+      // The version probe runs on Windows, so it says nothing about a CLI inside a distro.
+      const beforeVersion =
+        !wslTarget && command && !method.verifyAbsent ? await agentCliVersion(command) : null
       if (stale()) return
 
       /**
@@ -143,7 +167,9 @@ export function useAgentInstall(agent: AgentType, lockKey: string = agent) {
        */
       const verify = async (): Promise<boolean> => {
         if (!command) return false
-        const found = await refreshCliLauncher(command).catch(() => null)
+        const found = await (
+          wslTarget ? findWslCli(wslTarget.distro, command, true) : refreshCliLauncher(command)
+        ).catch(() => null)
         if (method.verifyAbsent) return !found
         if (!found) return false
         if (!beforeVersion) return true
@@ -159,11 +185,21 @@ export function useAgentInstall(agent: AgentType, lockKey: string = agent) {
       if (stale()) return
 
       const ptyId = `agent-install:${lockKey}:${Date.now()}`
+      // Inside a distro a plain command runs as the PTY process itself, so its exit code is the
+      // installer's own.
+      const argv = wslTarget ? installArgv(method.command) : null
       try {
-        // A bare shell, then the command written into it: the native installers
+        // Otherwise a bare shell, then the command written into it: the native installers
         // are pipelines (`irm ... | iex`), which cannot be expressed as a
         // launcher plus argv.
-        const spawned = await spawnPty({ cols: 100, rows: 24, id: ptyId, env: INSTALL_SHELL_ENV })
+        const spawned = await spawnPty({
+          cols: 100,
+          rows: 24,
+          id: ptyId,
+          ...(wslTarget
+            ? { cwd: targetCwd ?? undefined, command: argv?.program, extraArgs: argv?.args }
+            : { env: INSTALL_SHELL_ENV }),
+        })
         if (stale()) {
           void killPty(spawned.id).catch(() => undefined)
           return
@@ -190,8 +226,9 @@ export function useAgentInstall(agent: AgentType, lockKey: string = agent) {
           if (stale()) return
           ptyIdRef.current = null
           if (settledRef.current) return
-          // `installShellLine` ends the shell with a bare `exit`, which carries the
-          // installer command's own exit status. A non-zero code means the installer
+          // The exit code is the installer's own: either it is the PTY process, or
+          // `installShellLine` ends the shell with a bare `exit` carrying the
+          // installer command's exit status. A non-zero code means the installer
           // itself reported failure (network error, permission denied, ...) — trust it
           // instead of falling through to the resolver, which would still find the
           // previous binary on PATH and misreport the run as a success.
@@ -234,6 +271,7 @@ export function useAgentInstall(agent: AgentType, lockKey: string = agent) {
           cleanupRef.current.push(() => window.clearInterval(poll))
         }
 
+        if (argv) return
         await new Promise((resolve) => setTimeout(resolve, PROMPT_SETTLE_MS))
         if (stale()) return
         await writePty(spawned.id, installShellLine(method.command))
@@ -244,7 +282,7 @@ export function useAgentInstall(agent: AgentType, lockKey: string = agent) {
         teardown()
       }
     },
-    [agent, lockKey, settle, status, teardown],
+    [agent, lockKey, settle, status, targetCwd, teardown],
   )
 
   const reset = useCallback(() => {

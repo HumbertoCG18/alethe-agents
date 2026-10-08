@@ -2,11 +2,13 @@ import { listen } from '@tauri-apps/api/event'
 import { type MutableRefObject, useCallback, useEffect, useRef, useState } from 'react'
 
 import { MAX_LIVE_WORKERS } from '../../../lib/agentCanvasConfig'
-import { type CodexWorker, execArgsFor, tailSummary } from '../../../lib/agentCanvasUtils'
+import { type CodexWorker, tailSummary } from '../../../lib/agentCanvasUtils'
+import { interactivePermissionArgs, oneShotArgs } from '../../../lib/experimentalAgentPolicy'
 import { useT } from '../../../lib/i18n'
 import { attachPty, killPty, listenPtyExit, spawnPty } from '../../../lib/tauri'
 import { resolveAgentCliCommand } from '../../../lib/agentProviders'
 import type { AgentType } from '../../../lib/types'
+import { useProjectsStore } from '../../../stores/projectsStore'
 import { useUiStore } from '../../../stores/uiStore'
 
 type Session = { folder: string; ptyId: string }
@@ -31,7 +33,11 @@ export function useAgentWorkers(sessionRef: MutableRefObject<Session | null>) {
       const folder = sessionRef.current?.folder
       if (!folder) return null
       const ptyId = `${agent}-worker-${Date.now()}`
-      const args = opts.task ? execArgsFor(agent, opts.task) : undefined
+      // Read at launch so a mode change applies to the next worker without a restart.
+      const permissionMode = useProjectsStore.getState().preferences.experimentalAgentPermissionMode
+      const args = opts.task
+        ? oneShotArgs(agent, opts.task, permissionMode)
+        : interactivePermissionArgs(agent, permissionMode)
       console.log(
         '[AgentCanvasPOC] criando worker',
         agent,
@@ -43,7 +49,17 @@ export function useAgentWorkers(sessionRef: MutableRefObject<Session | null>) {
       )
       setCodexWorkers((prev) => [
         ...prev,
-        { ptyId, agent, title, cwd: folder, startedAt: Date.now(), exitedCode: null, args },
+        {
+          ptyId,
+          agent,
+          title,
+          cwd: folder,
+          startedAt: Date.now(),
+          exitedCode: null,
+          args,
+          oneShot: Boolean(opts.task),
+          permissionMode,
+        },
       ])
       void spawnPty({
         cols: 120,

@@ -12,7 +12,8 @@ import {
 import { useEffect, useMemo, useState } from 'react'
 
 import { saveFile } from '../../lib/dialog'
-import { useT } from '../../lib/i18n'
+import { intlLocale, useT } from '../../lib/i18n'
+import { isOrchestratorShellPty } from '../../lib/orchestratorShells'
 import {
   DEFAULT_PROFILE_IMAGE_URL,
   getProfileAccountName,
@@ -141,7 +142,9 @@ export function ProfilesModal() {
   }
 
   const parkCurrentProfile = async () => {
-    const ids = [...new Set(currentPtyIds)]
+    // Parking must not reach a shell the orchestrator board owns (spec §12): it has no view of its
+    // own to ask before a suspend, which would hard-kill it with no chance for a graceful shutdown.
+    const ids = [...new Set(currentPtyIds)].filter((id) => !isOrchestratorShellPty(id))
     await Promise.allSettled(ids.map((id) => suspendPty(id)))
   }
 
@@ -367,10 +370,7 @@ export function ProfilesModal() {
                         <span>{t('profiles.terminals', { count: profile.terminal_count })}</span>
                         <span>
                           {t('profiles.lastUsed', {
-                            date: formatDate(
-                              profile.last_used_at_ms,
-                              language === 'pt-BR' ? 'pt-BR' : 'en-US',
-                            ),
+                            date: formatDate(profile.last_used_at_ms, intlLocale(language)),
                           })}
                         </span>
                       </div>

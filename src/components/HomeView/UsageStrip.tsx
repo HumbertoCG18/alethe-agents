@@ -4,6 +4,8 @@ import { loadClaudeUsage } from '../../lib/claudeUsageCache'
 import { getCachedCodexUsage } from '../../lib/codexUsageCache'
 import { getCachedAntigravityUsage } from '../../lib/antigravityUsageCache'
 import { translate, getLocale, useT } from '../../lib/i18n'
+import { AGENT_TYPE_LABELS } from '../../lib/types'
+import { USAGE_PROVIDERS, type UsageProviderDef } from '../../lib/usageProviders'
 import {
   codexHeadlineWindow,
   hasCodexWindow,
@@ -51,6 +53,86 @@ function meterColor(util: number, base: string): string {
 
 function pctNum(v: number): number {
   return Math.round(v)
+}
+
+async function refreshClaude(): Promise<void> {
+  await loadClaudeUsage(true)
+}
+
+async function refreshCodex(): Promise<void> {
+  const { setCodexUsage } = useUiStore.getState()
+  try {
+    setCodexUsage(await getCachedCodexUsage(true))
+  } catch {
+    setCodexUsage(null)
+  }
+}
+
+async function refreshAntigravity(): Promise<void> {
+  const { setAntigravityUsage } = useUiStore.getState()
+  try {
+    setAntigravityUsage(await getCachedAntigravityUsage(true))
+  } catch {
+    setAntigravityUsage(null)
+  }
+}
+
+const PROVIDER_CARD: Record<
+  UsageProviderDef['id'],
+  { name: string; badgeClass: string; icon: ReactNode; refresh: () => Promise<void> }
+> = {
+  claude: {
+    name: 'claude code',
+    badgeClass: styles.badgeClaude,
+    icon: <ClaudeIcon size={16} />,
+    refresh: refreshClaude,
+  },
+  codex: {
+    name: 'codex',
+    badgeClass: styles.badgeCodex,
+    icon: <CodexIcon size={16} />,
+    refresh: refreshCodex,
+  },
+  antigravity: {
+    name: 'antigravity',
+    badgeClass: styles.badgeAntigravity,
+    icon: <AntigravityIcon size={16} />,
+    refresh: refreshAntigravity,
+  },
+}
+
+/** Stands in for a provider whose usage reading is off: says so and offers to turn it on. */
+function UsageOffCard({ providerId }: { providerId: UsageProviderDef['id'] }) {
+  const t = useT()
+  const provider = USAGE_PROVIDERS.find((entry) => entry.id === providerId)!
+  const card = PROVIDER_CARD[providerId]
+
+  const turnOn = () => {
+    const { preferences, setPreferences } = useProjectsStore.getState()
+    setPreferences({ usageAccess: { ...preferences.usageAccess, [providerId]: true } })
+    void card.refresh()
+  }
+
+  return (
+    <div className={styles.usageCard}>
+      <div className={styles.cardHead}>
+        <div className={`${styles.badge} ${card.badgeClass}`}>{card.icon}</div>
+        <span className={styles.name}>{card.name}</span>
+      </div>
+      <div className={styles.usageEmpty}>
+        <span className={styles.usageEmptyTitle}>{t('widget.usageOff')}</span>
+        <span className={styles.usageEmptyHint}>
+          {t('widget.usageOffHint', {
+            provider: AGENT_TYPE_LABELS[provider.agentType],
+            vendor: provider.vendor,
+          })}
+        </span>
+        <button type="button" className={styles.usageEmptyAction} onClick={turnOn}>
+          {t('widget.turnOnUsage')}
+        </button>
+      </div>
+    </div>
+  )
 }
 
 function CardHead({
@@ -194,10 +276,6 @@ function ClaudeCard({ usage }: { usage: ClaudeUsage | null }) {
   const usageError = useUiStore((s) => s.claudeUsageError)
   const accent = 'var(--agent-claude)'
 
-  const refresh = async () => {
-    await loadClaudeUsage(true)
-  }
-
   const head = (
     <CardHead
       badgeClass={styles.badgeClaude}
@@ -207,7 +285,7 @@ function ClaudeCard({ usage }: { usage: ClaudeUsage | null }) {
       accent={accent}
       // A reading kept from before a failed refresh is not live.
       hasData={!!usage && !usageError}
-      onRefresh={refresh}
+      onRefresh={refreshClaude}
     />
   )
 
@@ -324,17 +402,8 @@ function CodexCard({
   showResetCreditAction: boolean
 }) {
   const t = useT()
-  const setCodexUsage = useUiStore((s) => s.setCodexUsage)
   const openModal = useUiStore((s) => s.openModal_)
   const accent = 'var(--agent-codex)'
-
-  const refresh = async () => {
-    try {
-      setCodexUsage(await getCachedCodexUsage(true))
-    } catch {
-      setCodexUsage(null)
-    }
-  }
 
   const head = (
     <CardHead
@@ -344,7 +413,7 @@ function CodexCard({
       plan={usage?.plan || undefined}
       accent={accent}
       hasData={!!usage}
-      onRefresh={refresh}
+      onRefresh={refreshCodex}
     />
   )
 
@@ -444,16 +513,7 @@ function CodexCard({
 
 function AntigravityCard({ usage }: { usage: AntigravityUsage | null }) {
   const t = useT()
-  const setAntigravityUsage = useUiStore((s) => s.setAntigravityUsage)
   const accent = 'var(--agent-antigravity)'
-
-  const refresh = async () => {
-    try {
-      setAntigravityUsage(await getCachedAntigravityUsage(true))
-    } catch {
-      setAntigravityUsage(null)
-    }
-  }
 
   const hasData = usage?.status === 'ready' && usage.buckets.length > 0
   const head = (
@@ -464,7 +524,7 @@ function AntigravityCard({ usage }: { usage: AntigravityUsage | null }) {
       plan={hasData ? `${usage.buckets.length} ${t('widget.quotaBucketsShort')}` : undefined}
       accent={accent}
       hasData={hasData}
-      onRefresh={refresh}
+      onRefresh={refreshAntigravity}
     />
   )
 
@@ -558,6 +618,7 @@ export function UsageStrip({
   const showClaude = useProjectsStore((s) => s.preferences.usageShowClaude)
   const showCodex = useProjectsStore((s) => s.preferences.usageShowCodex)
   const showAntigravity = useProjectsStore((s) => s.preferences.usageShowAntigravity)
+  const access = useProjectsStore((s) => s.preferences.usageAccess)
 
   if (!showClaude && !showCodex && !showAntigravity) {
     return (
@@ -569,11 +630,21 @@ export function UsageStrip({
 
   return (
     <div className={`${styles.usageStrip} ${showActivity ? '' : styles.usageStripTwo}`}>
-      {showClaude ? <ClaudeCard usage={claudeUsage} /> : null}
-      {showCodex ? (
+      {!showClaude ? null : access.claude ? (
+        <ClaudeCard usage={claudeUsage} />
+      ) : (
+        <UsageOffCard providerId="claude" />
+      )}
+      {!showCodex ? null : access.codex ? (
         <CodexCard usage={codexUsage} showResetCreditAction={showResetCreditAction} />
-      ) : null}
-      {!showActivity && showAntigravity ? <AntigravityCard usage={antigravityUsage} /> : null}
+      ) : (
+        <UsageOffCard providerId="codex" />
+      )}
+      {showActivity || !showAntigravity ? null : access.antigravity ? (
+        <AntigravityCard usage={antigravityUsage} />
+      ) : (
+        <UsageOffCard providerId="antigravity" />
+      )}
       {showActivity ? <ActivityGraph /> : null}
     </div>
   )

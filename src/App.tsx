@@ -224,7 +224,7 @@ export default function App() {
   }, [activeProfileId, hydrated, restoreMarkdownSidebarHistory])
 
   useRouter9AutoStart(hydrated)
-  useAiMemoryAutoStart(hydrated)
+  useAiMemoryAutoStart(hydrated, activeProfileId)
 
   useEffect(() => {
     void ghosttyKillAll().catch(() => {

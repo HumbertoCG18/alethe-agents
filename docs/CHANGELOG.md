@@ -543,6 +543,17 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
   minute, failed or not, and after a rate limit no read is sent until the wait the service asked
   for has passed (at most an hour; 5 minutes when it does not say). Each failure is written to
   `app-events.log` with its status.
+- **Orchestrator shells in a WSL folder run their command.** They opened an idle login shell in the
+  distro while the board showed them running; the command now runs there, and the board sees it
+  exit.
+- **A profile that fails to delete keeps its credentials.** Its folder is removed and the profile
+  list saved before its GitHub sync token and Spotify secrets are deleted, so a folder that cannot
+  be removed (for example, a file still open in it on Windows) leaves the profile listed with its
+  credentials instead of without them.
+- **ai-memory follows the active profile.** Switching to another profile, or deleting the one
+  ai-memory was started for, stops the server Alethe started for the previous profile, so the new
+  profile no longer reads and writes the old profile's memory. When ai-memory is enabled for the
+  profile switched to, its own server starts automatically.
 - **A release is no longer published before its notes job finishes.** The release workflow publishes
   the draft only after the release-notes job succeeds, a failed run discards its draft only once that
   job has finished, and two release runs queue instead of overlapping.

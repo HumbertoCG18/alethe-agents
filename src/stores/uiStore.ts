@@ -12,6 +12,7 @@ import { basename } from '../lib/paths'
 import type {
   AntigravityUsage,
   ClaudeUsage,
+  ClaudeUsageFailure,
   CodexUsage,
   MemoryStats,
   RuntimeSnapshot,
@@ -100,7 +101,7 @@ type UiState = {
   memoryHistory: MemorySample[]
   claudeUsage: ClaudeUsage | null
   /** Why the last Claude usage read failed; null after a successful one. */
-  claudeUsageError: 'no_token' | 'unavailable' | null
+  claudeUsageError: ClaudeUsageFailure | null
   codexUsage: CodexUsage | null
   antigravityUsage: AntigravityUsage | null
 
@@ -163,7 +164,7 @@ type UiState = {
   setRuntimeSnapshot: (value: RuntimeSnapshot | null) => void
   clearMemoryHistory: () => void
   setClaudeUsage: (value: ClaudeUsage | null) => void
-  setClaudeUsageError: (value: 'no_token' | 'unavailable' | null) => void
+  setClaudeUsageError: (value: ClaudeUsageFailure | null) => void
   setCodexUsage: (value: CodexUsage | null) => void
   setAntigravityUsage: (value: AntigravityUsage | null) => void
   setFocusedTerminal: (id: string | null) => void

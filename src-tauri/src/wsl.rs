@@ -292,6 +292,19 @@ pub fn resolved_command_args(shell: &str, resolved: &str, extra_args: &[String])
     args
 }
 
+/// The line is the script itself, passed as one argument and never spliced into another one; `--`
+/// keeps a line that starts with `-` from being read as a shell option.
+fn command_line_args(shell: &str, line: &str) -> Vec<String> {
+    let (program, flags) = posix_login_shell(shell);
+    vec![
+        "-e".to_string(),
+        program,
+        flags.to_string(),
+        "--".to_string(),
+        line.to_string(),
+    ]
+}
+
 const POSIX_SHELLS: [&str; 9] = [
     "sh", "bash", "dash", "ash", "zsh", "ksh", "ksh93", "mksh", "yash",
 ];
@@ -553,6 +566,7 @@ pub fn command_builder_for_wsl(
     initial_command: Option<&str>,
     extra_args: &[String],
     env: Option<&HashMap<String, String>>,
+    command_line: Option<&str>,
 ) -> CommandBuilder {
     let mut builder = CommandBuilder::new("wsl.exe");
     builder.arg("-d");
@@ -584,6 +598,14 @@ pub fn command_builder_for_wsl(
                 builder.arg("-lc");
                 builder.arg(line);
             }
+        }
+    } else if let Some(line) = command_line.map(str::trim).filter(|line| !line.is_empty()) {
+        // An orchestrator shell: the line runs through the user's login shell, so tools set up in
+        // its rc files (nvm in `~/.bashrc`) are found, and `wsl.exe` ends with it, so the board can
+        // tell a running service from one that exited.
+        let shell = distro_login_shell(&target.distro);
+        for arg in command_line_args(&shell, line) {
+            builder.arg(arg);
         }
     }
 
@@ -1091,14 +1113,14 @@ mod tests {
 
     #[test]
     fn a_shell_terminal_launches_the_plain_distro_login_shell() {
-        let builder = command_builder_for_wsl(&ubuntu(), None, &[], None);
+        let builder = command_builder_for_wsl(&ubuntu(), None, &[], None, None);
         assert_eq!(argv(&builder), vec!["wsl.exe", "-d", "Ubuntu"]);
     }
 
     #[test]
     fn a_plain_wsl_terminal_opens_the_login_shell_of_its_distro() {
         for launcher in ["wsl.exe", "WSL.EXE", "wsl"] {
-            let builder = command_builder_for_wsl(&ubuntu(), Some(launcher), &[], None);
+            let builder = command_builder_for_wsl(&ubuntu(), Some(launcher), &[], None, None);
             assert_eq!(argv(&builder), vec!["wsl.exe", "-d", "Ubuntu"]);
         }
     }
@@ -1106,7 +1128,7 @@ mod tests {
     #[test]
     fn an_unresolved_command_falls_back_to_the_distro_shell_with_quoted_args() {
         let extras = vec!["--resume".to_string(), "it's me".to_string()];
-        let builder = command_builder_for_wsl(&ubuntu(), Some("claude"), &extras, None);
+        let builder = command_builder_for_wsl(&ubuntu(), Some("claude"), &extras, None, None);
         assert_eq!(
             argv(&builder),
             vec![
@@ -1119,6 +1141,42 @@ mod tests {
                 r"exec 'claude' '--resume' 'it'\''s me'",
             ]
         );
+    }
+
+    #[test]
+    fn an_orchestrator_command_line_runs_under_the_distro_login_shell_and_ends_with_it() {
+        let line = r#"npm run dev -- --name "my app" --tag 'it'\''s'"#;
+        let builder = command_builder_for_wsl(&ubuntu(), None, &[], None, Some(line));
+        let args = argv(&builder);
+        // The login shell is probed from the distro, so only the shape is fixed here.
+        assert_eq!(args[..4], ["wsl.exe", "-d", "Ubuntu", "-e"]);
+        assert_eq!(args.len(), 8, "{args:?}");
+        assert_eq!(args[7], line);
+    }
+
+    #[test]
+    fn a_command_line_runs_through_a_posix_login_shell_with_its_rc_files() {
+        let line = r#"npm run dev -- --name "my app""#;
+        assert_eq!(
+            command_line_args("/bin/bash", line),
+            vec!["-e", "/bin/bash", "-lic", "--", line]
+        );
+        // `fish -c` would not parse a POSIX line.
+        assert_eq!(
+            command_line_args("/usr/bin/fish", line),
+            vec!["-e", "/bin/sh", "-lc", "--", line]
+        );
+        // A line starting with `-` is the script, not another shell option.
+        assert_eq!(
+            command_line_args("/bin/bash", "-v"),
+            vec!["-e", "/bin/bash", "-lic", "--", "-v"]
+        );
+    }
+
+    #[test]
+    fn a_blank_command_line_keeps_the_interactive_login_shell() {
+        let builder = command_builder_for_wsl(&ubuntu(), None, &[], None, Some("  \t "));
+        assert_eq!(argv(&builder), vec!["wsl.exe", "-d", "Ubuntu"]);
     }
 
     /// The tests below mutate the process-wide `WSLENV`, so they must not run concurrently.
@@ -1141,7 +1199,7 @@ mod tests {
         }
         env.insert("ANTHROPIC_API_KEY".to_string(), "sk-test".to_string());
 
-        let builder = command_builder_for_wsl(&ubuntu(), None, &[], Some(&env));
+        let builder = command_builder_for_wsl(&ubuntu(), None, &[], Some(&env), None);
         let wslenv = wslenv_of(&builder);
         let names: Vec<&str> = wslenv.split(':').collect();
 
@@ -1163,7 +1221,7 @@ mod tests {
         let _guard = ENV_LOCK.lock().unwrap();
         std::env::set_var("WSLENV", "KEEP:PATH:HOME");
 
-        let builder = command_builder_for_wsl(&ubuntu(), None, &[], None);
+        let builder = command_builder_for_wsl(&ubuntu(), None, &[], None, None);
         let wslenv = wslenv_of(&builder);
         let names: Vec<&str> = wslenv.split(':').collect();
 
@@ -1177,7 +1235,7 @@ mod tests {
         let _guard = ENV_LOCK.lock().unwrap();
         std::env::set_var("WSLENV", "PATH/l:HOME/p:TERM/u:KEEP/w");
 
-        let builder = command_builder_for_wsl(&ubuntu(), None, &[], None);
+        let builder = command_builder_for_wsl(&ubuntu(), None, &[], None, None);
         let wslenv = wslenv_of(&builder);
         let names: Vec<&str> = wslenv.split(':').collect();
 
@@ -1196,7 +1254,7 @@ mod tests {
 
     #[test]
     fn asks_wsl_exe_for_utf8_messages_in_the_terminal_environment() {
-        let builder = command_builder_for_wsl(&ubuntu(), None, &[], None);
+        let builder = command_builder_for_wsl(&ubuntu(), None, &[], None, None);
         assert_eq!(
             builder
                 .get_env("WSL_UTF8")
@@ -1212,7 +1270,7 @@ mod tests {
         let mut env = HashMap::new();
         env.insert("ALETHE_PANE".to_string(), "42".to_string());
 
-        let builder = command_builder_for_wsl(&ubuntu(), None, &[], Some(&env));
+        let builder = command_builder_for_wsl(&ubuntu(), None, &[], Some(&env), None);
         let value = |key: &str| {
             builder
                 .get_env(key)

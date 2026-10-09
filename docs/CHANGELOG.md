@@ -537,6 +537,9 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ### Fixed
 
+- **Orchestrator shells in a WSL folder run their command.** They opened an idle login shell in the
+  distro while the board showed them running; the command now runs there, and the board sees it
+  exit.
 - **Campaign and night files open only from inside the repository.** A text file named by the
   campaign registry or night evidence is read, listed in the Markdown index, summarized or opened in
   the full reader only when it really lies in one of the repository's checkouts; one reached through

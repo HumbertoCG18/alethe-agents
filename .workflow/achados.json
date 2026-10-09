@@ -129,6 +129,15 @@
       "origem": "CHAT-03",
       "detalhe": "05/10 18:40: app.quit com 2 sessões, teardown 2869 ms (antes ~700 ms); sessão DwXx… 'error=1 of 13 processes not ended: 88856: terminate error 5'. O pid 88856 já não existia ao conferir. Investigar se é processo saindo (corrida) ou protegido; medir se o atraso se repete.",
       "estado": "novo"
+    },
+    {
+      "id": "ACH-0015",
+      "data": "2026-10-09",
+      "tipo": "bug",
+      "titulo": "Teste instável no Windows: codex_mcp_bridge_answers_null_id_but_not_notifications",
+      "origem": "",
+      "detalhe": "CI da dev em 16c193f (merge da #118, 08/10 22:22): Rust check (Windows) falhou em agent_events::tests::codex_mcp_bridge_answers_null_id_but_not_notifications (src/agent_events.rs:946, 622 ok/1 falha); passou em 6c74518 e nas execuções da #104 sem mudança no código do teste.",
+      "estado": "novo"
     }
   ]
 }

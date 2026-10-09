@@ -10,7 +10,7 @@
       "janela": "assistida",
       "depende_de": [],
       "worktrees": [],
-      "atualizado_em": "2026-10-08",
+      "atualizado_em": "2026-10-09",
       "tarefas": [
         {
           "id": "TODO-01",
@@ -430,9 +430,11 @@
           "id": "TODO-38",
           "titulo": "Sync upstream main into dev (merge c47ff33, 32 conflicts)",
           "nivel": "T2",
-          "estado": "pronta",
+          "estado": "concluída",
           "depende_de": [],
-          "origem": "USER"
+          "origem": "USER",
+          "evidencia": "PR #108 mergeada (c0df040); dev 0 commits atrás de Kc1t:main (7f0288c)",
+          "resultado": "upstream main sincronizada na dev"
         }
       ]
     },
@@ -661,7 +663,7 @@
       "janela": "assistida",
       "depende_de": [],
       "worktrees": [],
-      "atualizado_em": "2026-10-07",
+      "atualizado_em": "2026-10-09",
       "tarefas": [
         {
           "id": "UI-01",
@@ -759,23 +761,25 @@
           "id": "UI-10",
           "titulo": "Run CI for dev and record delivery evidence (#106)",
           "nivel": "T1",
-          "estado": "em execução",
+          "estado": "concluída",
           "depende_de": [],
           "origem": "USER",
           "passos": [
             {
               "texto": "Cover dev with existing CI",
-              "feito": false
+              "feito": true
             },
             {
               "texto": "Record build and native acceptance evidence",
-              "feito": false
+              "feito": true
             },
             {
               "texto": "Validate diff and prepare Gate 2",
-              "feito": false
+              "feito": true
             }
-          ]
+          ],
+          "evidencia": "PRs #109 (CI na dev e evidência de aceite no template) e #118 (dev verde); CI da dev ok em 6c74518: https://github.com/HumbertoCG18/alethe-agents/actions/runs/37854626996",
+          "resultado": "CI roda em push/PR para dev; primeiro verde após #118"
         }
       ]
     },

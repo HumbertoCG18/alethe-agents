@@ -1,18 +1,29 @@
 import { ChevronDown, FileText, ListChecks, Search } from 'lucide-react'
 import { useState } from 'react'
 
-import { pathInside } from '../../lib/campaigns'
 import { useT } from '../../lib/i18n'
 import { basename, normalizeCwd } from '../../lib/paths'
 import { SectionToggle } from '../../plugins/todos/SectionToggle'
 import { useUiStore } from '../../stores/uiStore'
 import styles from './RightSidebar.module.css'
-import type { useMarkdownCatalog } from './useMarkdownCatalog'
+import { catalogRoot, type useMarkdownCatalog } from './useMarkdownCatalog'
 
 const PAGE = 40
 export function MarkdownCatalog({ catalog }: { catalog: ReturnType<typeof useMarkdownCatalog> }) {
   const t = useT()
-  const open = useUiStore((s) => s.openMarkdownSidebar)
+  const openMarkdown = useUiStore((s) => s.openMarkdownSidebar)
+  const rootOf = (path: string) => catalogRoot(catalog.roots, path)
+  // Scoped to its checkout, a document is read only while it is really inside the repository; one
+  // listed under a checkout the project no longer has opens nothing.
+  const open = (path: string, title: string) => {
+    const root = rootOf(path)
+    if (root) openMarkdown(path, title, root)
+    else
+      useUiStore.getState().pushToast({
+        title: t('rightSidebar.catalog.title'),
+        body: t('rightSidebar.catalog.outsideCheckouts'),
+      })
+  }
   const selected = useUiStore((s) => s.rightSidebarMarkdown?.path)
   const [query, setQuery] = useState('')
   const [pages, setPages] = useState<Record<string, number>>({})
@@ -120,11 +131,7 @@ export function MarkdownCatalog({ catalog }: { catalog: ReturnType<typeof useMar
                                 title={path}
                                 onClick={() => open(path, doc.title)}
                               >
-                                {basename(
-                                  catalog.roots
-                                    .filter((r) => pathInside(path, r))
-                                    .sort((a, b) => b.length - a.length)[0] ?? path,
-                                )}
+                                {basename(rootOf(path) ?? path)}
                               </button>
                             ))}
                           </div>

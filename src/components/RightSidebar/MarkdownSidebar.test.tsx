@@ -1,7 +1,12 @@
 import { act, cleanup, configure, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest'
 
-import { findRelativePath, readTextFile, writeClipboardText } from '../../lib/tauri'
+import {
+  findRelativePath,
+  readRepositoryTextFile,
+  readTextFile,
+  writeClipboardText,
+} from '../../lib/tauri'
 import { EMPTY_PROJECTS_FILE } from '../../lib/types'
 import { useProjectsStore } from '../../stores/projectsStore'
 import { useUiStore } from '../../stores/uiStore'
@@ -22,6 +27,7 @@ vi.mock('@tauri-apps/api/webview', () => ({
 vi.mock('../../lib/tauri', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../lib/tauri')>()),
   readTextFile: vi.fn(),
+  readRepositoryTextFile: vi.fn(),
   watchFile: vi.fn(async () => {}),
   unwatchFile: vi.fn(async () => {}),
   listenFileChanged: vi.fn(async () => () => {}),
@@ -121,4 +127,13 @@ it('recovers a missing project document through the existing worktree resolver',
   expect(
     useUiStore.getState().rightSidebarMarkdownTabs.some((tab) => tab.path.endsWith('missing.md')),
   ).toBe(false)
+})
+
+it('reads a document named by repository text under its checkout and explains a refusal', async () => {
+  vi.mocked(readRepositoryTextFile).mockRejectedValue('outside_repository')
+  useUiStore.getState().openMarkdownSidebar('C:/repo/docs/linked.md', 'Linked', 'C:/repo')
+  render(<RightSidebar />)
+  expect(await screen.findByText(/points outside the repository/)).toBeInTheDocument()
+  expect(readRepositoryTextFile).toHaveBeenCalledWith('C:/repo', 'C:/repo/docs/linked.md')
+  expect(readTextFile).not.toHaveBeenCalled()
 })

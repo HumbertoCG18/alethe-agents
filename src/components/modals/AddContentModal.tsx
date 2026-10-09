@@ -50,7 +50,7 @@ export function AddContentModal() {
       setKind(null)
       return
     }
-    createFilePane(projectId, { filePath: selected })
+    createFilePane(projectId, { filePath: selected, scope: null })
     useUiStore.getState().setActiveView('workspace')
     closeModal()
   }

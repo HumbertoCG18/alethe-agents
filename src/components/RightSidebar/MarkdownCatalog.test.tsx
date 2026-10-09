@@ -3,6 +3,8 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 import example from '../../lib/__fixtures__/campanhas.exemplo.json'
 import { parseCampaigns } from '../../lib/campaigns'
+import { readMarkdownSidebarHistory } from '../../lib/markdownSidebarHistory'
+import { readRepositoryTextFile, readTextFile } from '../../lib/tauri'
 import { EMPTY_PROJECTS_FILE } from '../../lib/types'
 import { useProjectsStore } from '../../stores/projectsStore'
 import { useUiStore } from '../../stores/uiStore'
@@ -11,6 +13,7 @@ import { recoverCatalogPath, useMarkdownCatalog } from './useMarkdownCatalog'
 const state = vi.hoisted(() => ({
   activeId: 'OITO',
   root: 'C:/repo',
+  worktrees: ['C:/repo', 'C:/repo-feature'],
   registry: null as unknown,
   files: vi.fn(),
   find: vi.fn(),
@@ -21,12 +24,15 @@ vi.mock('../../plugins/todos/campaignView', () => ({
 vi.mock('../../lib/projectCheckout', () => ({
   resolveProjectCheckout: async () => ({
     root: state.root,
-    checkouts: { main: 'C:/repo', worktrees: [{ path: 'C:/repo' }, { path: 'C:/repo-feature' }] },
+    checkouts: { main: 'C:/repo', worktrees: state.worktrees.map((path) => ({ path })) },
   }),
 }))
 vi.mock('../../lib/tauri', () => ({
   listProjectMarkdown: state.files,
-  findRelativePath: state.find,
+  findRepositoryFile: state.find,
+  OUTSIDE_REPOSITORY: 'outside_repository',
+  readTextFile: vi.fn(),
+  readRepositoryTextFile: vi.fn(),
 }))
 function Catalog() {
   const catalog = useMarkdownCatalog()
@@ -40,6 +46,7 @@ function Catalog() {
 beforeEach(() => {
   vi.clearAllMocks()
   state.root = 'C:/repo'
+  state.worktrees = ['C:/repo', 'C:/repo-feature']
   localStorage.clear()
   useProjectsStore.setState({ ...structuredClone(EMPTY_PROJECTS_FILE), activeProjectId: 'project' })
   const data = structuredClone(example)
@@ -303,4 +310,45 @@ it('preserves ignored explicit evidence in each checkout and prefers the selecte
   fireEvent.click(screen.getByRole('button', { name: /versions.*campaign.md/i }))
   fireEvent.click(screen.getByRole('button', { name: /^repo$/ }))
   expect(useUiStore.getState().rightSidebarMarkdown?.path).toBe('C:/repo/docs/campaign.md')
+})
+
+it('leaves out campaign Markdown reached through a link and scopes what it opens', async () => {
+  state.files.mockImplementation(async (root: string) =>
+    root === 'C:/repo' ? ['C:/repo/docs/reports/report.md'] : [],
+  )
+  state.find.mockImplementation((_root: string, path: string) =>
+    path === 'docs/campaign.md' ? Promise.reject('outside_repository') : Promise.resolve(null),
+  )
+  render(<Catalog />)
+  fireEvent.click(await screen.findByText('report.md'))
+  expect(state.find).toHaveBeenCalledWith('C:/repo', 'docs/campaign.md')
+  expect(screen.queryByText('campaign.md')).toBeNull()
+  expect(screen.queryByRole('alert')).toBeNull()
+  expect(useUiStore.getState().rightSidebarMarkdown).toEqual({
+    path: 'C:/repo/docs/reports/report.md',
+    title: 'report.md',
+    scope: 'C:/repo',
+  })
+})
+
+it('opens nothing from a checkout the project no longer has, and says so', async () => {
+  state.files.mockImplementation(async (root: string) =>
+    root === 'C:/repo' ? [] : ['C:/repo-feature/docs/report.md'],
+  )
+  const first = render(<Catalog />)
+  await screen.findByText('report.md')
+  first.unmount()
+  // The feature worktree is gone; the stored index still shows its document while discovery runs.
+  state.worktrees = ['C:/repo']
+  state.find.mockClear()
+  state.find.mockImplementation(() => new Promise(() => {}))
+  useUiStore.setState({ rightSidebarMarkdownTabs: [], toasts: [] })
+  render(<Catalog />)
+  await waitFor(() => expect(state.find).toHaveBeenCalled())
+  fireEvent.click(screen.getByText('report.md'))
+  expect(useUiStore.getState().rightSidebarMarkdown).toBeNull()
+  expect(readMarkdownSidebarHistory().tabs).toEqual([])
+  expect(readTextFile).not.toHaveBeenCalled()
+  expect(readRepositoryTextFile).not.toHaveBeenCalled()
+  expect(useUiStore.getState().toasts.at(-1)?.body).toMatch(/no longer in the project's checkouts/)
 })

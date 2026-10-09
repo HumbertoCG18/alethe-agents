@@ -2,12 +2,19 @@ import { basename } from './paths'
 import { readScopedStorage, writeScopedStorage } from './storageNamespace'
 
 export const MAX_MARKDOWN_SIDEBAR_HISTORY = 12
-const STORAGE_KEY = 'markdown-sidebar-history-v1'
+// v1 saved no scope, so a document named by repository text would come back unrestricted: it is
+// not restored.
+const STORAGE_KEY = 'markdown-sidebar-history-v2'
 const MARKDOWN_PATH_PATTERN = /\.(md|markdown|mdx)$/i
 
 export type MarkdownSidebarHistoryEntry = {
   path: string
   title: string
+  /**
+   * The checkout of a document named by repository text, or null for one opened by hand. Always
+   * saved; an entry without it is dropped.
+   */
+  scope?: string | null
 }
 
 export type MarkdownSidebarHistory = {
@@ -38,9 +45,14 @@ export function parseMarkdownSidebarHistory(raw: string | null): MarkdownSidebar
     let tabs: MarkdownSidebarHistoryEntry[] = []
     for (const candidate of source) {
       if (!candidate || typeof candidate !== 'object') continue
-      const entry = candidate as { path?: unknown; title?: unknown }
+      const entry = candidate as { path?: unknown; title?: unknown; scope?: unknown }
       if (typeof entry.path !== 'string' || typeof entry.title !== 'string') continue
-      tabs = addMarkdownSidebarHistoryEntry(tabs, { path: entry.path, title: entry.title })
+      if (entry.scope !== null && typeof entry.scope !== 'string') continue
+      tabs = addMarkdownSidebarHistoryEntry(tabs, {
+        path: entry.path,
+        title: entry.title,
+        scope: entry.scope,
+      })
     }
     const requestedActivePath = typeof value.activePath === 'string' ? value.activePath.trim() : ''
     const activePath = tabs.some((tab) => tab.path === requestedActivePath)
@@ -73,5 +85,6 @@ function normalizeEntry(entry: MarkdownSidebarHistoryEntry): MarkdownSidebarHist
   return {
     path,
     title: entry.title.trim() || basename(path) || path,
+    scope: entry.scope || null,
   }
 }

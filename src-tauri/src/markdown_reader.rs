@@ -334,8 +334,14 @@ async fn run(
     result
 }
 
+/// A `scope`, the checkout of a document named by repository text, holds the window to
+/// `read_repository_text_file`'s rule: checked here, and passed on for the window's own reads.
 #[tauri::command]
-pub async fn open_markdown_reader(app: AppHandle, path: String) -> Result<(), String> {
+pub async fn open_markdown_reader(
+    app: AppHandle,
+    path: String,
+    scope: Option<String>,
+) -> Result<(), String> {
     let file = Path::new(&path);
     let extension = file
         .extension()
@@ -345,16 +351,26 @@ pub async fn open_markdown_reader(app: AppHandle, path: String) -> Result<(), St
     if !file.is_file() || !["md", "markdown", "mdx"].contains(&extension.as_str()) {
         return Err("Not a Markdown file".into());
     }
+    if let Some(scope) = scope.clone() {
+        let checked = file.to_path_buf();
+        let inside = tokio::task::spawn_blocking(move || {
+            crate::filesystem::in_checkouts(Path::new(scope.trim()), &checked)
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+        if !inside {
+            return Err(crate::filesystem::OUTSIDE_REPOSITORY.into());
+        }
+    }
     let path =
         crate::cli_launch::strip_verbatim_prefix(file.canonicalize().map_err(|e| e.to_string())?)
             .to_string_lossy()
             .to_string();
-    let label = format!("markdown-{}", hex::encode(Sha256::digest(path.as_bytes())));
+    let (label, url) = reader_window(&path, scope.as_deref());
     if let Some(window) = app.get_webview_window(&label) {
         let _ = window.unminimize();
         return window.set_focus().map_err(|e| e.to_string());
     }
-    let url = format!("index.html?markdown={}", urlencoding::encode(&path));
     tauri::WebviewWindowBuilder::new(&app, label, tauri::WebviewUrl::App(url.into()))
         .title(
             file.file_name()
@@ -368,9 +384,43 @@ pub async fn open_markdown_reader(app: AppHandle, path: String) -> Result<(), St
         .map_err(|e| e.to_string())
 }
 
+/// The label and URL of the reader window of `path`. A window keeps the scope it was opened with,
+/// so the scope is part of its identity: a scoped open never focuses an unscoped window.
+fn reader_window(path: &str, scope: Option<&str>) -> (String, String) {
+    let identity = scope.map_or_else(|| path.to_string(), |scope| format!("{scope}\0{path}"));
+    let label = format!(
+        "markdown-{}",
+        hex::encode(Sha256::digest(identity.as_bytes()))
+    );
+    let mut url = format!("index.html?markdown={}", urlencoding::encode(path));
+    if let Some(scope) = scope {
+        url += &format!("&scope={}", urlencoding::encode(scope));
+    }
+    (label, url)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // A window keeps the scope it was opened with, so a scoped open must never focus an unscoped
+    // window of the same document, nor the other way round (#114).
+    #[test]
+    fn the_scope_is_part_of_the_reader_window_identity() {
+        let path = r"C:\repo\docs\report.md";
+        let (plain, plain_url) = reader_window(path, None);
+        let (scoped, scoped_url) = reader_window(path, Some(r"C:\repo"));
+        assert!(plain.starts_with("markdown-") && scoped.starts_with("markdown-"));
+        assert_ne!(plain, scoped);
+        assert_eq!(reader_window(path, Some(r"C:\repo")).0, scoped);
+        assert_ne!(reader_window(path, Some(r"C:\repo-feature")).0, scoped);
+        assert_eq!(
+            plain_url,
+            "index.html?markdown=C%3A%5Crepo%5Cdocs%5Creport.md"
+        );
+        assert_eq!(scoped_url, format!("{plain_url}&scope=C%3A%5Crepo"));
+    }
+
     #[test]
     fn agy_is_refused_before_any_process_or_document_delivery() {
         assert_eq!(

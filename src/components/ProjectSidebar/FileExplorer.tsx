@@ -140,7 +140,7 @@ export function FileExplorer({ projectId, cwd, ptyId, terminalName }: FileExplor
 
   const addToGrid = (entry: DirectoryEntry) => {
     if (entry.is_dir) return
-    const pane = createFilePane(projectId, { filePath: entry.path })
+    const pane = createFilePane(projectId, { filePath: entry.path, scope: null })
     openPane(projectId, pane.id)
     requestPaneFocus(pane.id)
     setMenu(null)

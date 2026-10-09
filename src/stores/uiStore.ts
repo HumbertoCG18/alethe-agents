@@ -61,7 +61,7 @@ type ModalKind =
 export type ActiveView = 'home' | 'workspace' | 'agentCanvas' | 'agentSandbox'
 /** Open on purpose: plugins contribute right-sidebar tabs at runtime. */
 export type RightSidebarMode = 'markdown' | 'gsdSync' | 'mcp' | 'prs' | 'plugins' | (string & {})
-export type MarkdownSidebarTab = { path: string; title: string }
+export type MarkdownSidebarTab = { path: string; title: string; scope?: string | null }
 
 export type MemorySample = MemoryStats & {
   ts: number
@@ -127,7 +127,7 @@ type UiState = {
   leftSidebarTab: string
   /** Reveals projects marked as hidden; resets on every app start. */
   revealHiddenProjects: boolean
-  rightSidebarMarkdown: { path: string; title: string } | null
+  rightSidebarMarkdown: MarkdownSidebarTab | null
   rightSidebarMarkdownTabs: MarkdownSidebarTab[]
 
   agentCanvasSession: { folder: string; ptyId: string } | null
@@ -173,7 +173,11 @@ type UiState = {
   clearPaneSelection: () => void
   setActiveView: (v: ActiveView) => void
   toggleHome: () => void
-  openMarkdownSidebar: (path: string, title?: string) => void
+  /**
+   * `scope`: the checkout of a document named by repository text, which is read under its rule;
+   * none (saved as null) for a document opened by hand.
+   */
+  openMarkdownSidebar: (path: string, title?: string, scope?: string | null) => void
   closeMarkdownSidebarTab: (path: string) => void
   restoreMarkdownSidebarHistory: () => void
   showMarkdownSidebar: () => void
@@ -293,9 +297,9 @@ export const useUiStore = create<UiState>((set) => ({
   clearPaneSelection: () => set({ selectedPanes: [] }),
   setActiveView: (v) => set((s) => (s.activeView === v ? s : { activeView: v })),
   toggleHome: () => set((s) => ({ activeView: s.activeView === 'home' ? 'workspace' : 'home' })),
-  openMarkdownSidebar: (path, title) =>
+  openMarkdownSidebar: (path, title, scope) =>
     set((state) => {
-      const tab = { path, title: title || basename(path) || path }
+      const tab = { path, title: title || basename(path) || path, scope: scope ?? null }
       const tabs = addMarkdownSidebarHistoryEntry(state.rightSidebarMarkdownTabs, tab)
       if (tabs !== state.rightSidebarMarkdownTabs) {
         writeMarkdownSidebarHistory(tabs, tab.path)

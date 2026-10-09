@@ -9,10 +9,11 @@ import { isMarkdownFilePath } from '../../components/XTermView/terminalLinks'
 import { type Campaign, campaignCwd, evidenceIsPath, inCheckouts } from '../../lib/campaigns'
 import { type TFunction, useT } from '../../lib/i18n'
 import {
-  findRelativePath,
+  findRepositoryFile,
   type GitCheckouts,
   listDirectory,
   openInFileExplorer,
+  OUTSIDE_REPOSITORY,
 } from '../../lib/tauri'
 import { useProjectsStore } from '../../stores/projectsStore'
 import { useUiStore } from '../../stores/uiStore'
@@ -39,9 +40,9 @@ function evidenceInCheckouts(base: string, evidence: string, checkouts: GitCheck
   return inCheckouts(path, checkouts)
 }
 
-function openFile(projectId: string, filePath: string) {
+function openFile(projectId: string, filePath: string, scope: string) {
   const store = useProjectsStore.getState()
-  const pane = store.createFilePane(projectId, { filePath })
+  const pane = store.createFilePane(projectId, { filePath, scope })
   store.openPane(projectId, pane.id)
   useUiStore.getState().requestPaneFocus(pane.id)
 }
@@ -56,7 +57,10 @@ export const taskCampaign = (campaigns: readonly Campaign[], taskId: string) =>
  * Opens a task's evidence, looked up at the click from its campaign's checkout as it is then (else
  * the main one) and the other worktrees: Markdown in the viewer and anything else in a pane, as the
  * terminal's link menu opens a file; a folder's report in the viewer, else the folder in the file
- * explorer. A path outside the checkouts, or found nowhere, opens nothing and says so.
+ * explorer. A path outside the checkouts, found nowhere, or reached through a link, opens nothing
+ * and says so. The viewer and the pane open scoped to `base`, so text reads, summaries and the full
+ * reader follow the same rule; an image or a video pane loads through the asset protocol and is
+ * checked only here.
  */
 export async function openEvidence(
   registry: Registry,
@@ -67,14 +71,20 @@ export async function openEvidence(
   const { projectId, main, checkouts, campaigns } = registry
   const campaign = taskCampaign(campaigns, taskId)
   const base = (campaign && campaignCwd(campaign, checkouts)) ?? main
+  let refused = false
   const found = evidenceInCheckouts(base, evidence, checkouts)
-    ? await findRelativePath(base, evidence).catch(() => null)
+    ? await findRepositoryFile(base, evidence).catch((error: unknown) => {
+        refused = error === OUTSIDE_REPOSITORY
+        return null
+      })
     : null
   const ui = useUiStore.getState()
   if (!found || !inCheckouts(found, checkouts)) {
     ui.pushToast({
       title: t('todo.night.openEvidenceItem'),
-      body: t('todo.night.evidenceMissing', { path: evidence }),
+      body: t(refused ? 'todo.night.evidenceOutsideRepository' : 'todo.night.evidenceMissing', {
+        path: evidence,
+      }),
     })
     return
   }
@@ -82,8 +92,8 @@ export async function openEvidence(
   const entries = await listDirectory(found).catch(() => null)
   if (!entries) {
     if (isMarkdownFilePath(found))
-      ui.openMarkdownSidebar(found, found.split(/[\\/]/).pop() ?? found)
-    else openFile(projectId, found)
+      ui.openMarkdownSidebar(found, found.split(/[\\/]/).pop() ?? found, base)
+    else openFile(projectId, found, base)
     return
   }
   const files = entries.filter((entry) => !entry.is_dir)
@@ -92,7 +102,7 @@ export async function openEvidence(
     FOLDER_REPORTS.map((name) => files.find((entry) => entry.name.toLowerCase() === name)).find(
       Boolean,
     ) ?? (markdown.length === 1 ? markdown[0] : undefined)
-  if (report) ui.openMarkdownSidebar(report.path, report.name)
+  if (report) ui.openMarkdownSidebar(report.path, report.name, base)
   else await openInFileExplorer(found).catch(() => {})
 }
 

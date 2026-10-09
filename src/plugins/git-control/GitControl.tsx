@@ -507,7 +507,10 @@ function TreeNodeView({
   }
 
   const openFile = (filePath: string) => {
-    const pane = createFilePane(projectId, { filePath: absoluteRepoPath(repoRoot, filePath) })
+    const pane = createFilePane(projectId, {
+      filePath: absoluteRepoPath(repoRoot, filePath),
+      scope: null,
+    })
     openPane(projectId, pane.id)
     requestPaneFocus(pane.id)
   }

@@ -34,6 +34,7 @@ type TerminalsSlice = Pick<
   | 'createTerminal'
   | 'createAgentTerminal'
   | 'createFilePane'
+  | 'reopenLegacyFilePane'
   | 'createDiffPane'
   | 'createWebPane'
   | 'createGraphifyPane'
@@ -653,6 +654,11 @@ export function createTerminalsSlice({
 
     setTerminalTopbarPinned: (projectId, terminalId, pinned) =>
       updateTerminal(projectId, terminalId, (t) => ({ ...t, topbarPinned: pinned })),
+
+    reopenLegacyFilePane: (projectId, terminalId) =>
+      updateTerminal(projectId, terminalId, (t) =>
+        t.fileScope === undefined ? { ...t, fileScope: null } : t,
+      ),
 
     setTerminalRemoteShared: (projectId, terminalId, shared) =>
       updateTerminal(projectId, terminalId, (t) => ({ ...t, remoteShared: shared })),

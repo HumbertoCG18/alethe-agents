@@ -7,6 +7,7 @@ import {
   openMarkdownReader,
   summarizeMarkdown,
 } from '../../lib/markdownSummary'
+import { OUTSIDE_REPOSITORY } from '../../lib/tauri'
 import { useProjectsStore } from '../../stores/projectsStore'
 import { useUiStore } from '../../stores/uiStore'
 import styles from './MarkdownSummary.module.css'
@@ -17,10 +18,13 @@ const MarkdownRenderer = lazy(() =>
 
 export function MarkdownSummary({
   path,
+  scope,
   content,
   dark,
 }: {
   path: string
+  /** The checkout of a document named by repository text, passed on to the full reader. */
+  scope?: string | null
   content: string
   dark: boolean
 }) {
@@ -59,8 +63,12 @@ export function MarkdownSummary({
           type="button"
           className={styles.readButton}
           onClick={() =>
-            void openMarkdownReader(path).catch((error) =>
-              useUiStore.getState().pushToast({ title: t('markdown.reader'), body: String(error) }),
+            void openMarkdownReader(path, scope).catch((error) =>
+              useUiStore.getState().pushToast({
+                title: t('markdown.reader'),
+                body:
+                  error === OUTSIDE_REPOSITORY ? t('markdown.outsideRepository') : String(error),
+              }),
             )
           }
         >

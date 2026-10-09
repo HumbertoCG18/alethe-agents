@@ -241,7 +241,7 @@ export function XTermView({
   const openFileInGrid = useCallback(
     (target: string) => {
       if (!projectId) return
-      useProjectsStore.getState().createFilePane(projectId, { filePath: target })
+      useProjectsStore.getState().createFilePane(projectId, { filePath: target, scope: null })
     },
     [projectId],
   )

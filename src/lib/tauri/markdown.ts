@@ -27,6 +27,7 @@ export async function generateMarkdown(
   }
 }
 
-export function openMarkdownReader(path: string): Promise<void> {
-  return invoke('open_markdown_reader', { path })
+/** `scope`, the checkout of a document named by repository text, holds the reader to its rule. */
+export function openMarkdownReader(path: string, scope?: string | null): Promise<void> {
+  return invoke('open_markdown_reader', { path, scope: scope ?? null })
 }

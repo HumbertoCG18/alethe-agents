@@ -112,7 +112,15 @@ function classifyPaneKind(filePath: string): 'markdown' | 'video' | 'image' | 'f
   return MARKDOWN_FILE_PATTERN.test(filePath) ? 'markdown' : 'file'
 }
 
-export function makeFilePane(args: { filePath: string; name?: string }): Terminal {
+/**
+ * `scope`, kept as the pane's `fileScope`: the checkout of a file named by repository text, or null
+ * for a file the user picked. Required, so every way of opening a file decides.
+ */
+export function makeFilePane(args: {
+  filePath: string
+  name?: string
+  scope: string | null
+}): Terminal {
   const filePath = args.filePath.trim().replace(/:\d+(?::\d+)?$/, '')
   return {
     id: nanoid(),
@@ -125,6 +133,7 @@ export function makeFilePane(args: { filePath: string; name?: string }): Termina
     tabs: [],
     kind: classifyPaneKind(filePath),
     filePath,
+    fileScope: args.scope,
   }
 }
 

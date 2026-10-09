@@ -36,6 +36,7 @@ import {
 import { sidebarIconIds, useVisibleSidebarIcons } from '../../lib/sidebarIcons'
 import {
   findRelativePath,
+  OUTSIDE_REPOSITORY,
   type PlanningStatus,
   readPlanningStatus,
   writeClipboardText,
@@ -52,7 +53,7 @@ import { DotmCircular2 } from '../ui/dotm-circular-2'
 import { VoiceHistoryPanel } from '../VoiceHistoryPanel'
 import { MarkdownCatalog } from './MarkdownCatalog'
 import styles from './RightSidebar.module.css'
-import { recoverCatalogPath, useMarkdownCatalog } from './useMarkdownCatalog'
+import { catalogRoot, recoverCatalogPath, useMarkdownCatalog } from './useMarkdownCatalog'
 
 const markdownScrollPositions = new Map<string, number>()
 
@@ -345,7 +346,7 @@ function MarkdownSidebarViewer() {
     }
   }, [scope])
 
-  const { content, error, reload: load } = useMarkdownFile(selected?.path ?? null)
+  const { content, error, reload: load } = useMarkdownFile(selected?.path ?? null, selected?.scope)
 
   useEffect(() => {
     if (!selected?.path || content === null) return
@@ -362,17 +363,23 @@ function MarkdownSidebarViewer() {
     const path = selected.path
     void findRelativePath(root, path)
       .then((resolved) => {
-        const found =
-          resolved ??
-          (!catalog.loading ? recoverCatalogPath(path, catalog.roots, catalog.documents) : null)
+        const recovered =
+          resolved || catalog.loading
+            ? null
+            : recoverCatalogPath(path, catalog.roots, catalog.documents)
+        const found = resolved ?? recovered
+        const current = useUiStore.getState().rightSidebarMarkdown
+        // A catalog document is read under the checkout holding it, and not opened without one.
+        const scope = recovered ? catalogRoot(catalog.roots, recovered) : current?.scope
         if (
           !cancelled &&
           found &&
           !sameCwd(found, path) &&
-          useUiStore.getState().rightSidebarMarkdown?.path === path
+          current?.path === path &&
+          (!recovered || scope)
         ) {
           closeMarkdownSidebarTab(path)
-          openMarkdownSidebar(found, basename(found))
+          openMarkdownSidebar(found, basename(found), scope)
         }
       })
       .catch(() => {})
@@ -571,7 +578,7 @@ function MarkdownSidebarViewer() {
             <div className={styles.empty}>
               <FileText size={20} />
               <strong>{t('rightSidebar.markdownError')}</strong>
-              <span>{error}</span>
+              <span>{error === OUTSIDE_REPOSITORY ? t('markdown.outsideRepository') : error}</span>
             </div>
           ) : content === null ? (
             <div className={styles.empty}>
@@ -580,7 +587,12 @@ function MarkdownSidebarViewer() {
           ) : (
             <div ref={markdownRef} className={styles.commentableMarkdown}>
               <Suspense fallback={<span>{t('ui.markdown.loading')}</span>}>
-                <MarkdownSummary path={selected!.path} content={content} dark={dark} />
+                <MarkdownSummary
+                  path={selected!.path}
+                  scope={selected!.scope}
+                  content={content}
+                  dark={dark}
+                />
               </Suspense>
             </div>
           )}

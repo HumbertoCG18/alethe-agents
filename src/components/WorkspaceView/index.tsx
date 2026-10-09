@@ -460,7 +460,7 @@ export function WorkspaceView() {
         event.preventDefault()
         fileDragDepth.current = 0
         setFileDropActive(false)
-        const pane = createFilePane(payload.projectId, { filePath: payload.path })
+        const pane = createFilePane(payload.projectId, { filePath: payload.path, scope: null })
         openPane(payload.projectId, pane.id)
         requestPaneFocus(pane.id)
       }}

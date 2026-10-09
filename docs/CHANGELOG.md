@@ -537,6 +537,13 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ### Fixed
 
+- **Campaign and night files open only from inside the repository.** A text file named by the
+  campaign registry or night evidence is read, listed in the Markdown index, summarized or opened in
+  the full reader only when it really lies in one of the repository's checkouts; one reached through
+  a symlink or junction that points outside is refused, and the evidence, viewer, reader or file
+  pane says why. Image and video evidence is checked only when it is opened. The Markdown viewer's
+  tab history from earlier versions is not restored, and file panes saved before this version ask to
+  be opened again before they load, since neither recorded where the file came from.
 - **The orchestrator's quota warning names its window.** It says whether the session, weekly, Opus
   or a model's weekly limit crossed the threshold, so it no longer looks like it contradicts the
   usage indicator.

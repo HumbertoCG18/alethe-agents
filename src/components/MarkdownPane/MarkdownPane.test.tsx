@@ -1,16 +1,25 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
-import { readRepositoryTextFile, readTextFile } from '../../lib/tauri'
+import {
+  listenFileChanged,
+  readRepositoryTextFile,
+  readTextFile,
+  writeRepositoryTextFile,
+  writeTextFile,
+} from '../../lib/tauri'
 import { makeFilePane } from '../../lib/terminalFactory'
 import { EMPTY_PROJECTS_FILE } from '../../lib/types'
 import { useProjectsStore } from '../../stores/projectsStore'
+import { useUiStore } from '../../stores/uiStore'
 import { MarkdownPane } from './index'
 
 vi.mock('../../lib/tauri', async (original) => ({
   ...(await original<typeof import('../../lib/tauri')>()),
   readTextFile: vi.fn(async () => 'picked'),
   readRepositoryTextFile: vi.fn(),
+  writeTextFile: vi.fn(async () => {}),
+  writeRepositoryTextFile: vi.fn(async () => {}),
   watchFile: vi.fn(async () => {}),
   unwatchFile: vi.fn(async () => {}),
   listenFileChanged: vi.fn(async () => () => {}),
@@ -41,6 +50,87 @@ it('reads a file pane opened by hand as before', async () => {
   )
   expect(await screen.findByText('picked')).toBeInTheDocument()
   expect(readRepositoryTextFile).not.toHaveBeenCalled()
+})
+
+/** Replaces the pane's text with `text` in the editor and saves it. */
+async function editAndSave(text: string) {
+  fireEvent.click(await screen.findByRole('button', { name: 'Edit Markdown' }))
+  fireEvent.change(screen.getByRole('textbox', { name: 'Edit Markdown' }), {
+    target: { value: text },
+  })
+  fireEvent.click(screen.getByRole('button', { name: 'Save changes' }))
+}
+
+it('saves evidence edits only inside the checkout, and keeps the draft when refused', async () => {
+  useUiStore.setState({ toasts: [], notifications: [] })
+  vi.mocked(readRepositoryTextFile).mockResolvedValue('inside')
+  vi.mocked(writeRepositoryTextFile).mockRejectedValueOnce('outside_repository')
+  const pane = makeFilePane({ filePath: 'C:/repo/docs/report.txt', scope: 'C:/repo' })
+  render(<MarkdownPane projectId="project" terminal={pane} />)
+  await editAndSave('edited')
+  expect(await screen.findByRole('button', { name: 'Save changes' })).toBeEnabled()
+  expect(writeRepositoryTextFile).toHaveBeenCalledWith(
+    'C:/repo',
+    'C:/repo/docs/report.txt',
+    'edited',
+  )
+  expect(writeTextFile).not.toHaveBeenCalled()
+  expect(screen.getByRole('textbox', { name: 'Edit Markdown' })).toHaveValue('edited')
+  expect(useUiStore.getState().notifications[0]).toMatchObject({
+    title: `Couldn't save ${pane.name}. Your edit is still in the editor.`,
+    body: 'This file now points outside the repository through a link, so it was not saved.',
+  })
+
+  fireEvent.click(screen.getByRole('button', { name: 'Save changes' }))
+  await waitFor(() => expect(screen.queryByRole('textbox')).not.toBeInTheDocument())
+  expect(writeRepositoryTextFile).toHaveBeenCalledTimes(2)
+})
+
+it('saves a file pane opened by hand as before', async () => {
+  render(
+    <MarkdownPane
+      projectId="project"
+      terminal={makeFilePane({ filePath: 'C:/picked.txt', scope: null })}
+    />,
+  )
+  await editAndSave('edited')
+  await waitFor(() => expect(writeTextFile).toHaveBeenCalledWith('C:/picked.txt', 'edited'))
+  expect(writeRepositoryTextFile).not.toHaveBeenCalled()
+})
+
+it('holds a pane with an empty scope to the checkout, not to a pick', async () => {
+  vi.mocked(readRepositoryTextFile).mockResolvedValueOnce('inside')
+  const pane = makeFilePane({ filePath: 'C:/outside/report.txt', scope: '' })
+  render(<MarkdownPane projectId="project" terminal={pane} />)
+  await editAndSave('edited')
+  await waitFor(() =>
+    expect(writeRepositoryTextFile).toHaveBeenCalledWith('', 'C:/outside/report.txt', 'edited'),
+  )
+  expect(readRepositoryTextFile).toHaveBeenCalledWith('', 'C:/outside/report.txt')
+  expect(readTextFile).not.toHaveBeenCalled()
+  expect(writeTextFile).not.toHaveBeenCalled()
+})
+
+it('keeps the editor and the draft when the watcher cannot read the file after a refused save', async () => {
+  useUiStore.setState({ toasts: [], notifications: [] })
+  let changed: (path: string) => void = () => {}
+  vi.mocked(listenFileChanged).mockImplementationOnce(async (handler) => {
+    changed = handler
+    return () => {}
+  })
+  vi.mocked(readRepositoryTextFile).mockResolvedValueOnce('inside')
+  vi.mocked(writeRepositoryTextFile).mockRejectedValueOnce('outside_repository')
+  const pane = makeFilePane({ filePath: 'C:/repo/docs/report.txt', scope: 'C:/repo' })
+  render(<MarkdownPane projectId="project" terminal={pane} />)
+  await editAndSave('edited')
+  expect(await screen.findByRole('button', { name: 'Save changes' })).toBeEnabled()
+
+  // The link that refused the save fails the watcher's read too.
+  vi.mocked(readRepositoryTextFile).mockRejectedValueOnce('outside_repository')
+  await act(async () => changed('C:/repo/docs/report.txt'))
+  expect(await screen.findByText(/so it was not read/)).toBeInTheDocument()
+  expect(screen.getByRole('textbox', { name: 'Edit Markdown' })).toHaveValue('edited')
+  expect(screen.getByRole('button', { name: 'Save changes' })).toBeEnabled()
 })
 
 /** The pane as the store holds it, so an action on it renders the saved field. */

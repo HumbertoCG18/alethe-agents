@@ -541,13 +541,23 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ### Fixed
 
+- **A release is no longer published before its notes job finishes.** The release workflow publishes
+  the draft only after the release-notes job succeeds, a failed run discards its draft only once that
+  job has finished, and two release runs queue instead of overlapping.
 - **Campaign and night files open only from inside the repository.** A text file named by the
   campaign registry or night evidence is read, listed in the Markdown index, summarized or opened in
   the full reader only when it really lies in one of the repository's checkouts; one reached through
   a symlink or junction that points outside is refused, and the evidence, viewer, reader or file
-  pane says why. Image and video evidence is checked only when it is opened. The Markdown viewer's
-  tab history from earlier versions is not restored, and file panes saved before this version ask to
-  be opened again before they load, since neither recorded where the file came from.
+  pane says why. The Markdown viewer's tab history from earlier versions is not restored, and file
+  panes saved before this version ask to be opened again before they load, since neither recorded
+  where the file came from.
+- **Images, videos and edits from repository evidence stay inside the repository too.** An image
+  opened from campaign or night evidence is read only from a file that really lies in one of the
+  repository's checkouts, a video is checked the same way each time its pane opens or is restored,
+  and saving an edit in a file pane opened from evidence writes only to that file inside the
+  checkouts. One reached through a symlink, junction or hard link that points outside is not shown
+  or saved, the pane says why, and an unsaved edit stays in the editor. Image and video panes saved before this
+  version ask to be opened again before they load; files you pick yourself open and save as before.
 - **The orchestrator's quota warning names its window.** It says whether the session, weekly, Opus
   or a model's weekly limit crossed the threshold, so it no longer looks like it contradicts the
   usage indicator.

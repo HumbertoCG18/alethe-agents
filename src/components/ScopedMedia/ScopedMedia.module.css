@@ -1,0 +1,31 @@
+.notice {
+  height: 100%;
+  box-sizing: border-box;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 10px;
+  padding: 24px;
+  color: var(--fg-faint);
+  font-size: 12px;
+  text-align: center;
+}
+
+.reopen {
+  padding: 6px 16px;
+  background: var(--bg-elevated);
+  color: var(--fg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    background 0.1s ease,
+    border-color 0.1s ease;
+}
+
+.reopen:hover {
+  background: var(--panel-hover);
+  border-color: var(--accent);
+}

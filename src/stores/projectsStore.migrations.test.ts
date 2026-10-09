@@ -468,6 +468,26 @@ describe('projects file migration', () => {
     expect(migrated.projects[0].terminals[0].fileScope).toBe('C:/repo')
   })
 
+  it("keeps a sub-tab's own shell and leaves the others on the default", () => {
+    const pwsh = 'C:\\Program Files\\PowerShell\\7\\pwsh.exe'
+    const migrated = migrate({
+      ...EMPTY_PROJECTS_FILE,
+      projects: [
+        {
+          id: 'project',
+          terminals: [
+            { id: 'pwsh', tabs: [{ id: 'a', type: 'shell', shell: pwsh }] },
+            { id: 'default', tabs: [{ id: 'b', type: 'shell' }] },
+          ],
+        },
+      ],
+    })
+
+    const [own, inherited] = migrated.projects[0].terminals
+    expect(own.tabs[0].shell).toBe(pwsh)
+    expect(inherited.tabs[0]).not.toHaveProperty('shell')
+  })
+
   it('leaves an explicit remoteShared value untouched when migrating to v8', () => {
     const migrated = migrate({
       ...EMPTY_PROJECTS_FILE,

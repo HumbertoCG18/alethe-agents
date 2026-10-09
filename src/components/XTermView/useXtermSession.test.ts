@@ -13,6 +13,7 @@ import { EMPTY_PROJECTS_FILE } from '../../lib/types'
 import type { AgentHookPayload } from '../../stores/agentCanvasStore'
 import { useProjectsStore } from '../../stores/projectsStore'
 import { useTerminalsStore } from '../../stores/terminalsStore'
+import { useUiStore } from '../../stores/uiStore'
 import { resetInitialInputsForTests, submitInitialInput, useXtermSession } from './useXtermSession'
 
 const hooks = vi.hoisted(() => new Set<(event: { payload: AgentHookPayload }) => void>())
@@ -221,6 +222,53 @@ describe('Claude terminal session lifecycle', () => {
       expect.objectContaining({ command: undefined, launcherOverride: '/bin/bash' }),
     )
     view.unmount()
+  })
+  describe('a plain shell tab saved with its own shell', () => {
+    beforeEach(() => {
+      useUiStore.setState({ toasts: [], notifications: [] })
+      useProjectsStore.setState((state) => ({
+        preferences: { ...state.preferences, shellPath: '/bin/bash' },
+        projects: [
+          {
+            terminals: [
+              { tabs: [{ id: 'tab-0', ptyId: 'pty-0', type: 'shell', shell: '/bin/zsh' }] },
+            ],
+          },
+        ] as never,
+      }))
+    })
+    const spawnShell = () => {
+      const input = params()
+      input.command = null
+      input.sessionId = undefined
+      return { input, view: renderHook(() => useXtermSession(input)) }
+    }
+
+    it('spawns on that shell again, the default as its fallback', async () => {
+      const { input, view } = spawnShell()
+      await waitFor(() => expect(input.setBootPhase).toHaveBeenCalledWith('ready'))
+      expect(tauri.spawnPty).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          command: undefined,
+          launcherOverride: '/bin/zsh',
+          fallbackLauncher: '/bin/bash',
+        }),
+      )
+      expect(useUiStore.getState().notifications).toEqual([])
+      view.unmount()
+    })
+
+    it('says so when the backend fell back because that shell is gone', async () => {
+      vi.mocked(tauri.spawnPty).mockResolvedValueOnce({ id: 'pty-0', shellFallback: true })
+      const { input, view } = spawnShell()
+      await waitFor(() => expect(input.setBootPhase).toHaveBeenCalledWith('ready'))
+      expect(useUiStore.getState().notifications).toHaveLength(1)
+      expect(useUiStore.getState().notifications[0]).toMatchObject({
+        title: 'Saved shell is unavailable. The default shell is used instead.',
+        body: '/bin/zsh',
+      })
+      view.unmount()
+    })
   })
   it.each(['frontend', 'backend'])(
     'tracks /new after attaching a live PTY found in the %s',

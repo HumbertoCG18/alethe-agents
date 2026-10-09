@@ -70,6 +70,7 @@ export function createSubTabsSlice({ updateTerminal, updateSubTab }: SliceCtx): 
         extraArgs: args.extraArgs,
         handoff: args.handoff,
         runtimeProfile: args.runtimeProfile,
+        shell: args.shell,
       }
       updateTerminal(projectId, terminalId, (t) => ({
         ...t,

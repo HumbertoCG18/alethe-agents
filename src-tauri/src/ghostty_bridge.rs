@@ -23,10 +23,13 @@ pub struct WebRect {
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GhosttySurfaceResponse {
     pub id: String,
 
     pub attached: bool,
+    /// A plain shell's own shell no longer runs, so the default one took its place.
+    pub shell_fallback: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -132,6 +135,7 @@ mod imp {
         id: String,
         cwd: Option<String>,
         command: Option<String>,
+        shell_fallback: bool,
     ) -> Result<GhosttySurfaceResponse, String> {
         let mtm = MainThreadMarker::new()
             .ok_or_else(|| "ghostty_spawn precisa rodar na main thread".to_string())?;
@@ -139,7 +143,11 @@ mod imp {
 
         // (o StrictMode chamava spawn 2x e gerava over-spawn).
         if !state.try_reserve(&id) {
-            return Ok(GhosttySurfaceResponse { id, attached: true });
+            return Ok(GhosttySurfaceResponse {
+                id,
+                attached: true,
+                shell_fallback: false,
+            });
         }
 
         struct ReservationGuard<'a> {
@@ -307,7 +315,12 @@ mod imp {
         guard.active = false;
         state.release_reservation(&id);
 
-        Ok(GhosttySurfaceResponse { id, attached: true })
+        // Only a surface created here launched a shell; a reattach above reports no fallback.
+        Ok(GhosttySurfaceResponse {
+            id,
+            attached: true,
+            shell_fallback,
+        })
     }
 
     pub fn sync_frame(
@@ -1059,6 +1072,7 @@ mod imp {
         _id: String,
         _cwd: Option<String>,
         _command: Option<String>,
+        _shell_fallback: bool,
     ) -> Result<GhosttySurfaceResponse, String> {
         Err(UNSUPPORTED.into())
     }
@@ -1118,13 +1132,16 @@ pub fn ghostty_spawn(
     cwd: Option<String>,
     command: Option<String>,
     shell: Option<String>,
+    fallback_shell: Option<String>,
     font_family: Option<String>,
 ) -> Result<GhosttySurfaceResponse, String> {
-    let command = command.or_else(|| {
-        crate::terminal_settings::resolve_shell(shell.as_deref())
-            .map(|path| format!("'{}'", path.replace('\'', "'\\''")))
-    });
-    let response = imp::spawn(&app, &state, id.clone(), cwd, command)?;
+    // The order and the notice `spawn_pty` uses: the tab's own shell, then the default one.
+    let (shell, fell_back) =
+        crate::terminal_settings::pick_shell(shell.as_deref(), fallback_shell.as_deref());
+    let shell_fallback = command.is_none() && fell_back;
+    let command =
+        command.or_else(|| shell.map(|path| format!("'{}'", path.replace('\'', "'\\''"))));
+    let response = imp::spawn(&app, &state, id.clone(), cwd, command, shell_fallback)?;
     imp::set_font(&app, &state, id, font_family)?;
     Ok(response)
 }

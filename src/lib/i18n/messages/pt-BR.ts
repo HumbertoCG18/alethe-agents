@@ -35,7 +35,7 @@ export const ptBR: Record<MessageKey, string> = {
   'prefs.shellSearch': 'Buscar shells',
   'prefs.shellDiscoveryError':
     'Não foi possível listar shells. O padrão do sistema continua disponível.',
-  'prefs.shellMissing': 'Shell salvo indisponível. Novas sessões usam o padrão do sistema.',
+  'prefs.shellMissing': 'Shell salvo indisponível. O shell padrão será utilizado.',
   'prefs.terminalFont': 'Fonte do terminal',
   'prefs.terminalFontDesc':
     'Fontes instaladas, mais a Caskaydia Cove Nerd Font incluída. Prompts como oh-my-posh e Starship precisam de uma Nerd Font. Alterações se aplicam aos terminais abertos.',

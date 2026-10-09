@@ -3227,7 +3227,7 @@ export const zhCN: Record<MessageKey, string> = {
   'prefs.shellKind.gitBash': 'Git Bash',
   'prefs.shellSearch': '搜索 shell',
   'prefs.shellDiscoveryError': '无法发现 shell。平台默认值仍可使用。',
-  'prefs.shellMissing': '已保存的 shell 不可用。新会话将使用平台默认值。',
+  'prefs.shellMissing': '已保存的 shell 不可用。将改用默认 shell。',
   'prefs.fontSearch': '搜索已安装的字体',
   'prefs.terminalDiscoveryLoading': '正在加载本地 shell 和字体…',
   'prefs.fontDiscoveryError': '无法列出已安装的字体。内置字体仍可使用。',

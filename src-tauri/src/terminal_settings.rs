@@ -136,6 +136,18 @@ pub(crate) fn resolve_shell(selected: Option<&str>) -> Option<String> {
     (Path::new(selected).is_absolute() && Path::new(selected).is_file()).then(|| selected.to_string())
 }
 
+/// A plain terminal's shell: its own while it still resolves, else the default from Preferences;
+/// `None` leaves the platform's auto-detect. The flag says its own was given but no longer runs.
+pub(crate) fn pick_shell(own: Option<&str>, default: Option<&str>) -> (Option<String>, bool) {
+    match resolve_shell(own) {
+        Some(shell) => (Some(shell), false),
+        None => (
+            resolve_shell(default),
+            own.is_some_and(|own| !own.trim().is_empty()),
+        ),
+    }
+}
+
 #[tauri::command]
 pub async fn discover_shells() -> Result<Vec<ShellOption>, String> {
     tokio::task::spawn_blocking(|| {
@@ -253,6 +265,25 @@ mod tests {
         for shell in shells_on_path() {
             assert_eq!(resolve_shell(Some(&shell.id)), Some(shell.id));
         }
+    }
+    #[test]
+    fn a_tab_shell_goes_first_then_the_default_then_auto_detect() {
+        // Tests run from the crate root, so `Cargo.toml` stands in for an installed shell.
+        let path = |name: &str| {
+            let path = std::env::current_dir().unwrap().join(name);
+            path.to_string_lossy().into_owned()
+        };
+        let (installed, gone) = (path("Cargo.toml"), path("missing-shell.exe"));
+        let own = |own, default| pick_shell(Some(own), Some(default));
+        assert_eq!(own(&installed, &gone), (Some(installed.clone()), false));
+        assert_eq!(own(&gone, &installed), (Some(installed.clone()), true));
+        assert_eq!(own(&gone, &gone), (None, true));
+        // No shell of its own: the default, silently, as before per-tab shells.
+        assert_eq!(
+            pick_shell(None, Some(&installed)),
+            (Some(installed.clone()), false)
+        );
+        assert_eq!(pick_shell(Some("  "), Some(&gone)), (None, false));
     }
     #[test]
     fn plain_terminals_use_the_selected_shell_but_agent_launchers_keep_their_shell() {

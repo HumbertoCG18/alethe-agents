@@ -12,6 +12,8 @@ export type SpawnPtyArgs = {
   extraArgs?: string[]
   /** Absolute path to the launcher (overrides auto-detection). */
   launcherOverride?: string
+  /** Tried when `launcherOverride` no longer runs: a plain shell tab's default shell. */
+  fallbackLauncher?: string
 
   env?: Record<string, string>
   /**
@@ -22,8 +24,11 @@ export type SpawnPtyArgs = {
   commandLine?: string
 }
 
-export async function spawnPty(args: SpawnPtyArgs): Promise<{ id: string }> {
-  return invoke<{ id: string }>('spawn_pty', {
+/** `shellFallback`: a plain shell tab's own shell no longer runs, so the default took its place. */
+export type SpawnPtyResponse = { id: string; shellFallback?: boolean }
+
+export async function spawnPty(args: SpawnPtyArgs): Promise<SpawnPtyResponse> {
+  return invoke<SpawnPtyResponse>('spawn_pty', {
     cols: args.cols,
     rows: args.rows,
     id: args.id,
@@ -31,6 +36,7 @@ export async function spawnPty(args: SpawnPtyArgs): Promise<{ id: string }> {
     cwd: args.cwd,
     extraArgs: args.extraArgs,
     launcherOverride: args.launcherOverride,
+    fallbackLauncher: args.fallbackLauncher,
     env: args.env,
     commandLine: args.commandLine,
   })
@@ -92,7 +98,7 @@ export async function killPtyTree(ptyId: string): Promise<number[]> {
   return invoke<number[]>('kill_pty_tree_cmd', { ptyId })
 }
 
-export async function restartPty(args: SpawnPtyArgs & { id: string }): Promise<{ id: string }> {
+export async function restartPty(args: SpawnPtyArgs & { id: string }): Promise<SpawnPtyResponse> {
   // A view of an orchestrator shell restarts the service itself, so its command runs again rather
   // than an empty interactive shell taking over its id.
   if (isOrchestratorShellPty(args.id)) {
@@ -100,12 +106,13 @@ export async function restartPty(args: SpawnPtyArgs & { id: string }): Promise<{
     return { id: args.id }
   }
 
-  return invoke<{ id: string }>('restart_pty', {
+  return invoke<SpawnPtyResponse>('restart_pty', {
     id: args.id,
     command: args.command,
     cwd: args.cwd,
     extraArgs: args.extraArgs,
     launcherOverride: args.launcherOverride,
+    fallbackLauncher: args.fallbackLauncher,
     env: args.env,
   })
 }
@@ -119,6 +126,8 @@ export async function getPtyCwd(id: string): Promise<string | null> {
 export type GhosttySurfaceResponse = {
   id: string
   attached: boolean
+  /** As in `SpawnPtyResponse`. */
+  shellFallback?: boolean
 }
 
 export type WebRect = { x: number; y: number; width: number; height: number }
@@ -130,6 +139,8 @@ export type GhosttySpawnArgs = {
 
   command?: string
   shell?: string
+  /** Tried when `shell` no longer runs: the default shell. */
+  fallbackShell?: string
   fontFamily?: string | null
 }
 
@@ -139,6 +150,7 @@ export async function ghosttySpawn(args: GhosttySpawnArgs): Promise<GhosttySurfa
     cwd: args.cwd,
     command: args.command,
     shell: args.shell,
+    fallbackShell: args.fallbackShell,
     fontFamily: args.fontFamily,
   })
 }

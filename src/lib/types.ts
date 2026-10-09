@@ -238,6 +238,11 @@ export type SubTab = {
   useRouter9?: boolean
   /** The campaign (`.workflow/campanhas.json`) this tab was opened to work on. */
   campaignId?: string
+  /**
+   * The shell a plain shell tab runs, a path from `discoverShells`. Absent means the default from
+   * Preferences; agent tabs ignore it. The backend checks it again before every spawn.
+   */
+  shell?: string
 }
 
 export type AgentHandoffBootstrap = {
@@ -587,6 +592,7 @@ export type TerminalCreationPreset = {
     extraArgs?: string[]
     runtimeProfile?: AgentRuntimeProfile
     useRouter9?: boolean
+    shell?: string
   }
 }
 

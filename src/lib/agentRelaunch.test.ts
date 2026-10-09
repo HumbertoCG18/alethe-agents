@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useProjectsStore } from '../stores/projectsStore'
+import { useUiStore } from '../stores/uiStore'
 import { relaunchAgentPty } from './agentRelaunch'
 import { hasOrchestratorTools, recordClaudeLaunch } from './claudeMcpConfigs'
 import { restartPty } from './tauri'
@@ -63,5 +64,41 @@ describe('relaunchAgentPty', () => {
     ).rejects.toThrow('spawn failed')
 
     expect(hasOrchestratorTools('pty-1')).toBe(false)
+  })
+
+  describe('a plain shell tab with its own shell', () => {
+    const pwsh = 'C:\\Program Files\\PowerShell\\7\\pwsh.exe'
+    beforeEach(() => {
+      useUiStore.setState({ toasts: [], notifications: [] })
+      useProjectsStore.setState((state) => ({
+        preferences: { ...state.preferences, shellPath: '/bin/bash' },
+        projects: [
+          { terminals: [{ tabs: [{ id: 'tab-1', ptyId: 'pty-1', type: 'shell', shell: pwsh }] }] },
+        ] as never,
+      }))
+    })
+
+    it('restarts on that shell, the default as its fallback', async () => {
+      await relaunchAgentPty({ ptyId: 'pty-1', agent: 'shell', cwd: 'C:\\repo' })
+
+      expect(vi.mocked(restartPty).mock.calls[0][0]).toMatchObject({
+        command: undefined,
+        launcherOverride: pwsh,
+        fallbackLauncher: '/bin/bash',
+      })
+      expect(useUiStore.getState().notifications).toEqual([])
+    })
+
+    it('says so when the backend fell back because that shell is gone', async () => {
+      vi.mocked(restartPty).mockResolvedValueOnce({ id: 'pty-1', shellFallback: true })
+
+      await relaunchAgentPty({ ptyId: 'pty-1', agent: 'shell', cwd: 'C:\\repo' })
+
+      expect(useUiStore.getState().notifications).toHaveLength(1)
+      expect(useUiStore.getState().notifications[0]).toMatchObject({
+        title: 'Saved shell is unavailable. The default shell is used instead.',
+        body: pwsh,
+      })
+    })
   })
 })

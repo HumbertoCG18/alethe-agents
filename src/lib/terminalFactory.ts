@@ -63,6 +63,7 @@ export function makeDefaultTerminal(args: {
     useRouter9?: boolean
     campaignId?: string
     ptyId?: string
+    shell?: string
   }
   worktreeAgentId?: string
   gsdSyncViewer?: boolean
@@ -97,6 +98,7 @@ export function makeDefaultTerminal(args: {
         runtimeProfile: args.firstTab.runtimeProfile,
         useRouter9: args.firstTab.useRouter9,
         campaignId: args.firstTab.campaignId,
+        shell: args.firstTab.shell,
       },
     ],
   }

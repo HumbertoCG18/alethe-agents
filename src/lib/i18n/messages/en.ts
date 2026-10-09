@@ -30,7 +30,7 @@ export const en = {
   'prefs.shellKind.gitBash': 'Git Bash',
   'prefs.shellSearch': 'Search shells',
   'prefs.shellDiscoveryError': 'Could not discover shells. The platform default remains available.',
-  'prefs.shellMissing': 'Saved shell is unavailable. New sessions use the platform default.',
+  'prefs.shellMissing': 'Saved shell is unavailable. The default shell is used instead.',
   'prefs.terminalFont': 'Terminal font',
   'prefs.terminalFontDesc':
     'Installed font families, plus the bundled Caskaydia Cove Nerd Font. Prompts such as oh-my-posh and Starship need a Nerd Font. Changes apply to open terminals.',

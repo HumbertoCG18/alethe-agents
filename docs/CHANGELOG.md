@@ -545,6 +545,9 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
   ai-memory was started for, stops the server Alethe started for the previous profile, so the new
   profile no longer reads and writes the old profile's memory. When ai-memory is enabled for the
   profile switched to, its own server starts automatically.
+- **A release is no longer published before its notes job finishes.** The release workflow publishes
+  the draft only after the release-notes job succeeds, a failed run discards its draft only once that
+  job has finished, and two release runs queue instead of overlapping.
 - **Campaign and night files open only from inside the repository.** A text file named by the
   campaign registry or night evidence is read, listed in the Markdown index, summarized or opened in
   the full reader only when it really lies in one of the repository's checkouts; one reached through

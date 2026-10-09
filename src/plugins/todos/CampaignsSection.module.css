@@ -420,15 +420,67 @@ button.evidence:hover {
 }
 
 .dependencies {
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
+  min-width: 0;
   color: var(--fg-muted);
+  font: 11px/1.4 var(--font-sans);
+}
+.dependencies fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.dependencyOptions {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-2);
+  max-height: 180px;
+  overflow-y: auto;
 }
-.dependencies label {
+.dependencyOptions label {
   display: flex;
-  align-items: center;
-  gap: 6px;
+  align-items: flex-start;
+  gap: var(--space-2);
+  min-width: 0;
+  cursor: pointer;
+}
+.dependencyOptions input {
+  flex: none;
+  accent-color: var(--accent);
+}
+.dependencyOptions span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.dependencyOptions strong {
+  color: var(--fg);
+  font-weight: 500;
+}
+.dependencyActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+.dependencyFeedback {
+  margin: var(--space-2) 0 0;
+}
+.dependencyFeedback[role='status'] {
+  color: var(--status-working);
+}
+.dependencyFeedback[role='alert'] {
+  color: var(--status-offline);
+}
+
+/* Dependency changes override stale task/live status in the registry. */
+.campaign[data-blocked='true'] .dot {
+  background: var(--status-offline);
+  box-shadow: none;
+  animation: none;
+}
+.campaign[data-blocked='false']:not([data-status='working']) .dot {
+  background: var(--status-waiting);
+  box-shadow: none;
+  animation: none;
 }

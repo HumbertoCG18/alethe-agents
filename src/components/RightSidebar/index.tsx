@@ -10,57 +10,49 @@ import {
   PanelRightClose,
   Plug,
   RefreshCw,
+  Settings2,
   Sparkles,
   X,
 } from 'lucide-react'
-import {
-  type DragEvent,
-  lazy,
-  Suspense,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from 'react'
+import { type DragEvent, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 
 import {
   type GsdSyncSession,
   useGsdSyncAvailable,
   useGsdSyncSessions,
 } from '../../hooks/useGsdSyncSessions'
+import { useMarkdownFile } from '../../hooks/useMarkdownFile'
+import { pathInside } from '../../lib/campaigns'
 import { hasFileDragPayload, readFileDragPayload } from '../../lib/fileDrag'
 import { useT } from '../../lib/i18n'
 import { isMarkdownPath } from '../../lib/markdownSidebarHistory'
 import { basename } from '../../lib/paths'
+import { sameCwd } from '../../lib/paths'
 import {
   type SidebarTabContribution,
   sidebarTabLabel,
   sidebarTabPanelLabel,
 } from '../../lib/plugins'
-import { resolveProjectCheckout } from '../../lib/projectCheckout'
 import { sidebarIconIds, useVisibleSidebarIcons } from '../../lib/sidebarIcons'
 import {
-  listProjectPlans,
+  findRelativePath,
   type PlanningStatus,
   readPlanningStatus,
-  readTextFile,
   writeClipboardText,
 } from '../../lib/tauri'
 import { useSidebarViews } from '../../lib/viewPlacement'
 import { selectActiveProject, useProjectsStore } from '../../stores/projectsStore'
 import { useUiStore } from '../../stores/uiStore'
-
-const MarkdownRenderer = lazy(() =>
-  import('../MarkdownPane/MarkdownRenderer').then((m) => ({ default: m.MarkdownRenderer })),
-)
 import { ContributedView } from '../ContributedView'
+import { MarkdownSummary } from '../MarkdownPane/MarkdownSummary'
 import { McpPanel } from '../McpPanel'
 import { PluginsSidebar } from '../PluginsSidebar'
 import { PullRequestsSidebar } from '../PullRequestsSidebar'
 import { DotmCircular2 } from '../ui/dotm-circular-2'
 import { VoiceHistoryPanel } from '../VoiceHistoryPanel'
+import { MarkdownCatalog } from './MarkdownCatalog'
 import styles from './RightSidebar.module.css'
+import { recoverCatalogPath, useMarkdownCatalog } from './useMarkdownCatalog'
 
 const markdownScrollPositions = new Map<string, number>()
 
@@ -167,6 +159,15 @@ export function RightSidebar() {
           )
         })}
         <span className={styles.toolbarSpacer} />
+        <button
+          type="button"
+          className={styles.toolbarUtility}
+          onClick={() => openModal('preferences', { category: 'sidebar' })}
+          title={t('rightSidebar.configure')}
+          aria-label={t('rightSidebar.configure')}
+        >
+          <Settings2 size={14} />
+        </button>
         {mode === 'mcp' && mcpEnabled ? (
           <button
             type="button"
@@ -319,99 +320,32 @@ function GsdSyncRow({ session, onOpen }: { session: GsdSyncSession; onOpen: () =
 function MarkdownSidebarViewer() {
   const t = useT()
   const markdown = useUiStore((state) => state.rightSidebarMarkdown)
-  const markdownTabs = useUiStore((state) => state.rightSidebarMarkdownTabs)
   const openMarkdownSidebar = useUiStore((state) => state.openMarkdownSidebar)
   const closeMarkdownSidebarTab = useUiStore((state) => state.closeMarkdownSidebarTab)
   const showTodoSidebar = useUiStore((state) => state.showTodoSidebar)
   const pushToast = useUiStore((state) => state.pushToast)
-  const activeProjectId = useProjectsStore((state) => state.activeProjectId)
-  const projects = useProjectsStore((state) => state.projects)
   const setPreferences = useProjectsStore((state) => state.setPreferences)
   const dark = useProjectsStore(
     (state) => state.preferences.uiTheme !== 'light' && state.preferences.uiTheme !== 'min-light',
   )
-  const [content, setContent] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
   const [dropActive, setDropActive] = useState(false)
-  const [selectedPath, setSelectedPath] = useState(markdown?.path ?? '')
   const panelRef = useRef<HTMLElement | null>(null)
   const nativeDragHasMarkdownRef = useRef(false)
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const markdownRef = useRef<HTMLDivElement | null>(null)
-  const [plans, setPlans] = useState<Array<{ path: string; title: string }>>([])
-  const checkoutKey = useProjectsStore((state) => {
-    const project = state.projects.find((item) => item.id === state.activeProjectId)
-    return `${project?.checkoutPath ?? ''}\n${project?.defaultCwd ?? ''}`
-  })
-  // Plans come from the checkout the project uses: the picked worktree, the main one by default.
-  const [planRoot, setPlanRoot] = useState<{ projectId: string; root: string } | null>(null)
-
+  const catalog = useMarkdownCatalog()
+  const selected = markdown
+  const root = catalog.roots[0] ?? ''
+  const scope = catalog.roots.join('\n')
   useEffect(() => {
-    if (!activeProjectId) return
-    let cancelled = false
-    void resolveProjectCheckout(activeProjectId).then(({ root }) => {
-      if (!cancelled) setPlanRoot({ projectId: activeProjectId, root })
-    })
-    return () => {
-      cancelled = true
+    const current = useUiStore.getState().rightSidebarMarkdown
+    if (scope && current && !scope.split('\n').some((root) => pathInside(current.path, root))) {
+      useUiStore.setState({ rightSidebarMarkdown: null })
     }
-  }, [activeProjectId, checkoutKey])
+  }, [scope])
 
-  useEffect(() => {
-    const project = projects.find((item) => item.id === activeProjectId)
-    const projectPath = planRoot?.projectId === project?.id ? planRoot?.root : undefined
-    if (!projectPath || !project?.id) {
-      setPlans([])
-      return
-    }
-    let cancelled = false
-    listProjectPlans(projectPath, project.id)
-      .then((items) => {
-        if (!cancelled) {
-          setPlans(items.map((p) => ({ path: p.filePath, title: p.title })))
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setPlans([])
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [activeProjectId, planRoot, projects])
-
-  const readmeTabs = useMemo(() => {
-    const project = projects.find((item) => item.id === activeProjectId)
-    const projectTabs = (project?.terminals ?? [])
-      .filter((terminal) => terminal.kind === 'markdown' && terminal.filePath)
-      .map((terminal) => ({ path: terminal.filePath!, title: terminal.name }))
-    const merged = new Map<string, { path: string; title: string; closable: boolean }>()
-    for (const plan of plans) merged.set(plan.path, { ...plan, closable: false })
-    for (const tab of projectTabs) merged.set(tab.path, { ...tab, closable: false })
-    for (const tab of markdownTabs) merged.set(tab.path, { ...tab, closable: true })
-    return [...merged.values()]
-  }, [activeProjectId, markdownTabs, plans, projects])
-  const selected =
-    readmeTabs.find((tab) => tab.path === selectedPath) ??
-    (markdown ? { path: markdown.path, title: markdown.title } : null)
-
-  const load = async () => {
-    if (!selected?.path) return
-    try {
-      setContent(await readTextFile(selected.path))
-      setError(null)
-    } catch (err) {
-      setError(String(err))
-      setContent(null)
-    }
-  }
-
-  useEffect(() => {
-    setContent(null)
-    setError(null)
-    void load()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [markdown?.path, selectedPath])
+  const { content, error, reload: load } = useMarkdownFile(selected?.path ?? null)
 
   useEffect(() => {
     if (!selected?.path || content === null) return
@@ -423,8 +357,38 @@ function MarkdownSidebarViewer() {
   }, [content, selected?.path])
 
   useEffect(() => {
-    if (markdown?.path) setSelectedPath(markdown.path)
-  }, [markdown?.path])
+    if (!error || !selected?.path || !root) return
+    let cancelled = false
+    const path = selected.path
+    void findRelativePath(root, path)
+      .then((resolved) => {
+        const found =
+          resolved ??
+          (!catalog.loading ? recoverCatalogPath(path, catalog.roots, catalog.documents) : null)
+        if (
+          !cancelled &&
+          found &&
+          !sameCwd(found, path) &&
+          useUiStore.getState().rightSidebarMarkdown?.path === path
+        ) {
+          closeMarkdownSidebarTab(path)
+          openMarkdownSidebar(found, basename(found))
+        }
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [
+    error,
+    selected?.path,
+    root,
+    catalog.loading,
+    catalog.roots,
+    catalog.documents,
+    closeMarkdownSidebarTab,
+    openMarkdownSidebar,
+  ])
 
   const openDroppedMarkdownPaths = useCallback(
     (paths: string[]) => {
@@ -506,97 +470,6 @@ function MarkdownSidebarViewer() {
     }
   }
 
-  if (!markdown && !selected) {
-    if (plans.length > 0) {
-      return (
-        <section
-          ref={panelRef}
-          className={`${styles.emptyMarkdown} ${dropActive ? styles.markdownDropActive : ''}`}
-          style={{
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'stretch',
-            padding: '12px',
-            gap: '8px',
-            overflowY: 'auto',
-          }}
-          onDragEnter={onInternalDragOver}
-          onDragOver={onInternalDragOver}
-          onDragLeave={onInternalDragLeave}
-          onDrop={onInternalDrop}
-        >
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              paddingBottom: '6px',
-              borderBottom: '1px solid var(--border)',
-              fontSize: '11px',
-              fontWeight: 600,
-              color: 'var(--fg-muted)',
-              textTransform: 'uppercase',
-              letterSpacing: '0.04em',
-            }}
-          >
-            <FileText size={13} />
-            <span>{t('plans.title')}</span>
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-            {plans.map((p) => (
-              <button
-                key={p.path}
-                type="button"
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '8px',
-                  padding: '8px 10px',
-                  background: 'var(--bg-subtle, rgba(255,255,255,0.02))',
-                  border: '1px solid var(--border)',
-                  borderRadius: '6px',
-                  color: 'var(--fg)',
-                  cursor: 'pointer',
-                  textAlign: 'left',
-                  fontSize: '12px',
-                }}
-                onClick={() => openMarkdownSidebar(p.path, p.title)}
-              >
-                <FileText size={13} style={{ color: 'var(--accent)', flexShrink: 0 }} />
-                <span
-                  style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                >
-                  {p.title}
-                </span>
-              </button>
-            ))}
-          </div>
-          {dropActive ? (
-            <div className={styles.markdownDropOverlay}>{t('rightSidebar.dropMarkdown')}</div>
-          ) : null}
-        </section>
-      )
-    }
-
-    return (
-      <section
-        ref={panelRef}
-        className={`${styles.emptyMarkdown} ${dropActive ? styles.markdownDropActive : ''}`}
-        onDragEnter={onInternalDragOver}
-        onDragOver={onInternalDragOver}
-        onDragLeave={onInternalDragLeave}
-        onDrop={onInternalDrop}
-      >
-        <FileText size={20} />
-        <strong>{t('rightSidebar.markdownEmptyTitle')}</strong>
-        <span>{t('rightSidebar.markdownEmptyDesc')}</span>
-        {dropActive ? (
-          <div className={styles.markdownDropOverlay}>{t('rightSidebar.dropMarkdown')}</div>
-        ) : null}
-      </section>
-    )
-  }
-
   return (
     <section
       ref={panelRef}
@@ -613,15 +486,33 @@ function MarkdownSidebarViewer() {
       <header className={styles.header}>
         <div className={styles.heading}>
           <FileText size={15} />
-          <span title={selected?.title ?? markdown?.title ?? ''}>
-            {selected?.title ?? markdown?.title ?? ''}
+          <span title={selected?.title ?? t('rightSidebar.catalog.title')}>
+            {selected?.title ?? t('rightSidebar.catalog.title')}
           </span>
         </div>
         <div className={styles.headerActions}>
+          {selected ? (
+            <button
+              type="button"
+              className={styles.headerAction}
+              aria-label={t('rightSidebar.closeMarkdownTab')}
+              title={t('rightSidebar.closeMarkdownTab')}
+              onClick={() => {
+                closeMarkdownSidebarTab(selected.path)
+                useUiStore.setState({ rightSidebarMarkdown: null })
+              }}
+            >
+              <X size={15} />
+            </button>
+          ) : null}
+
           <button
             type="button"
             className={styles.headerAction}
-            onClick={() => void load()}
+            onClick={() => {
+              void load()
+              catalog.reload()
+            }}
             title={t('ui.markdown.refresh')}
             aria-label={t('ui.markdown.refresh')}
           >
@@ -657,46 +548,7 @@ function MarkdownSidebarViewer() {
           </button>
         </div>
       </header>
-      {readmeTabs.length > 1 ? (
-        <div
-          className={styles.readmeTabs}
-          role="tablist"
-          aria-label={t('rightSidebar.markdownTabs')}
-        >
-          {readmeTabs.map((tab) => (
-            <div
-              key={tab.path}
-              role="tab"
-              aria-selected={selected?.path === tab.path}
-              className={`${styles.readmeTab} ${selected?.path === tab.path ? styles.readmeTabActive : ''}`}
-              title={tab.path}
-            >
-              <button
-                type="button"
-                className={styles.readmeTabSelect}
-                onClick={() => {
-                  setSelectedPath(tab.path)
-                  openMarkdownSidebar(tab.path, tab.title)
-                }}
-              >
-                <FileText size={11} />
-                <span>{tab.title}</span>
-              </button>
-              {tab.closable ? (
-                <button
-                  type="button"
-                  className={styles.readmeTabClose}
-                  onClick={() => closeMarkdownSidebarTab(tab.path)}
-                  title={t('rightSidebar.closeMarkdownTab')}
-                  aria-label={t('rightSidebar.closeMarkdownTab')}
-                >
-                  <X size={10} />
-                </button>
-              ) : null}
-            </div>
-          ))}
-        </div>
-      ) : null}
+      <MarkdownCatalog catalog={catalog} />
       <div className={styles.path} title={selected?.path ?? markdown?.path ?? ''}>
         {selected?.path ?? markdown?.path ?? ''}
       </div>
@@ -709,7 +561,13 @@ function MarkdownSidebarViewer() {
               markdownScrollPositions.set(selected.path, event.currentTarget.scrollTop)
           }}
         >
-          {error ? (
+          {!selected ? (
+            <div className={styles.empty}>
+              <FileText size={20} />
+              <strong>{t('rightSidebar.markdownEmptyTitle')}</strong>
+              <span>{t('rightSidebar.catalog.choose')}</span>
+            </div>
+          ) : error ? (
             <div className={styles.empty}>
               <FileText size={20} />
               <strong>{t('rightSidebar.markdownError')}</strong>
@@ -722,7 +580,7 @@ function MarkdownSidebarViewer() {
           ) : (
             <div ref={markdownRef} className={styles.commentableMarkdown}>
               <Suspense fallback={<span>{t('ui.markdown.loading')}</span>}>
-                <MarkdownRenderer content={content} dark={dark} />
+                <MarkdownSummary path={selected!.path} content={content} dark={dark} />
               </Suspense>
             </div>
           )}

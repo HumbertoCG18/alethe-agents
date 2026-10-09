@@ -661,7 +661,17 @@ export type OrchestrationSettings = {
   workerDisabledPlugins: string[]
 }
 
+export type MarkdownSummarySettings = {
+  enabled: boolean
+  agent: 'antigravity' | 'claude' | 'codex'
+  model: string
+  style: 'caveman' | 'medium' | 'detailed'
+}
+
 export type Preferences = {
+  markdownSummary?: MarkdownSummarySettings
+  /** Hides catalog documents whose path date is older than this many days; 0 never hides. */
+  markdownCatalogMaxAgeDays?: number
   /** Idioma da UI. Default 'en'. */
   language: Locale
   uiTheme: Theme
@@ -893,6 +903,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   uiZoom: 1,
   windowOpacity: 1,
   terminalTheme: null,
+  markdownCatalogMaxAgeDays: 30,
   enabledAgents: {
     shell: true,
     wsl: true,

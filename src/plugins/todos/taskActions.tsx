@@ -81,7 +81,8 @@ export async function openEvidence(
   // list_directory lists a folder and fails for a file.
   const entries = await listDirectory(found).catch(() => null)
   if (!entries) {
-    if (isMarkdownFilePath(found)) ui.openLinkViewer(found)
+    if (isMarkdownFilePath(found))
+      ui.openMarkdownSidebar(found, found.split(/[\\/]/).pop() ?? found)
     else openFile(projectId, found)
     return
   }
@@ -91,7 +92,7 @@ export async function openEvidence(
     FOLDER_REPORTS.map((name) => files.find((entry) => entry.name.toLowerCase() === name)).find(
       Boolean,
     ) ?? (markdown.length === 1 ? markdown[0] : undefined)
-  if (report) ui.openLinkViewer(report.path)
+  if (report) ui.openMarkdownSidebar(report.path, report.name)
   else await openInFileExplorer(found).catch(() => {})
 }
 

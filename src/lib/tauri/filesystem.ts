@@ -12,6 +12,11 @@ export async function listDirectory(path: string): Promise<DirectoryEntry[]> {
   return invoke<DirectoryEntry[]>('list_directory', { path })
 }
 
+/** Markdown files in this checkout; excludes links, dependencies and build output. */
+export async function listProjectMarkdown(path: string): Promise<string[]> {
+  return invoke<string[]>('list_project_markdown', { path })
+}
+
 export type BrowseDirectoryEntry = {
   name: string
   path: string

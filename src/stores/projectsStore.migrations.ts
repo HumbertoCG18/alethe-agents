@@ -7,6 +7,7 @@ import {
   normalizeEnabledFeatures,
 } from '../lib/features'
 import { normalizeExperimentalAgentPermissionMode } from '../lib/experimentalAgentPolicy'
+import { normalizeMarkdownMaxAge, normalizeMarkdownSummary } from '../lib/markdownSummary'
 import { normalizeOrchestrationSettings } from '../lib/orchestrationSettings'
 import { recordLegacyGitFlag, recordLegacyTodosFlag } from '../lib/plugins/legacyMigration'
 import { normalizeProjectGrids, projectGridContainer } from '../lib/projectGrids'
@@ -41,7 +42,10 @@ import {
   MAX_RECENT_PROJECT_TABS,
 } from './projectsStore.constants'
 
-type LegacyPreferences = Partial<Preferences> & { showGitControl?: boolean }
+type LegacyPreferences = Partial<Preferences> & {
+  showGitControl?: boolean
+  defaultShell?: string | null
+}
 
 function normalizeStoredAccent(value: unknown, fallback?: string): string | undefined {
   if (typeof value !== 'string') return fallback
@@ -179,6 +183,8 @@ export function normalizePreferences(raw: LegacyPreferences | undefined): Prefer
     topbarStyle: preferences.topbarStyle === 'three-areas' ? 'three-areas' : 'classic',
     viewPlacements: normalizeViewPlacements(preferences),
     sidebarIcons: normalizeSidebarIcons(raw?.sidebarIcons),
+    markdownSummary: normalizeMarkdownSummary(raw?.markdownSummary),
+    markdownCatalogMaxAgeDays: normalizeMarkdownMaxAge(raw?.markdownCatalogMaxAgeDays),
     mcpDefaultScope: preferences.mcpDefaultScope === 'project' ? 'project' : 'global',
     handoffScope: normalizeHandoffScope(raw?.handoffScope),
     experimentalAgentPermissionMode: normalizeExperimentalAgentPermissionMode(
@@ -256,7 +262,9 @@ export function normalizePreferences(raw: LegacyPreferences | undefined): Prefer
       DEFAULT_PREFERENCES.pomodoroLongBreakMinutes,
     ),
     pomodoroSession: normalizePomodoroSession(raw?.pomodoroSession),
-    shellPath: normalizeNonEmptyString(raw?.shellPath),
+    // A shell chosen in an earlier fork build was saved as `defaultShell`; it carries over.
+    shellPath:
+      normalizeNonEmptyString(raw?.shellPath) ?? normalizeNonEmptyString(raw?.defaultShell),
     terminalFontFamily:
       normalizeNonEmptyString(raw?.terminalFontFamily) ?? DEFAULT_TERMINAL_FONT_FAMILY,
   }

@@ -1,5 +1,5 @@
 import { ExternalLink, GitPullRequest, LoaderCircle, RefreshCw } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { useT } from '../../lib/i18n'
 import { githubPrListMine, type MyPullRequestSummary, openInBrowser } from '../../lib/tauri'
@@ -12,40 +12,64 @@ export function PullRequestsSidebar() {
   const t = useT()
   const todos = useTodosStore((state) => state.todos)
   const createTodoFromPullRequest = useTodosStore((state) => state.createTodoFromPullRequest)
-  const activeProject = useProjectsStore((state) =>
-    state.projects.find((project) => project.id === state.activeProjectId),
-  )
-  // The project's own folder first: it may have no terminal, and PRs must never come from elsewhere.
-  const repo =
-    activeProject?.checkoutPath || activeProject?.defaultCwd || getProjectRepoRoot(activeProject)
-  const [prs, setPrs] = useState<MyPullRequestSummary[]>([])
-  const [loading, setLoading] = useState(Boolean(repo))
-  const [error, setError] = useState<string | null>(null)
-  // Only the latest request fills the panel: a project switch outdates the one still running.
-  const latest = useRef(0)
-
-  const load = useCallback(async () => {
-    const request = ++latest.current
-    setError(null)
-    if (!repo) {
-      setPrs([])
-      setLoading(false)
-      return
+  const projects = useProjectsStore((state) => state.projects)
+  const activeId = useProjectsStore((state) => state.activeProjectId)
+  const [selection, setSelection] = useState<{ activeId: string | null; id: string } | null>(null)
+  const available = projects.filter((project) => !project.archived)
+  const selectedId = selection?.activeId === activeId ? selection.id : activeId
+  const project = available.find((item) => item.id === selectedId)
+  const repo = project?.checkoutPath || project?.defaultCwd || getProjectRepoRoot(project)
+  const [result, setResult] = useState<{
+    repo: string
+    prs: MyPullRequestSummary[]
+    loading: boolean
+    error: string | null
+  }>({ repo: '', prs: [], loading: false, error: null })
+  const refresh = useRef<() => void>(() => {})
+  // Scope every response to the effect that requested it. A project switch invalidates it.
+  useEffect(() => {
+    let active = true
+    let pending = false
+    const load = async () => {
+      if (!repo || pending) return
+      pending = true
+      setResult((current) => ({
+        repo,
+        prs: current.repo === repo ? current.prs : [],
+        loading: true,
+        error: null,
+      }))
+      try {
+        const prs = await githubPrListMine(repo)
+        if (active) setResult({ repo, prs, loading: false, error: null })
+      } catch (error) {
+        if (active) setResult({ repo, prs: [], loading: false, error: String(error) })
+      } finally {
+        pending = false
+      }
     }
-    setLoading(true)
-    try {
-      const result = await githubPrListMine(repo)
-      if (request === latest.current) setPrs(result)
-    } catch (err) {
-      if (request === latest.current) setError(String(err))
-    } finally {
-      if (request === latest.current) setLoading(false)
+    const refreshVisible = () => {
+      if (!document.hidden) void load()
+    }
+    refresh.current = () => {
+      void load()
+    }
+    void load()
+    const timer = window.setInterval(refreshVisible, 30_000)
+    window.addEventListener('focus', refreshVisible)
+    document.addEventListener('visibilitychange', refreshVisible)
+    return () => {
+      active = false
+      refresh.current = () => {}
+      window.clearInterval(timer)
+      window.removeEventListener('focus', refreshVisible)
+      document.removeEventListener('visibilitychange', refreshVisible)
     }
   }, [repo])
-
-  useEffect(() => {
-    void load()
-  }, [load])
+  const current = result.repo === repo
+  const prs = current ? result.prs : []
+  const loading = Boolean(repo) && (!current || result.loading)
+  const error = current ? result.error : null
 
   const isLinked = (pr: MyPullRequestSummary) =>
     todos.some((todo) => todo.prRepo === pr.repo && todo.prNumber === pr.number)
@@ -57,14 +81,14 @@ export function PullRequestsSidebar() {
           <GitPullRequest size={16} />
           <span>{t('prs.title')}</span>
           <span className={styles.scope} title={repo || undefined}>
-            {t('prs.scopeProject', { project: activeProject?.name ?? '' })}
+            {project?.name}
           </span>
         </div>
         <button
           type="button"
           className={styles.refreshButton}
-          onClick={() => void load()}
-          disabled={loading}
+          onClick={() => refresh.current()}
+          disabled={loading || !repo}
           title={t('prs.refresh')}
           aria-label={t('prs.refresh')}
         >
@@ -72,8 +96,27 @@ export function PullRequestsSidebar() {
         </button>
       </header>
 
+      <label className={styles.projectPicker}>
+        {t('prs.project')}
+        <select
+          aria-label={t('prs.project')}
+          value={project?.id ?? ''}
+          onChange={(event) => setSelection({ activeId, id: event.target.value })}
+        >
+          <option value="" disabled>
+            {t('prs.selectProject')}
+          </option>
+          {available.map((item) => (
+            <option key={item.id} value={item.id}>
+              {item.name}
+            </option>
+          ))}
+        </select>
+      </label>
       <div className={styles.content}>
-        {loading ? (
+        {!repo ? (
+          <div className={styles.empty}>{t('prs.noRepository')}</div>
+        ) : loading ? (
           <div className={styles.state}>
             <LoaderCircle size={16} className={styles.spin} />
             <span>{t('prs.loading')}</span>
@@ -85,8 +128,8 @@ export function PullRequestsSidebar() {
             <div className={styles.emptyIcon}>
               <GitPullRequest size={20} />
             </div>
-            <strong>{t(repo ? 'prs.emptyTitle' : 'prs.noRepoTitle')}</strong>
-            <span>{t(repo ? 'prs.emptyDescriptionProject' : 'prs.noRepoDescription')}</span>
+            <strong>{t('prs.emptyTitle')}</strong>
+            <span>{t('prs.emptyDescriptionProject')}</span>
           </div>
         ) : (
           <div className={styles.list}>

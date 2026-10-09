@@ -87,7 +87,7 @@ pub fn command_builder_for_terminal(
             }
             #[cfg(not(windows))]
             {
-                // POSIX shell: exec do launcher + args, com aspas simples escapadas.
+                // Execute the launcher and arguments with POSIX single-quote escaping.
                 let esc = |s: &str| s.replace('\'', "'\\''");
                 let mut line = format!("exec '{}'", esc(&arg));
                 for a in extra_args {
@@ -109,6 +109,10 @@ pub fn command_builder_for_terminal(
             let mut builder = CommandBuilder::new(&shell);
             if is_powershell(&shell) {
                 builder.arg("-NoLogo");
+            } else if crate::terminal_settings::is_git_bash(&shell) && command_line.is_none() {
+                // Same as Windows Terminal's Git Bash profile: interactive login shell.
+                builder.arg("-i");
+                builder.arg("-l");
             }
             // An orchestrator shell: the line runs through the shell and the PTY ends with it, so
             // the board can tell a running service from one that exited.
@@ -270,17 +274,35 @@ pub struct InstallToolchain {
     pub pnpm: bool,
 }
 
-fn node_version() -> Option<String> {
+async fn node_version() -> Option<String> {
     let node = find_windows_cli_launcher("node")?;
-    let output = std::process::Command::new(node)
-        .arg("--version")
-        .output()
+    let output = background_output(&node, &["--version"], std::time::Duration::from_secs(5))
+        .await
         .ok()?;
-    if !output.status.success() {
-        return None;
-    }
     let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
     (!version.is_empty()).then_some(version)
+}
+
+pub(crate) async fn background_output(
+    binary: &std::path::Path,
+    args: &[&str],
+    timeout: std::time::Duration,
+) -> Result<std::process::Output, String> {
+    let mut command = tokio::process::Command::new(binary);
+    command
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .kill_on_drop(true);
+    #[cfg(windows)]
+    command.creation_flags(0x0800_0000);
+    let output = tokio::time::timeout(timeout, command.output())
+        .await
+        .map_err(|_| "Metadata probe timed out".to_string())?
+        .map_err(|e| format!("Metadata probe failed: {e}"))?;
+    if !output.status.success() {
+        return Err("Metadata probe exited unsuccessfully".into());
+    }
+    Ok(output)
 }
 
 /// Extracts the first dotted version out of `--version` output. Agents are not consistent here:
@@ -333,10 +355,11 @@ pub async fn agent_cli_version(agent: String) -> Option<String> {
 /// agent install methods that will actually work here.
 #[tauri::command]
 pub async fn probe_install_toolchain() -> InstallToolchain {
-    tokio::task::spawn_blocking(|| {
+    let node = node_version().await;
+    tokio::task::spawn_blocking(move || {
         let has = |name: &str| find_windows_cli_launcher(name).is_some();
         InstallToolchain {
-            node: node_version(),
+            node,
             npm: has("npm"),
             winget: has("winget"),
             scoop: has("scoop"),
@@ -907,80 +930,7 @@ fn discover_provider_models_inner(provider: String) -> Result<Vec<ModelOption>, 
                 }
             }
         }
-        "claude" => {
-            if let Ok(output) = std::process::Command::new(&bin_path).arg("models").output() {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                for line in stdout.lines() {
-                    let trimmed = line.trim();
-                    let id = trimmed
-                        .split_whitespace()
-                        .next()
-                        .unwrap_or(trimmed)
-                        .to_string();
-                    if is_valid_model_id(&id) {
-                        models.push(ModelOption {
-                            label: format!("{id} (Claude CLI)"),
-                            id,
-                        });
-                    }
-                }
-            }
-            if models.is_empty() {
-                models.push(ModelOption {
-                    id: "claude-3-7-sonnet".into(),
-                    label: "Claude 3.7 Sonnet (Anthropic)".into(),
-                });
-                models.push(ModelOption {
-                    id: "claude-3-5-sonnet".into(),
-                    label: "Claude 3.5 Sonnet (Anthropic)".into(),
-                });
-                models.push(ModelOption {
-                    id: "claude-3-5-haiku".into(),
-                    label: "Claude 3.5 Haiku (Anthropic)".into(),
-                });
-                models.push(ModelOption {
-                    id: "claude-3-opus".into(),
-                    label: "Claude 3 Opus (Anthropic)".into(),
-                });
-            }
-        }
-        "codex" => {
-            if let Ok(output) = std::process::Command::new(&bin_path).arg("models").output() {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                for line in stdout.lines() {
-                    let trimmed = line.trim();
-                    let id = trimmed
-                        .split_whitespace()
-                        .next()
-                        .unwrap_or(trimmed)
-                        .to_string();
-                    if is_valid_model_id(&id) {
-                        models.push(ModelOption {
-                            label: format!("{id} (Codex CLI)"),
-                            id,
-                        });
-                    }
-                }
-            }
-            if models.is_empty() {
-                models.push(ModelOption {
-                    id: "gpt-4o".into(),
-                    label: "GPT-4o (OpenAI)".into(),
-                });
-                models.push(ModelOption {
-                    id: "o3-mini".into(),
-                    label: "o3-mini (Raciocínio OpenAI)".into(),
-                });
-                models.push(ModelOption {
-                    id: "o1".into(),
-                    label: "o1 (OpenAI)".into(),
-                });
-                models.push(ModelOption {
-                    id: "gpt-4o-mini".into(),
-                    label: "GPT-4o mini (OpenAI)".into(),
-                });
-            }
-        }
+        "claude" | "codex" => unreachable!("handled by discover_provider_models"),
         "mimo" => {
             if let Ok(output) = std::process::Command::new(&bin_path).arg("models").output() {
                 let stdout = String::from_utf8_lossy(&output.stdout);
@@ -1112,20 +1062,81 @@ fn discover_provider_models_inner(provider: String) -> Result<Vec<ModelOption>, 
     Ok(models)
 }
 
-/// `discover_provider_models_inner` roda `std::process::Command::output()`
-
-/// `find_cli_launcher` acima.
+/// Claude aliases follow the installed CLI's current model mapping without starting inference.
 #[tauri::command]
 pub async fn discover_provider_models(provider: String) -> Result<Vec<ModelOption>, String> {
-    tokio::task::spawn_blocking(move || discover_provider_models_inner(provider))
-        .await
-        .map_err(|error| format!("discover_provider_models: falha na task bloqueante: {error}"))?
+    match provider.to_lowercase().as_str() {
+        "claude" => Ok([("sonnet", "Sonnet"), ("opus", "Opus"), ("haiku", "Haiku")]
+            .into_iter()
+            .map(|(id, label)| ModelOption {
+                id: id.into(),
+                label: label.into(),
+            })
+            .collect()),
+        "codex" => crate::codex_app_server::discover_models().await,
+        _ => tokio::task::spawn_blocking(move || discover_provider_models_inner(provider))
+            .await
+            .map_err(|error| format!("Model discovery failed: {error}"))?,
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    #[tokio::test]
+    async fn claude_discovery_returns_current_aliases_without_starting_a_cli() {
+        let models = discover_provider_models("claude".into()).await.unwrap();
+        assert_eq!(
+            models
+                .iter()
+                .map(|model| model.id.as_str())
+                .collect::<Vec<_>>(),
+            ["sonnet", "opus", "haiku"]
+        );
+    }
+
+    #[tokio::test]
+    async fn metadata_probes_reject_failed_output_and_time_out() {
+        let python = which::which("python3")
+            .or_else(|_| which::which("python"))
+            .unwrap();
+        assert!(background_output(
+            &python,
+            &["-c", "import sys; print('v1.2.3'); sys.exit(2)"],
+            std::time::Duration::from_secs(5)
+        )
+        .await
+        .is_err());
+        assert!(background_output(
+            &python,
+            &["-c", "import time; time.sleep(30)"],
+            std::time::Duration::from_millis(100)
+        )
+        .await
+        .unwrap_err()
+        .contains("timed out"));
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn metadata_probes_have_no_windows_console() {
+        let python = which::which("python3")
+            .or_else(|_| which::which("python"))
+            .unwrap();
+        let output = background_output(
+            &python,
+            &[
+                "-c",
+                "import ctypes; print(ctypes.windll.kernel32.GetConsoleWindow())",
+            ],
+            std::time::Duration::from_secs(5),
+        )
+        .await
+        .unwrap();
+        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "0");
+    }
 
     /// Runs a terminal's launch line through its shell, with a script that prints its arguments
     /// as the launcher, and returns what the script received.

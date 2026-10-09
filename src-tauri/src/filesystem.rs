@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Component, Path, PathBuf, Prefix};
 use std::sync::{Arc, Mutex};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 const TODO_TEMPLATE_FILE: &str = "alethe-todo.template.jsonc";
 const TODO_TEMPLATE: &str = r#"// Alethe Todo template
@@ -30,6 +30,184 @@ const TODO_TEMPLATE: &str = r#"// Alethe Todo template
   ]
 }
 "#;
+
+/// Automatic discovery is development documentation, never a recursive content browser.
+fn development_markdown(path: &Path) -> bool {
+    let parts: Vec<_> = path.components().collect();
+    if parts.iter().any(|p| !matches!(p, Component::Normal(_))) {
+        return false;
+    }
+    if !path.extension().is_some_and(|e| {
+        matches!(
+            e.to_string_lossy().to_lowercase().as_str(),
+            "md" | "markdown" | "mdx"
+        )
+    }) {
+        return false;
+    }
+    if parts.len() == 1 {
+        return true;
+    }
+    matches!(
+        parts[0]
+            .as_os_str()
+            .to_string_lossy()
+            .to_lowercase()
+            .as_str(),
+        "docs"
+            | "doc"
+            | "documentation"
+            | ".workflow"
+            | ".mex"
+            | ".github"
+            | ".agents"
+            | ".alethe"
+            | ".superpowers"
+            | ".planning"
+            | "campaigns"
+            | "campanhas"
+            | "reports"
+            | "relatorios"
+            | "handoffs"
+            | "planning"
+    ) && !parts[..parts.len() - 1].iter().any(|p| {
+        matches!(
+            p.as_os_str().to_string_lossy().to_lowercase().as_str(),
+            ".git"
+                | "node_modules"
+                | "target"
+                | "dist"
+                | "build"
+                | ".venv"
+                | "venv"
+                | "__pycache__"
+        )
+    })
+}
+
+fn plain_catalog_file(root: &Path, path: &Path) -> bool {
+    let Ok(metadata) = fs::symlink_metadata(path) else {
+        return false;
+    };
+    if !metadata.is_file() || metadata.file_type().is_symlink() {
+        return false;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        if metadata.file_attributes() & 0x400 != 0 {
+            return false;
+        }
+    }
+    path.canonicalize().is_ok_and(|p| p.starts_with(root))
+}
+
+/// Bounded fallback for folders outside Git: only conventional development-document roots.
+fn project_markdown_paths(root: &Path) -> Result<Vec<String>, String> {
+    let canonical = root.canonicalize().map_err(|_| "directory not found")?;
+    if !root.is_dir() {
+        return Err("directory not found".into());
+    }
+    let started = std::time::Instant::now();
+    let mut pending = vec![root.to_path_buf()];
+    let mut paths = Vec::new();
+    let mut entries = 0;
+    while let Some(directory) = pending.pop() {
+        for entry in
+            fs::read_dir(&directory).map_err(|e| format!("{}: {e}", directory.display()))?
+        {
+            entries += 1;
+            if entries > 25_000 || started.elapsed() > std::time::Duration::from_secs(2) {
+                return Err("Development documentation scan exceeded its limit; open specific documents manually".into());
+            }
+            let entry = entry.map_err(|e| e.to_string())?;
+            let kind = entry.file_type().map_err(|e| e.to_string())?;
+            if kind.is_symlink() {
+                continue;
+            }
+            #[cfg(windows)]
+            {
+                use std::os::windows::fs::MetadataExt;
+                if entry
+                    .metadata()
+                    .map_err(|e| e.to_string())?
+                    .file_attributes()
+                    & 0x400
+                    != 0
+                {
+                    continue;
+                }
+            }
+            let path = entry.path();
+            let relative = path.strip_prefix(root).map_err(|e| e.to_string())?;
+            if kind.is_dir() {
+                // A hypothetical document identifies whether this directory belongs to the index.
+                if development_markdown(&relative.join("document.md"))
+                    && !path.join(".git").exists()
+                {
+                    pending.push(path);
+                }
+            } else if development_markdown(relative) && plain_catalog_file(&canonical, &path) {
+                paths.push(path.to_string_lossy().into_owned());
+            }
+        }
+    }
+    paths.sort();
+    Ok(paths)
+}
+
+#[tauri::command]
+pub async fn list_project_markdown(path: String) -> Result<Vec<String>, String> {
+    let root = PathBuf::from(path.trim());
+    if !root.is_dir() {
+        return Err("directory not found".into());
+    }
+    let output = crate::cli_resolver::background_output(
+        Path::new("git"),
+        &[
+            "-C",
+            root.to_string_lossy().as_ref(),
+            "ls-files",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+            "-z",
+            "--",
+            ":(icase)*.md",
+            ":(icase)*.markdown",
+            ":(icase)*.mdx",
+        ],
+        std::time::Duration::from_secs(8),
+    )
+    .await;
+    if let Ok(output) = output {
+        return tauri::async_runtime::spawn_blocking(move || {
+            let canonical = root.canonicalize().map_err(|e| e.to_string())?;
+            let mut paths: Vec<String> = output
+                .stdout
+                .split(|b| *b == 0)
+                .filter(|p| !p.is_empty())
+                .filter_map(|bytes| {
+                    let relative = PathBuf::from(String::from_utf8_lossy(bytes).as_ref());
+                    let file = root.join(&relative);
+                    (development_markdown(&relative) && plain_catalog_file(&canonical, &file))
+                        .then(|| file.to_string_lossy().into_owned())
+                })
+                .collect();
+            paths.sort();
+            paths.dedup();
+            Ok(paths)
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+    }
+    if root.join(".git").exists() {
+        return Err("Could not index development documents with Git; retry discovery".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || project_markdown_paths(&root))
+        .await
+        .map_err(|e| e.to_string())?
+}
 
 #[derive(Serialize)]
 pub struct DirectoryEntry {
@@ -174,7 +352,9 @@ fn browse_directory_inner(path: String) -> Result<DirectoryListing, String> {
         let p = PathBuf::from(trimmed);
         if p.exists() {
             if p.is_file() {
-                p.parent().map(|parent| parent.to_path_buf()).unwrap_or(home.clone())
+                p.parent()
+                    .map(|parent| parent.to_path_buf())
+                    .unwrap_or(home.clone())
             } else {
                 p
             }
@@ -183,7 +363,9 @@ fn browse_directory_inner(path: String) -> Result<DirectoryListing, String> {
         }
     };
 
-    let canonical = directory.canonicalize().unwrap_or_else(|_| directory.clone());
+    let canonical = directory
+        .canonicalize()
+        .unwrap_or_else(|_| directory.clone());
     let current_path_str = canonical.to_string_lossy().into_owned();
     let clean_current_path = strip_extended_prefix(&current_path_str);
 
@@ -345,7 +527,18 @@ pub fn ensure_todo_template(directory: String) -> Result<String, String> {
 }
 
 #[derive(Default)]
-pub struct FileWatchers(pub Arc<Mutex<HashMap<String, (RecommendedWatcher, usize)>>>);
+pub struct FileWatchers(
+    pub Arc<Mutex<HashMap<String, (RecommendedWatcher, HashMap<String, usize>)>>>,
+);
+
+pub(crate) fn release_window_watchers(state: &FileWatchers, label: &str) {
+    if let Ok(mut map) = state.0.lock() {
+        map.retain(|_, (_, owners)| {
+            owners.remove(label);
+            !owners.is_empty()
+        });
+    }
+}
 
 /// Drops every watch on a path inside `root` (canonical), whoever holds it, so the folder can
 /// leave the disk: on Windows a watched folder blocks the removal of its parent.
@@ -383,6 +576,15 @@ fn path_watcher(
             .map(Path::to_path_buf)
             .ok_or_else(|| "invalid path".to_string())?
     };
+    // Events can carry the canonical spelling instead: macOS reports `/private/var/...` for a
+    // target under `/var/...`.
+    let real = watched_dir.canonicalize().ok().and_then(|dir| {
+        if folder {
+            Some(dir)
+        } else {
+            target.file_name().map(|name| dir.join(name))
+        }
+    });
     let mut watcher = RecommendedWatcher::new(
         move |res: notify::Result<notify::Event>| {
             let Ok(event) = res else { return };
@@ -390,7 +592,12 @@ fn path_watcher(
                 return;
             }
             let concerns = |path: &PathBuf| {
-                path == &target || (folder && path.parent() == Some(target.as_path()))
+                [Some(&target), real.as_ref()]
+                    .into_iter()
+                    .flatten()
+                    .any(|wanted| {
+                        path == wanted || (folder && path.parent() == Some(wanted.as_path()))
+                    })
             };
             if event.paths.iter().any(concerns) {
                 changed();
@@ -408,14 +615,18 @@ fn path_watcher(
 #[tauri::command]
 pub fn watch_file(
     app: AppHandle,
+    window: tauri::WebviewWindow,
     state: tauri::State<'_, FileWatchers>,
     path: String,
 ) -> Result<(), String> {
     let key = normalize(&path);
     let mut map = state.0.lock().map_err(|e| e.to_string())?;
 
+    if app.get_webview_window(window.label()).is_none() {
+        return Err("Window closed".into());
+    }
     if let Some(entry) = map.get_mut(&key) {
-        entry.1 += 1;
+        *entry.1.entry(window.label().into()).or_default() += 1;
         return Ok(());
     }
 
@@ -423,20 +634,28 @@ pub fn watch_file(
     let watcher = path_watcher(PathBuf::from(&key), move || {
         let _ = app.emit("md://changed", serde_json::json!({ "path": emit_path }));
     })?;
-    map.insert(key, (watcher, 1));
+    map.insert(key, (watcher, HashMap::from([(window.label().into(), 1)])));
     Ok(())
 }
 
 #[tauri::command]
-pub fn unwatch_file(state: tauri::State<'_, FileWatchers>, path: String) -> Result<(), String> {
+pub fn unwatch_file(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, FileWatchers>,
+    path: String,
+) -> Result<(), String> {
     let key = normalize(&path);
     let mut map = state.0.lock().map_err(|e| e.to_string())?;
 
     if let Some(entry) = map.get_mut(&key) {
-        if entry.1 <= 1 {
-            map.remove(&key); // drop do watcher para o watch
-        } else {
-            entry.1 -= 1;
+        if let Some(count) = entry.1.get_mut(window.label()) {
+            *count -= 1;
+            if *count == 0 {
+                entry.1.remove(window.label());
+            }
+        }
+        if entry.1.is_empty() {
+            map.remove(&key);
         }
     }
     Ok(())
@@ -481,11 +700,15 @@ fn find_relative_path_inner(cwd: &Path, path: &str) -> Option<PathBuf> {
         .map(PathBuf::from)
         .collect();
     let candidates: Vec<PathBuf> = if path.has_root() {
-        // The innermost checkout holding it, since a worktree can live inside the main one.
-        let inner = roots
-            .iter()
-            .filter_map(|root| strip_checkout(path, root))
-            .min_by_key(|inner| inner.components().count())?;
+        // The innermost checkout holding it, since a worktree can live inside the main one. A path
+        // spelled unlike git's roots (a `RUNNER~1` short name, macOS `/var` for `/private/var`) is
+        // matched through the canonical spelling of both.
+        let inner = innermost_inside(path, roots.iter().cloned()).or_else(|| {
+            innermost_inside(
+                &canonical_spelling(path)?,
+                roots.iter().filter_map(|root| root.canonicalize().ok()),
+            )
+        })?;
         roots.iter().map(|root| root.join(&inner)).collect()
     } else {
         let mut components = path.components();
@@ -508,6 +731,22 @@ fn find_relative_path_inner(cwd: &Path, path: &str) -> Option<PathBuf> {
         })
         .max_by_key(|(modified, _)| *modified)
         .map(|(_, candidate)| candidate)
+}
+
+/// `path` relative to the innermost of `roots` that holds it.
+fn innermost_inside(path: &Path, roots: impl Iterator<Item = PathBuf>) -> Option<PathBuf> {
+    roots
+        .filter_map(|root| strip_checkout(path, &root))
+        .min_by_key(|inner| inner.components().count())
+}
+
+/// `path` with its deepest existing ancestor canonicalized, since the file itself may exist only
+/// in another checkout.
+fn canonical_spelling(path: &Path) -> Option<PathBuf> {
+    let (base, real) = path
+        .ancestors()
+        .find_map(|base| base.canonicalize().ok().map(|real| (base, real)))?;
+    Some(real.join(path.strip_prefix(base).ok()?))
 }
 
 /// `path` relative to the checkout `root`, refused unless it is plain names: joined to the other
@@ -566,6 +805,91 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("alethe-watch-{tag}-{suffix}"));
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn markdown_catalog_includes_nested_reports_but_skips_dependencies() {
+        let root = scratch("markdown-catalog");
+        for name in [
+            "docs/reports/deep/result.MD",
+            ".workflow/campaigns/run.md",
+            "node_modules/pkg/no.md",
+            "target/no.md",
+            "docs/readme.txt",
+        ] {
+            let file = root.join(name);
+            fs::create_dir_all(file.parent().unwrap()).unwrap();
+            fs::write(file, "test").unwrap();
+        }
+        let found = project_markdown_paths(&root).unwrap();
+        assert_eq!(found.len(), 2, "{found:?}");
+        assert!(found.iter().any(|p| p.ends_with("result.MD")));
+        assert!(found.iter().any(|p| p.ends_with("run.md")));
+        assert!(project_markdown_paths(&root.join("missing")).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn catalog_excludes_ignored_artifacts_and_tutor_content() {
+        let root = scratch("development-catalog");
+        checked_output(&root, &["init"]).unwrap();
+        fs::write(root.join(".gitignore"), ".frzero/\n").unwrap();
+        for name in [
+            "docs/reports/real.md",
+            ".workflow/campaigns/open.md",
+            ".frzero/tutor.md",
+            "tutors/student.md",
+        ] {
+            let file = root.join(name);
+            fs::create_dir_all(file.parent().unwrap()).unwrap();
+            fs::write(file, "test").unwrap();
+        }
+        checked_output(&root, &["add", "."]).unwrap();
+        let paths = list_project_markdown(root.to_string_lossy().into_owned())
+            .await
+            .unwrap();
+        assert_eq!(paths.len(), 2, "{paths:?}");
+        assert!(paths.iter().any(|p| p.ends_with("real.md")));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore = "Requires an explicit local development repository"]
+    async fn measure_development_catalog() {
+        let root =
+            std::env::var("ALETHE_CATALOG_BENCH_ROOT").expect("Provide the repository to measure");
+        let start = std::time::Instant::now();
+        let files = list_project_markdown(root).await.unwrap();
+        println!(
+            "Development catalog: {} files in {:.3} seconds",
+            files.len(),
+            start.elapsed().as_secs_f64()
+        );
+        assert!(!files.is_empty());
+        assert!(files
+            .iter()
+            .all(|p| !p.replace('\\', "/").contains("/.frzero/")));
+    }
+
+    #[test]
+    fn closing_window_releases_only_its_watches() {
+        let dir = scratch("window");
+        let state = FileWatchers::default();
+        state.0.lock().unwrap().insert(
+            "shared".into(),
+            (
+                path_watcher(dir.clone(), || {}).unwrap(),
+                HashMap::from([("main".into(), 1), ("reader".into(), 2)]),
+            ),
+        );
+        release_window_watchers(&state, "reader");
+        assert_eq!(
+            state.0.lock().unwrap()["shared"].1,
+            HashMap::from([("main".into(), 1)])
+        );
+        release_window_watchers(&state, "main");
+        assert!(state.0.lock().unwrap().is_empty());
+        fs::remove_dir_all(dir).unwrap();
     }
 
     // Only a path with nothing at it reads as missing: a folder in its place is another failure.
@@ -722,9 +1046,16 @@ mod tests {
         fs::create_dir_all(night.join("docs")).unwrap();
         let handoff = night.join("docs").join("handoff.md");
         fs::write(&handoff, "night").unwrap();
-        let find = |path: &Path| find_relative_path_inner(&main, path.to_str().unwrap());
+        // Compared canonically: git and the temp folder may spell one path differently (a
+        // `RUNNER~1` short name on Windows runners, `/private/var` on macOS).
+        let real = |found: Option<PathBuf>| found.map(|found| fs::canonicalize(found).unwrap());
+        let find = |path: &Path| real(find_relative_path_inner(&main, path.to_str().unwrap()));
+        let handoff = fs::canonicalize(&handoff).unwrap();
 
-        assert_eq!(find(&main.join("a.txt")), Some(main.join("a.txt")));
+        assert_eq!(
+            find(&main.join("a.txt")),
+            Some(fs::canonicalize(main.join("a.txt")).unwrap())
+        );
         assert_eq!(
             find(&main.join("docs").join("handoff.md")),
             Some(handoff.clone())
@@ -743,13 +1074,13 @@ mod tests {
             // Windows compares checkouts without case, whichever separator was printed.
             let printed = format!("{}/docs/handoff.md", main.to_str().unwrap().to_uppercase());
             assert_eq!(
-                find_relative_path_inner(&main, &printed.replace('\\', "/")),
+                real(find_relative_path_inner(&main, &printed.replace('\\', "/"))),
                 Some(handoff.clone())
             );
             // A verbatim path names the same checkout.
             let verbatim = format!(r"\\?\{}", main.join("docs").join("handoff.md").display());
             assert_eq!(
-                find_relative_path_inner(&main, &verbatim),
+                real(find_relative_path_inner(&main, &verbatim)),
                 Some(handoff.clone())
             );
         }

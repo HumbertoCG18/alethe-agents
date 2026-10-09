@@ -3,6 +3,9 @@ import { resolve } from 'node:path'
 
 import { describe, expect, it, vi } from 'vitest'
 
+const askConfirm = vi.hoisted(() => vi.fn())
+vi.mock('./dialog', () => ({ askConfirm }))
+
 import { type Locale, translate } from './i18n'
 import {
   remoteControlEnableConfirmation,
@@ -26,12 +29,12 @@ function t(locale: Locale) {
 }
 
 describe.each(['en', 'pt-BR'] as const)('remote control consent (%s)', (locale) => {
-  it('confirms a false-to-true change with the configured exposure details', () => {
+  it('confirms a false-to-true change with the configured exposure details', async () => {
     const confirm = vi.fn(() => true)
     const setPreferences = vi.fn()
 
     expect(
-      requestRemoteControlPreference(true, preferences(), setPreferences, t(locale), confirm),
+      await requestRemoteControlPreference(true, preferences(), setPreferences, t(locale), confirm),
     ).toBe(true)
 
     expect(confirm).toHaveBeenCalledOnce()
@@ -44,11 +47,11 @@ describe.each(['en', 'pt-BR'] as const)('remote control consent (%s)', (locale) 
     expect(setPreferences).toHaveBeenCalledWith({ remoteEnabled: true })
   })
 
-  it('leaves the preference off when confirmation is cancelled', () => {
+  it('leaves the preference off when confirmation is cancelled', async () => {
     const setPreferences = vi.fn()
 
     expect(
-      requestRemoteControlPreference(
+      await requestRemoteControlPreference(
         true,
         preferences(),
         setPreferences,
@@ -59,12 +62,12 @@ describe.each(['en', 'pt-BR'] as const)('remote control consent (%s)', (locale) 
     expect(setPreferences).not.toHaveBeenCalled()
   })
 
-  it('disables immediately without asking for confirmation', () => {
+  it('disables immediately without asking for confirmation', async () => {
     const confirm = vi.fn()
     const setPreferences = vi.fn()
 
     expect(
-      requestRemoteControlPreference(
+      await requestRemoteControlPreference(
         false,
         preferences({ remoteEnabled: true }),
         setPreferences,
@@ -75,6 +78,18 @@ describe.each(['en', 'pt-BR'] as const)('remote control consent (%s)', (locale) 
 
     expect(confirm).not.toHaveBeenCalled()
     expect(setPreferences).toHaveBeenCalledWith({ remoteEnabled: false })
+  })
+
+  // window.confirm in the Tauri webview returns a Promise, always truthy: the consent never showed.
+  it('asks through the native dialog by default and stays off when declined', async () => {
+    askConfirm.mockReset().mockResolvedValue(false)
+    const setPreferences = vi.fn()
+
+    expect(
+      await requestRemoteControlPreference(true, preferences(), setPreferences, t(locale)),
+    ).toBe(false)
+    expect(askConfirm).toHaveBeenCalledOnce()
+    expect(setPreferences).not.toHaveBeenCalled()
   })
 })
 

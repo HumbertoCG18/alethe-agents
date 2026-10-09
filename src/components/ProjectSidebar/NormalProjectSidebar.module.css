@@ -105,10 +105,6 @@
   color: var(--fg-muted);
 }
 
-.explorerEmpty {
-  padding: 6px 0 0;
-}
-
 .title {
   min-width: 0;
   overflow: hidden;

@@ -373,6 +373,9 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ### Changed
 
+- **Notifications can be read in full and copied.** Click a notification to show its whole
+  message (it stays until you close it); the copy button next to the X copies the title and the
+  message.
 - **Night tab: concluded tasks under Completed.** Entries of the latest night whose task is already
   concluded in the registry move to a collapsed Completed section, so the night lists only what is
   still open.
@@ -534,6 +537,8 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ### Fixed
 
+- **The Files tab browses the project's folder without a terminal, and its "…" menu works.** The
+  menu refreshes the tree, collapses all folders, and reveals the folder in the file manager.
 - **The Todo panel shows its title once.** The settings gear moved to the Overview, Night and
   Personal row.
 - **Scrollbars follow the theme again.** The Git graph and the folder and plugin pickers showed the

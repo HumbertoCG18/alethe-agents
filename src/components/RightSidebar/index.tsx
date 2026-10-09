@@ -2,9 +2,14 @@ import { getCurrentWebview } from '@tauri-apps/api/webview'
 import {
   ArrowLeft,
   Blocks,
+  ChevronDown,
+  ChevronRight,
   ClipboardCopy,
   FileText,
+  Folder,
+  FolderOpen,
   GitPullRequest,
+  ListTree,
   Maximize2,
   Mic,
   PanelRightClose,
@@ -48,6 +53,8 @@ import {
   writeClipboardText,
 } from '../../lib/tauri'
 import { useSidebarViews } from '../../lib/viewPlacement'
+import { useCampaignView } from '../../plugins/todos/campaignView'
+import { campaignMarkdown, type CampaignMarkdownFile } from '../../plugins/todos/taskActions'
 import { selectActiveProject, useProjectsStore } from '../../stores/projectsStore'
 import { useUiStore } from '../../stores/uiStore'
 
@@ -57,6 +64,7 @@ const MarkdownRenderer = lazy(() =>
 import { ContributedView } from '../ContributedView'
 import { McpPanel } from '../McpPanel'
 import { PluginsSidebar } from '../PluginsSidebar'
+import { FileIcon } from '../ProjectSidebar/FileIcon'
 import { PullRequestsSidebar } from '../PullRequestsSidebar'
 import { DotmCircular2 } from '../ui/dotm-circular-2'
 import { VoiceHistoryPanel } from '../VoiceHistoryPanel'
@@ -346,6 +354,32 @@ function MarkdownSidebarViewer() {
   })
   // Plans come from the checkout the project uses: the picked worktree, the main one by default.
   const [planRoot, setPlanRoot] = useState<{ projectId: string; root: string } | null>(null)
+  const campaignView = useCampaignView()
+  const campaign = campaignView.registry?.campaigns.find(
+    (item) => item.id === campaignView.activeId,
+  )
+  const campaignKey =
+    campaign && campaignView.registry ? `${campaignView.registry.projectId}\n${campaign.id}` : null
+  const [campaignFound, setCampaignFound] = useState<{
+    key: string
+    files: CampaignMarkdownFile[]
+  } | null>(null)
+  // Only the active campaign's own lookup shows: another's stays hidden while this one runs.
+  const campaignFiles = campaignFound?.key === campaignKey ? campaignFound.files : []
+  const [browsing, setBrowsing] = useState(false)
+
+  useEffect(() => {
+    const registry = campaignView.registry
+    if (!campaign || !registry) return
+    const key = `${registry.projectId}\n${campaign.id}`
+    let cancelled = false
+    void campaignMarkdown(campaign, registry).then((files) => {
+      if (!cancelled) setCampaignFound({ key, files })
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [campaign, campaignView.registry])
 
   useEffect(() => {
     if (!activeProjectId) return
@@ -426,6 +460,10 @@ function MarkdownSidebarViewer() {
     if (markdown?.path) setSelectedPath(markdown.path)
   }, [markdown?.path])
 
+  // Every request to open a file shows it, from the list or anywhere else, the same file included:
+  // each request is a new entry.
+  useEffect(() => setBrowsing(false), [markdown])
+
   const openDroppedMarkdownPaths = useCallback(
     (paths: string[]) => {
       for (const path of paths.filter(isMarkdownPath)) {
@@ -494,6 +532,21 @@ function MarkdownSidebarViewer() {
     openDroppedMarkdownPaths([payload.path])
   }
 
+  const openListed = (path: string, title: string) => {
+    setSelectedPath(path)
+    openMarkdownSidebar(path, title)
+  }
+  const listed = campaignFiles.length > 0 || plans.length > 0
+  const showingList = browsing && listed
+  const list = (
+    <MarkdownList
+      campaignId={campaign?.id ?? null}
+      files={campaignFiles}
+      plans={plans}
+      onOpen={openListed}
+    />
+  )
+
   const copyMarkdown = async () => {
     if (content === null) return
     try {
@@ -507,70 +560,17 @@ function MarkdownSidebarViewer() {
   }
 
   if (!markdown && !selected) {
-    if (plans.length > 0) {
+    if (listed) {
       return (
         <section
           ref={panelRef}
-          className={`${styles.emptyMarkdown} ${dropActive ? styles.markdownDropActive : ''}`}
-          style={{
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'stretch',
-            padding: '12px',
-            gap: '8px',
-            overflowY: 'auto',
-          }}
+          className={`${styles.markdownPanel} ${dropActive ? styles.markdownDropActive : ''}`}
           onDragEnter={onInternalDragOver}
           onDragOver={onInternalDragOver}
           onDragLeave={onInternalDragLeave}
           onDrop={onInternalDrop}
         >
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              paddingBottom: '6px',
-              borderBottom: '1px solid var(--border)',
-              fontSize: '11px',
-              fontWeight: 600,
-              color: 'var(--fg-muted)',
-              textTransform: 'uppercase',
-              letterSpacing: '0.04em',
-            }}
-          >
-            <FileText size={13} />
-            <span>{t('plans.title')}</span>
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-            {plans.map((p) => (
-              <button
-                key={p.path}
-                type="button"
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '8px',
-                  padding: '8px 10px',
-                  background: 'var(--bg-subtle, rgba(255,255,255,0.02))',
-                  border: '1px solid var(--border)',
-                  borderRadius: '6px',
-                  color: 'var(--fg)',
-                  cursor: 'pointer',
-                  textAlign: 'left',
-                  fontSize: '12px',
-                }}
-                onClick={() => openMarkdownSidebar(p.path, p.title)}
-              >
-                <FileText size={13} style={{ color: 'var(--accent)', flexShrink: 0 }} />
-                <span
-                  style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                >
-                  {p.title}
-                </span>
-              </button>
-            ))}
-          </div>
+          {list}
           {dropActive ? (
             <div className={styles.markdownDropOverlay}>{t('rightSidebar.dropMarkdown')}</div>
           ) : null}
@@ -612,31 +612,49 @@ function MarkdownSidebarViewer() {
       ) : null}
       <header className={styles.header}>
         <div className={styles.heading}>
-          <FileText size={15} />
-          <span title={selected?.title ?? markdown?.title ?? ''}>
-            {selected?.title ?? markdown?.title ?? ''}
+          {showingList ? <ListTree size={15} /> : <FileText size={15} />}
+          <span title={showingList ? undefined : (selected?.title ?? markdown?.title ?? '')}>
+            {showingList
+              ? t('rightSidebar.markdownList')
+              : (selected?.title ?? markdown?.title ?? '')}
           </span>
         </div>
         <div className={styles.headerActions}>
-          <button
-            type="button"
-            className={styles.headerAction}
-            onClick={() => void load()}
-            title={t('ui.markdown.refresh')}
-            aria-label={t('ui.markdown.refresh')}
-          >
-            <RefreshCw size={15} />
-          </button>
-          <button
-            type="button"
-            className={styles.headerAction}
-            onClick={() => void copyMarkdown()}
-            disabled={content === null}
-            title={copied ? t('ui.markdown.copied') : t('ui.markdown.copySource')}
-            aria-label={copied ? t('ui.markdown.copied') : t('ui.markdown.copySource')}
-          >
-            <ClipboardCopy size={15} />
-          </button>
+          {listed ? (
+            <button
+              type="button"
+              className={`${styles.headerAction} ${showingList ? styles.headerActionActive : ''}`}
+              onClick={() => setBrowsing((current) => !current)}
+              aria-pressed={showingList}
+              title={t('rightSidebar.markdownList')}
+              aria-label={t('rightSidebar.markdownList')}
+            >
+              <ListTree size={15} />
+            </button>
+          ) : null}
+          {showingList ? null : (
+            <>
+              <button
+                type="button"
+                className={styles.headerAction}
+                onClick={() => void load()}
+                title={t('ui.markdown.refresh')}
+                aria-label={t('ui.markdown.refresh')}
+              >
+                <RefreshCw size={15} />
+              </button>
+              <button
+                type="button"
+                className={styles.headerAction}
+                onClick={() => void copyMarkdown()}
+                disabled={content === null}
+                title={copied ? t('ui.markdown.copied') : t('ui.markdown.copySource')}
+                aria-label={copied ? t('ui.markdown.copied') : t('ui.markdown.copySource')}
+              >
+                <ClipboardCopy size={15} />
+              </button>
+            </>
+          )}
           <button
             type="button"
             className={`${styles.headerAction} ${styles.cleanRedundantAction}`}
@@ -657,7 +675,8 @@ function MarkdownSidebarViewer() {
           </button>
         </div>
       </header>
-      {readmeTabs.length > 1 ? (
+      {showingList ? list : null}
+      {!showingList && (readmeTabs.length > 1 || readmeTabs.some((tab) => tab.closable)) ? (
         <div
           className={styles.readmeTabs}
           role="tablist"
@@ -697,37 +716,142 @@ function MarkdownSidebarViewer() {
           ))}
         </div>
       ) : null}
-      <div className={styles.path} title={selected?.path ?? markdown?.path ?? ''}>
-        {selected?.path ?? markdown?.path ?? ''}
-      </div>
-      <div className={styles.contentLayout}>
-        <div
-          ref={scrollRef}
-          className={styles.content}
-          onScroll={(event) => {
-            if (selected?.path)
-              markdownScrollPositions.set(selected.path, event.currentTarget.scrollTop)
-          }}
-        >
-          {error ? (
-            <div className={styles.empty}>
-              <FileText size={20} />
-              <strong>{t('rightSidebar.markdownError')}</strong>
-              <span>{error}</span>
+      {showingList ? null : (
+        <>
+          <div className={styles.path} title={selected?.path ?? markdown?.path ?? ''}>
+            {selected?.path ?? markdown?.path ?? ''}
+          </div>
+          <div className={styles.contentLayout}>
+            <div
+              ref={scrollRef}
+              className={styles.content}
+              onScroll={(event) => {
+                if (selected?.path)
+                  markdownScrollPositions.set(selected.path, event.currentTarget.scrollTop)
+              }}
+            >
+              {error ? (
+                <>
+                  <div className={styles.empty}>
+                    <FileText size={20} />
+                    <strong>{t('rightSidebar.markdownError')}</strong>
+                    <span>{error}</span>
+                  </div>
+                  {listed ? list : null}
+                </>
+              ) : content === null ? (
+                <div className={styles.empty}>
+                  <span>{t('ui.markdown.loading')}</span>
+                </div>
+              ) : (
+                <div ref={markdownRef} className={styles.commentableMarkdown}>
+                  <Suspense fallback={<span>{t('ui.markdown.loading')}</span>}>
+                    <MarkdownRenderer content={content} dark={dark} />
+                  </Suspense>
+                </div>
+              )}
             </div>
-          ) : content === null ? (
-            <div className={styles.empty}>
-              <span>{t('ui.markdown.loading')}</span>
-            </div>
-          ) : (
-            <div ref={markdownRef} className={styles.commentableMarkdown}>
-              <Suspense fallback={<span>{t('ui.markdown.loading')}</span>}>
-                <MarkdownRenderer content={content} dark={dark} />
-              </Suspense>
-            </div>
-          )}
-        </div>
-      </div>
+          </div>
+        </>
+      )}
     </section>
+  )
+}
+
+/**
+ * The Markdown worth opening here: the active campaign's, grouped by the folder the registry names,
+ * then the project plans, in the file explorer's rows.
+ */
+function MarkdownList({
+  campaignId,
+  files,
+  plans,
+  onOpen,
+}: {
+  campaignId: string | null
+  files: CampaignMarkdownFile[]
+  plans: Array<{ path: string; title: string }>
+  onOpen: (path: string, title: string) => void
+}) {
+  const t = useT()
+  const [closed, setClosed] = useState<ReadonlySet<string>>(() => new Set())
+  const folders = new Map<string, CampaignMarkdownFile[]>()
+  for (const file of files) {
+    const written = file.written.replace(/\\/g, '/')
+    const folder = written.includes('/') ? written.slice(0, written.lastIndexOf('/')) : '.'
+    folders.set(folder, [...(folders.get(folder) ?? []), file])
+  }
+  const toggle = (folder: string) =>
+    setClosed((current) => {
+      const next = new Set(current)
+      if (!next.delete(folder)) next.add(folder)
+      return next
+    })
+  const fileRow = (path: string, title: string, chip: string | null, nested: boolean) => (
+    <button
+      key={path}
+      type="button"
+      className={`${styles.listRow} ${nested ? styles.listNested : ''}`}
+      title={path}
+      onClick={() => onOpen(path, title)}
+    >
+      <FileIcon fileName={basename(path) || path} size={13} className={styles.listIcon} />
+      <span className={styles.listName}>{title}</span>
+      {chip ? <span className={styles.listChip}>{chip}</span> : null}
+    </button>
+  )
+
+  return (
+    <div className={styles.list}>
+      {campaignId && files.length > 0 ? (
+        <>
+          <div className={styles.listHeading}>
+            {t('rightSidebar.campaignMarkdown', { id: campaignId })}
+          </div>
+          {[...folders].map(([folder, items]) => {
+            const open = !closed.has(folder)
+            return (
+              <div key={folder}>
+                <button
+                  type="button"
+                  className={styles.listRow}
+                  onClick={() => toggle(folder)}
+                  aria-expanded={open}
+                  title={folder}
+                >
+                  {open ? (
+                    <ChevronDown size={13} className={styles.listChevron} />
+                  ) : (
+                    <ChevronRight size={13} className={styles.listChevron} />
+                  )}
+                  {open ? (
+                    <FolderOpen size={14} className={styles.listIcon} />
+                  ) : (
+                    <Folder size={14} className={styles.listIcon} />
+                  )}
+                  <span className={styles.listName}>{folder}</span>
+                </button>
+                {open
+                  ? items.map((file) =>
+                      fileRow(
+                        file.path,
+                        basename(file.path) || file.path,
+                        file.task ?? t('rightSidebar.handoffChip'),
+                        true,
+                      ),
+                    )
+                  : null}
+              </div>
+            )
+          })}
+        </>
+      ) : null}
+      {plans.length > 0 ? (
+        <>
+          <div className={styles.listHeading}>{t('plans.title')}</div>
+          {plans.map((plan) => fileRow(plan.path, plan.title, null, false))}
+        </>
+      ) : null}
+    </div>
   )
 }

@@ -109,7 +109,7 @@ export function RemoteControlPage() {
             type="button"
             className={`${controls.btn} ${enabled ? controls.btnDanger : controls.btnPrimary}`}
             onClick={() =>
-              requestRemoteControlPreference(
+              void requestRemoteControlPreference(
                 !preferences.remoteEnabled,
                 preferences,
                 setPreferences,

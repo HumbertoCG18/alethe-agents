@@ -1628,6 +1628,43 @@ describe('Night card', () => {
     expect(findRelativePath).toHaveBeenCalledWith('C:\\repo', 'docs/motor.md')
   })
 
+  it('moves concluded entries to Completed, leaving the night with a zero count when all are done', async () => {
+    fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    fs.files.set(
+      `${NIGHTS}\\2026-10-03.json`,
+      diary('2026-10-03', [entry('BASE-01', 'ok'), entry('BASE-02', 'ok')]),
+    )
+    render(<TodoSidebar />)
+    const toggle = await screen.findByRole('button', { name: /^Night of 10\/03/ })
+    expect(toggle).toHaveTextContent('0')
+    fireEvent.click(toggle)
+    expect(screen.queryByText('BASE-01 resumo')).toBeNull()
+
+    const completed = screen.getByRole('button', { name: /^Completed/ })
+    expect(completed).toHaveTextContent('2')
+    expect(completed).toHaveAttribute('aria-expanded', 'false')
+    fireEvent.click(completed)
+    expect(screen.getByText('BASE-01 resumo')).toBeInTheDocument()
+    expect(screen.getByText('BASE-02 resumo')).toBeInTheDocument()
+  })
+
+  it('keeps a not concluded entry in the night and lists the concluded one under Completed', async () => {
+    fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    fs.files.set(
+      `${NIGHTS}\\2026-10-03.json`,
+      diary('2026-10-03', [entry('OITO-03', 'ok'), entry('BASE-01', 'ok')]),
+    )
+    render(<TodoSidebar />)
+    const toggle = await screen.findByRole('button', { name: /^Night of 10\/03/ })
+    expect(toggle).toHaveTextContent('1')
+    fireEvent.click(toggle)
+    expect(screen.getByText('OITO-03 resumo')).toBeInTheDocument()
+    expect(screen.queryByText('BASE-01 resumo')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: /^Completed/ }))
+    expect(screen.getByText('BASE-01 resumo')).toBeInTheDocument()
+  })
+
   it('watches the folder and every diary, so fixing a malformed newest one shows it', async () => {
     fs.files.set(REGISTRY, JSON.stringify(exemplo))
     const older = `${NIGHTS}\\2026-10-02.json`
@@ -3496,6 +3533,17 @@ describe('Active campaign step', () => {
     expect(bar()).toBeNull()
   })
 
+  it('hides the Night tab bar once every night task is concluded', async () => {
+    fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    night(['OITO-01', 'ok'])
+    openTerminal('C:\\repo', 'claude', 'OITO')
+    useTodosStore.setState({ tab: 'night' })
+    render(<TodoSidebar />)
+    await waitFor(() => expect(listDirectory).toHaveBeenCalledWith(NIGHTS))
+    await act(async () => {})
+    expect(screen.queryByRole('progressbar')).toBeNull()
+  })
+
   it('hides the Night tab bar without a diary', async () => {
     fs.files.set(REGISTRY, JSON.stringify(exemplo))
     useTodosStore.setState({ tab: 'night' })
@@ -3519,6 +3567,8 @@ describe('Active campaign step', () => {
     const card = await screen.findByRole('button', { name: /^Night of 10\/03/ })
     expect(card).toHaveTextContent('1 waiting on you')
     fireEvent.click(card)
+    // The done entry sits under Completed, after the night's own.
+    fireEvent.click(screen.getByRole('button', { name: /^Completed/ }))
     const entries = [...document.querySelectorAll('li[data-lane]')]
     expect(
       entries.map((entry) => [
@@ -3526,10 +3576,10 @@ describe('Active campaign step', () => {
         entry.querySelector('[role="img"]')!.getAttribute('aria-label'),
       ]),
     ).toEqual([
-      ['finished', 'Done'],
       ['queued', 'Ready'],
       ['interrupted', 'stopped'],
       ['queued', 'waiting on you'],
+      ['finished', 'Done'],
     ])
   })
 })

@@ -1574,6 +1574,9 @@ export const en = {
   'rightSidebar.markdownEmptyTitle': 'No Markdown selected',
   'rightSidebar.markdownEmptyDesc':
     'Open a Markdown file from the project sidebar to preview it here.',
+  'rightSidebar.markdownList': 'Relevant Markdown',
+  'rightSidebar.campaignMarkdown': 'Campaign {id}',
+  'rightSidebar.handoffChip': 'handoff',
   'rightSidebar.commentsToggle': 'Show comments',
   'rightSidebar.commentsTitle': 'App comments',
   'rightSidebar.commentsEmpty': 'Select a passage in the Markdown to add a comment.',

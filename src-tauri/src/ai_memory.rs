@@ -811,7 +811,8 @@ mod tests {
 
         stop_managed(&active);
         stop_managed(&own_copy);
-        std::fs::remove_dir_all(&root).unwrap();
+        // Only Windows creates the folders, to hold the copied binary.
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

@@ -537,6 +537,9 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ### Fixed
 
+- **A release is no longer published before its notes job finishes.** The release workflow publishes
+  the draft only after the release-notes job succeeds, a failed run discards its draft only once that
+  job has finished, and two release runs queue instead of overlapping.
 - **Campaign and night files open only from inside the repository.** A text file named by the
   campaign registry or night evidence is read, listed in the Markdown index, summarized or opened in
   the full reader only when it really lies in one of the repository's checkouts; one reached through

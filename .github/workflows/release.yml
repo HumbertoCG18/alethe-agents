@@ -6,6 +6,13 @@ on:
   # `npm run release:publish` (gh workflow run) or Actions -> Release -> Run workflow.
   workflow_dispatch:
 
+# The version is read from tauri.conf.json inside the jobs, so it cannot key the group; one
+# release at a time is the safe superset. A running release is never cancelled, which would leave
+# its draft behind; GitHub keeps one queued run and replaces it with a newer one.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
   quality:
     uses: ./.github/workflows/ci.yml
@@ -153,7 +160,7 @@ jobs:
   # `-msi` / `-nsis` keys, which stay published.
   fix-updater-target:
     name: Point windows-x86_64 at NSIS
-    needs: build
+    needs: [build, release-notes]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -248,7 +255,7 @@ jobs:
   # cleans it up — the next run would then be working around state left by the failed one.
   discard-failed-draft:
     name: Discard the draft of a failed run
-    needs: [build, fix-updater-target]
+    needs: [build, release-notes, fix-updater-target]
     if: failure()
     runs-on: ubuntu-latest
     permissions:

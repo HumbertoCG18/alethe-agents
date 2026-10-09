@@ -512,6 +512,9 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ### Fixed
 
+- **The orchestrator's quota warning names its window.** It says whether the session, weekly, Opus
+  or a model's weekly limit crossed the threshold, so it no longer looks like it contradicts the
+  usage indicator.
 - **The Todo panel shows its title once.** The settings gear moved to the Overview, Night and
   Personal row.
 - **Markdown tabs close cleanly.** A single Markdown tab can be closed, closing the last one keeps

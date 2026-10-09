@@ -27,6 +27,7 @@ import {
   useState,
 } from 'react'
 
+import { quotaWindowLabel } from '../../lib/agentFitness'
 import { useOrchestratorQuotaWarnings } from '../../hooks/useOrchestratorQuotaWarnings'
 import { COST_POLL_MS } from '../../lib/agentCanvasConfig'
 import { startAgentCanvasMirror } from '../../lib/agentCanvasMirror'
@@ -1428,11 +1429,13 @@ export const OrchestratorPane = memo(function OrchestratorPane({
                 title={t('orchestrator.quotaWarningTitle', {
                   agent: warning.agent,
                   pct: warning.pct,
+                  window: quotaWindowLabel(warning.window, t),
                 })}
               >
                 {t('orchestrator.quotaWarning', {
                   agent: warning.agent,
                   pct: warning.pct,
+                  window: quotaWindowLabel(warning.window, t),
                   resets: warning.resetsAt
                     ? formatReset(warning.resetsAt, t('orchestrator.quotaResetsNow'))
                     : '—',

@@ -58,6 +58,17 @@ describe('agent fitness', () => {
     expect(fitness.resetsAt).toBe('later')
   })
 
+  it('reports a high model limit even when the five-hour window is low', () => {
+    const fitness = claudeFitness({
+      five_hour: claudeWindow(12),
+      seven_day: claudeWindow(20),
+      seven_day_opus: claudeWindow(0),
+      model_limits: [{ model: 'Fable', utilization: 92.4, resets_at: 'monday' }],
+    })
+    expect(fitness.worst).toBe('fable')
+    expect(fitness.used).toBe(92)
+  })
+
   it('counts model-scoped weekly limits such as Fable', () => {
     const fitness = claudeFitness({
       five_hour: claudeWindow(10),

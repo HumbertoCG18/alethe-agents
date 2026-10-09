@@ -9,6 +9,8 @@ import { useProjectsStore } from '../stores/projectsStore'
 export type QuotaWarning = {
   agent: 'claude' | 'codex'
   pct: number
+  /** Fitness label of the window that triggered the warning (see `quotaWindowLabel`). */
+  window: string
   resetsAt: string | null
 }
 
@@ -34,7 +36,7 @@ export function useOrchestratorQuotaWarnings(): QuotaWarning[] {
     const report = async (agent: 'claude' | 'codex', fitness: AgentFitness) => {
       await setAgentFitness(agent, fitness).catch(() => undefined)
       return fitness.rateLimited || fitness.used >= USAGE_FALLBACK_THRESHOLD
-        ? { agent, pct: fitness.used, resetsAt: fitness.resetsAt }
+        ? { agent, pct: fitness.used, window: fitness.worst, resetsAt: fitness.resetsAt }
         : null
     }
 

@@ -537,6 +537,9 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ### Fixed
 
+- **The orchestrator's quota warning names its window.** It says whether the session, weekly, Opus
+  or a model's weekly limit crossed the threshold, so it no longer looks like it contradicts the
+  usage indicator.
 - **Long task titles wrap in the Todo panel.** They no longer end in an ellipsis; the title
   wraps inside the panel width.
 - **The Files tab browses the project's folder without a terminal, and its "…" menu works.** The

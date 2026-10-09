@@ -1,3 +1,4 @@
+import type { MessageKey } from './i18n/messages/en'
 import type { ClaudeUsage, CodexUsage } from './tauri/usage'
 
 export type AgentFitness = {
@@ -16,6 +17,17 @@ function worstOf(windows: Window[]): Window {
 
 function isoFromMs(ms: number): string | null {
   return ms > 0 ? new Date(ms).toISOString() : null
+}
+
+/** Human name of the window a fitness `worst` label stands for; any other label is a model limit. */
+export function quotaWindowLabel(
+  worst: string,
+  t: (key: MessageKey, params?: Record<string, string | number>) => string,
+): string {
+  if (worst === '5h') return t('orchestrator.quotaWindow5h')
+  if (worst === 'week') return t('orchestrator.quotaWindowWeek')
+  if (worst === 'opus') return t('orchestrator.quotaWindowOpus')
+  return t('orchestrator.quotaWindowModel', { model: worst })
 }
 
 export function claudeFitness(usage: ClaudeUsage): AgentFitness {

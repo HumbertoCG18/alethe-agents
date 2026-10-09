@@ -294,6 +294,14 @@ pub fn run() {
             window_style::apply_rounded_corners(app.handle());
 
             crash_watch::start(app.handle().clone());
+            let main_thread = app.handle().clone();
+            spawn_stall_watch(
+                STALL_PING_INTERVAL,
+                STALL_THRESHOLD,
+                move |ping| main_thread.run_on_main_thread(ping).is_ok(),
+                timed_sleep,
+                logging::record_app_event,
+            );
             resources::start(
                 app.handle().clone(),
                 Arc::clone(&sessions_for_resources),
@@ -321,7 +329,7 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![
+        .invoke_handler(record_command(tauri::generate_handler![
             markdown_reader::markdown_generate,
             markdown_reader::markdown_cancel,
             markdown_reader::open_markdown_reader,
@@ -654,7 +662,7 @@ pub fn run() {
             opencode_sessions::snapshot_opencode_sessions,
             opencode_sessions::opencode_export_session,
             ping,
-        ])
+        ]))
         .build(context)
         .expect("error while building alethe")
         .run(move |_app_handle, event| {
@@ -747,9 +755,119 @@ fn ping() -> &'static str {
     "pong"
 }
 
+/// The main thread is pinged every second, and an answer missing for two seconds is a stall: idle,
+/// that costs one wakeup a second, and two seconds is well past a normal hitch.
+const STALL_PING_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
+const STALL_THRESHOLD: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// The last command dispatched, named by `app.stall`. Sync commands run on the main thread, so
+/// none is dispatched while one of them blocks it.
+static LAST_COMMAND: Mutex<String> = Mutex::new(String::new());
+
+/// Records each command's name before running it. Plugin commands bypass this handler.
+fn record_command(
+    handler: impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync + 'static,
+) -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync + 'static {
+    move |invoke| {
+        {
+            let mut last = LAST_COMMAND
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            last.clear();
+            last.push_str(invoke.message.command());
+        }
+        handler(invoke)
+    }
+}
+
+/// Sleeps for `interval` and returns how long that really took.
+fn timed_sleep(interval: std::time::Duration) -> std::time::Duration {
+    let started = std::time::Instant::now();
+    std::thread::sleep(interval);
+    started.elapsed()
+}
+
+/// Posts a ping to the main thread through `post` every `interval`, and logs one `app.stall` per
+/// ping still unanswered after `threshold`. The line is written while the stall lasts, so a freeze
+/// that never ends is on record too; `blocked_ms` is how long it had lasted by then, and an
+/// `app.stall.end` line gives its whole length once the main thread answers. Missed pings
+/// are counted rather than timed, and `sleep` returns how long it really took, so a suspended
+/// machine is not taken for a stall. Stops once `post` fails, when the event loop is gone.
+fn spawn_stall_watch(
+    interval: std::time::Duration,
+    threshold: std::time::Duration,
+    post: impl Fn(Box<dyn FnOnce() + Send>) -> bool + Send + 'static,
+    sleep: impl Fn(std::time::Duration) -> std::time::Duration + Send + 'static,
+    log: impl Fn(String, String) -> Result<(), String> + Send + 'static,
+) {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    const UNANSWERED: u64 = u64::MAX;
+    let _ = std::thread::Builder::new()
+        .name("alethe-stall-watch".to_string())
+        .spawn(move || {
+            // Set by the ping itself to its milliseconds since posting, so a watch that wakes
+            // late still times the stall to the answer.
+            let mut answered_ms = Arc::new(AtomicU64::new(UNANSWERED));
+            loop {
+                answered_ms.store(UNANSWERED, Ordering::Release);
+                let ack = Arc::clone(&answered_ms);
+                let sent = std::time::Instant::now();
+                if !post(Box::new(move || {
+                    ack.store(sent.elapsed().as_millis() as u64, Ordering::Release)
+                })) {
+                    return;
+                }
+                let mut waited = std::time::Duration::ZERO;
+                let mut logged = false;
+                loop {
+                    let slept = sleep(interval);
+                    let answer_ms = answered_ms.load(Ordering::Acquire);
+                    if answer_ms != UNANSWERED {
+                        if logged {
+                            let _ = log(
+                                "app.stall.end".to_string(),
+                                format!("blocked_ms={answer_ms}"),
+                            );
+                        }
+                        break;
+                    }
+                    // A sleep far over its interval means this thread was not running, as when
+                    // the machine was suspended, and the main thread may not have had its turn
+                    // yet either. A fresh ping starts the count and the timing over from here,
+                    // since on Windows `Instant` reads QueryPerformanceCounter (Rust std docs),
+                    // which counts sleep states (Microsoft, "Acquiring high-resolution time
+                    // stamps"); the old ping answers into a cell nobody reads.
+                    if slept > interval * 3 {
+                        answered_ms = Arc::new(AtomicU64::new(UNANSWERED));
+                        break;
+                    }
+                    waited += interval;
+                    if !logged && waited >= threshold {
+                        logged = true;
+                        let command = LAST_COMMAND
+                            .lock()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner())
+                            .clone();
+                        let _ = log(
+                            "app.stall".to_string(),
+                            format!(
+                                "blocked_ms={} last_command={}",
+                                sent.elapsed().as_millis(),
+                                if command.is_empty() { "none" } else { &command }
+                            ),
+                        );
+                    }
+                }
+            }
+        });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender};
+    use std::time::{Duration, Instant};
 
     #[test]
     fn the_quit_watchdog_forces_the_exit_only_once_its_wait_runs_out() {
@@ -794,6 +912,200 @@ mod tests {
         assert!(at("\"app.quit.session\"") < at("mark_clean_exit"));
         assert!(at("mark_clean_exit") < at("\"app.quit.exit\""));
         assert!(at("\"app.quit.exit\"") < at("app.exit(0)"));
+    }
+
+    /// Only turns a hang into a failure: every step below waits on a message, not on time.
+    const STEP_LIMIT: Duration = Duration::from_secs(5);
+
+    /// A stall watch the test steps through: its pings run on a stand-in main thread, and each of
+    /// its sleeps lasts until the test ends it, saying how long it took.
+    struct SteppedWatch {
+        asleep: Receiver<()>,
+        wake: Sender<Duration>,
+        answers: Receiver<Instant>,
+        lines: Receiver<(String, String)>,
+        done: Arc<AtomicBool>,
+    }
+
+    impl SteppedWatch {
+        /// Starts the watch with the app's interval and threshold, its first ping queued behind
+        /// `block_main_thread`, which holds the main thread until the returned sender is dropped.
+        fn blocked() -> (Self, Sender<()>) {
+            let (main, jobs) = channel::<Box<dyn FnOnce() + Send>>();
+            std::thread::spawn(move || {
+                for job in jobs {
+                    job();
+                }
+            });
+            *LAST_COMMAND.lock().unwrap() = "block_main_thread".to_string();
+            let (unblock, blocked) = channel::<()>();
+            main.send(Box::new(move || {
+                let _ = blocked.recv();
+            }))
+            .unwrap();
+            let (asleep_tx, asleep) = channel();
+            let (wake, woken) = channel();
+            let (answered, answers) = channel();
+            let (line, lines) = channel();
+            let done = Arc::new(AtomicBool::new(false));
+            let stop = Arc::clone(&done);
+            spawn_stall_watch(
+                STALL_PING_INTERVAL,
+                STALL_THRESHOLD,
+                move |ping| {
+                    let answered = answered.clone();
+                    !stop.load(Ordering::Acquire)
+                        && main
+                            .send(Box::new(move || {
+                                ping();
+                                let _ = answered.send(Instant::now());
+                            }))
+                            .is_ok()
+                },
+                move |_| {
+                    let _ = asleep_tx.send(());
+                    woken.recv().expect("the test ends each sleep")
+                },
+                move |kind, message| {
+                    let _ = line.send((kind, message));
+                    Ok(())
+                },
+            );
+            let watch = SteppedWatch {
+                asleep,
+                wake,
+                answers,
+                lines,
+                done,
+            };
+            watch.asleep.recv_timeout(STEP_LIMIT).expect("the watch sleeps");
+            (watch, unblock)
+        }
+
+        /// Ends the watch's sleep as if it had taken `slept`, and returns once it sleeps again, so
+        /// all it does in between is done.
+        fn sleep(&self, slept: Duration) {
+            self.wake.send(slept).unwrap();
+            self.asleep.recv_timeout(STEP_LIMIT).expect("the watch sleeps");
+        }
+
+        fn answer(&self) -> Instant {
+            self.answers.recv_timeout(STEP_LIMIT).expect("the ping is answered")
+        }
+
+        fn line(&self) -> (String, String) {
+            self.lines.recv_timeout(STEP_LIMIT).expect("a line is logged")
+        }
+
+        /// Checks nothing more was logged, then stops the watch: with the main thread free, its
+        /// next post fails.
+        fn finish(self) {
+            assert_eq!(self.lines.try_recv().ok(), None, "nothing more is logged");
+            self.done.store(true, Ordering::Release);
+            loop {
+                let _ = self.wake.send(STALL_PING_INTERVAL);
+                match self.asleep.recv_timeout(STEP_LIMIT) {
+                    Ok(()) => continue,
+                    Err(RecvTimeoutError::Disconnected) => break,
+                    Err(RecvTimeoutError::Timeout) => panic!("the watch does not stop"),
+                }
+            }
+        }
+    }
+
+    fn blocked_ms(message: &str, suffix: &str) -> u128 {
+        message
+            .strip_suffix(suffix)
+            .and_then(|rest| rest.strip_prefix("blocked_ms="))
+            .and_then(|ms| ms.parse().ok())
+            .unwrap_or_else(|| panic!("unexpected line: {message}"))
+    }
+
+    /// A command blocks the main thread past the threshold: one `app.stall` names it while the
+    /// stall lasts, and one `app.stall.end` times it up to the answer, however late the watch
+    /// itself wakes to see that answer.
+    #[test]
+    fn a_main_thread_blocked_past_the_threshold_logs_one_stall_naming_the_command() {
+        let started = Instant::now();
+        let (watch, unblock) = SteppedWatch::blocked();
+        // The second missed ping reaches the threshold; the next two log nothing.
+        for _ in 0..4 {
+            watch.sleep(STALL_PING_INTERVAL);
+        }
+        let (kind, message) = watch.line();
+        assert_eq!(kind, "app.stall");
+        let so_far = blocked_ms(&message, " last_command=block_main_thread");
+        assert!(so_far <= started.elapsed().as_millis(), "{message}");
+
+        std::thread::sleep(Duration::from_millis(200));
+        drop(unblock);
+        let answered = watch.answer();
+        // The watch oversleeps the answer, as a starved thread would.
+        std::thread::sleep(Duration::from_millis(500));
+        watch.sleep(STALL_PING_INTERVAL);
+        let (kind, message) = watch.line();
+        assert_eq!(kind, "app.stall.end");
+        let total = blocked_ms(&message, "");
+        assert!(total >= 200, "the whole stall: {message}");
+        assert!(
+            total <= answered.duration_since(started).as_millis(),
+            "timed to the answer, not to when the watch saw it: {message}"
+        );
+        watch.finish();
+    }
+
+    /// A suspended machine is no stall: one ping is already missed when a sleep runs far over its
+    /// interval, and the watch looks again before the main thread, resumed too, answers.
+    #[test]
+    fn a_sleep_far_over_its_interval_restarts_the_count_instead_of_logging_a_stall() {
+        let (watch, unblock) = SteppedWatch::blocked();
+        watch.sleep(STALL_PING_INTERVAL);
+        watch.sleep(STALL_PING_INTERVAL * 10);
+        drop(unblock);
+        watch.answer();
+        watch.sleep(STALL_PING_INTERVAL);
+        watch.finish();
+    }
+
+    /// A stall that goes on after a resume is timed from the resume, not across the suspension.
+    #[test]
+    fn a_stall_that_persists_after_a_resume_is_timed_from_the_resume() {
+        let (watch, unblock) = SteppedWatch::blocked();
+        watch.sleep(STALL_PING_INTERVAL);
+        // Suspended: real time passes while the watch sleeps far over its interval.
+        std::thread::sleep(Duration::from_millis(500));
+        let resumed = Instant::now();
+        watch.sleep(STALL_PING_INTERVAL * 10);
+        watch.sleep(STALL_PING_INTERVAL);
+        watch.sleep(STALL_PING_INTERVAL);
+        let (kind, message) = watch.line();
+        assert_eq!(kind, "app.stall");
+        let so_far = blocked_ms(&message, " last_command=block_main_thread");
+        assert!(so_far <= resumed.elapsed().as_millis(), "{message}");
+
+        drop(unblock);
+        watch.answer();
+        let answered = watch.answer();
+        watch.sleep(STALL_PING_INTERVAL);
+        let (kind, message) = watch.line();
+        assert_eq!(kind, "app.stall.end");
+        let total = blocked_ms(&message, "");
+        assert!(
+            total <= answered.duration_since(resumed).as_millis(),
+            "{message}"
+        );
+        watch.finish();
+    }
+
+    /// One missed ping is half the threshold: a main thread that answers then logs nothing.
+    #[test]
+    fn a_main_thread_answering_within_the_threshold_logs_nothing() {
+        let (watch, unblock) = SteppedWatch::blocked();
+        watch.sleep(STALL_PING_INTERVAL);
+        drop(unblock);
+        watch.answer();
+        watch.sleep(STALL_PING_INTERVAL);
+        watch.finish();
     }
 
     #[test]

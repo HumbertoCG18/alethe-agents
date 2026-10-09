@@ -334,6 +334,7 @@ pub async fn spawn_pty(
                 requested_command.as_deref(),
                 &extras,
                 env.as_ref(),
+                command_line.as_deref(),
             )
         } else {
             resolved_launcher = if let Some(override_path) = launcher_override

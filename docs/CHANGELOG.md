@@ -537,6 +537,9 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ### Fixed
 
+- **Orchestrator shells in a WSL folder run their command.** They opened an idle login shell in the
+  distro while the board showed them running; the command now runs there, and the board sees it
+  exit.
 - **A profile that fails to delete keeps its credentials.** Its folder is removed and the profile
   list saved before its GitHub sync token and Spotify secrets are deleted, so a folder that cannot
   be removed (for example, a file still open in it on Windows) leaves the profile listed with its

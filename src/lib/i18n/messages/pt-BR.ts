@@ -93,6 +93,11 @@ export const ptBR: Record<MessageKey, string> = {
   'markdown.legacyPane':
     'Este arquivo foi aberto antes de o Alethe verificar links do repositório. Abra-o de novo para carregá-lo.',
   'markdown.legacyPaneOpen': 'Abrir de novo',
+  'markdown.saveError': 'Não consegui salvar {name}. Sua edição continua no editor.',
+  'markdown.saveOutsideRepository':
+    'Este arquivo agora aponta para fora do repositório por um link, por isso não foi salvo.',
+  'media.outsideRepository':
+    'Este arquivo aponta para fora do repositório por um link, por isso não foi aberto.',
   'rightSidebar.configure': 'Configurar barra lateral',
   'prs.project': 'Projeto',
   'prs.selectProject': 'Selecione um projeto',

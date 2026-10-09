@@ -47,6 +47,7 @@ const FORBIDDEN_COMMANDS = new Set([
   'plugin_catalog_open',
   'save_projects',
   'write_text_file',
+  'write_repository_text_file',
   'delete_filesystem_entry',
   'mcp_reveal_env',
   'remote_control_open_pairing',

@@ -537,6 +537,14 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ### Fixed
 
+- **A profile that fails to delete keeps its credentials.** Its folder is removed and the profile
+  list saved before its GitHub sync token and Spotify secrets are deleted, so a folder that cannot
+  be removed (for example, a file still open in it on Windows) leaves the profile listed with its
+  credentials instead of without them.
+- **ai-memory follows the active profile.** Switching to another profile, or deleting the one
+  ai-memory was started for, stops the server Alethe started for the previous profile, so the new
+  profile no longer reads and writes the old profile's memory. When ai-memory is enabled for the
+  profile switched to, its own server starts automatically.
 - **A release is no longer published before its notes job finishes.** The release workflow publishes
   the draft only after the release-notes job succeeds, a failed run discards its draft only once that
   job has finished, and two release runs queue instead of overlapping.

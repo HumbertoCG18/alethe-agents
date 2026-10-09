@@ -15,7 +15,8 @@ import {
  */
 export function useMarkdownFile(path: string | null, scope?: string | null) {
   const generation = useRef(0)
-  const key = path === null ? null : `${scope ?? ''}\0${path}`
+  // Any string, blank included, is a scope: only null or undefined read as a picked file.
+  const key = path === null ? null : typeof scope === 'string' ? `${scope}\0${path}` : path
   const activeKey = useRef(key)
   const mounted = useRef(true)
   activeKey.current = key
@@ -32,7 +33,9 @@ export function useMarkdownFile(path: string | null, scope?: string | null) {
     )
     if (!path) return
     try {
-      const content = await (scope ? readRepositoryTextFile(scope, path) : readTextFile(path))
+      const content = await (typeof scope === 'string'
+        ? readRepositoryTextFile(scope, path)
+        : readTextFile(path))
       if (generation.current === request) setResult({ key, content, error: null })
     } catch (error) {
       if (generation.current === request) setResult({ key, content: null, error: String(error) })

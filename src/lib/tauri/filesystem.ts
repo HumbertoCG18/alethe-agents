@@ -66,8 +66,27 @@ export async function readRepositoryTextFile(cwd: string, path: string): Promise
   return invoke<string>('read_repository_text_file', { cwd, path })
 }
 
+/** `readRepositoryTextFile` for an image, as base64; rejects a file over 32 MiB. */
+export async function readRepositoryFileBase64(cwd: string, path: string): Promise<string> {
+  return invoke<string>('read_repository_file_base64', { cwd, path })
+}
+
+/** Resolves while a file named by repository text is inside `cwd`'s checkouts, else rejects. */
+export async function checkRepositoryFile(cwd: string, path: string): Promise<void> {
+  await invoke('check_repository_file', { cwd, path })
+}
+
 export async function writeTextFile(path: string, content: string): Promise<void> {
   await invoke('write_text_file', { path, content })
+}
+
+/** `writeTextFile` for a file named by repository text, refused like `readRepositoryTextFile`. */
+export async function writeRepositoryTextFile(
+  cwd: string,
+  path: string,
+  content: string,
+): Promise<void> {
+  await invoke('write_repository_text_file', { cwd, path, content })
 }
 
 /**

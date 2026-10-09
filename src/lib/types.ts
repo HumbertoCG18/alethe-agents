@@ -343,9 +343,9 @@ export type Terminal = {
 
   filePath?: string
   /**
-   * On a file pane: the checkout its reads are held to when opened from repository text (task
-   * evidence), so a link swapped in later is refused; null for a file the user picked. Absent on a
-   * pane saved before the field, which reads nothing until the user opens it again.
+   * On a file pane: the checkout its reads and saves are held to when opened from repository text
+   * (task evidence), so a link swapped in later is refused; null for a file the user picked. Absent
+   * on a pane saved before the field, which reads nothing until the user opens it again.
    */
   fileScope?: string | null
 

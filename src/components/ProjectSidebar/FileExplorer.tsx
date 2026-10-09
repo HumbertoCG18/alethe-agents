@@ -2,11 +2,13 @@ import { convertFileSrc } from '@tauri-apps/api/core'
 import {
   ChevronDown,
   ChevronRight,
+  ChevronsDownUp,
   Eye,
   Folder,
   FolderOpen,
   FolderSearch,
   LayoutGrid,
+  MoreHorizontal,
   PanelRightOpen,
   Pencil,
   RefreshCw,
@@ -39,18 +41,22 @@ import styles from './FileExplorer.module.css'
 type FileExplorerProps = {
   projectId: string
   cwd: string
-  ptyId: string | null
-  terminalName: string
+  /** Absent when the project has no terminal: the explorer then browses `cwd` as is. */
+  ptyId?: string | null
+  terminalName?: string
 }
 
 type Preview = DirectoryEntry & { content: string | null; error: string | null }
 type ContextMenu = { entry: DirectoryEntry; x: number; y: number }
+type MoreMenu = { x: number; y: number }
 
 const IMAGE_PATTERN = /\.(avif|bmp|gif|jpe?g|png|svg|webp)$/i
 const VIDEO_PATTERN = /\.(mp4|m4v|mov|webm|ogv)$/i
 const PDF_PATTERN = /\.pdf$/i
 const MARKDOWN_PATTERN = /\.(md|markdown|mdx)$/i
 const MAX_TEXT_PREVIEW_BYTES = 2 * 1024 * 1024
+// Matches `.contextMenu` min-width, so the menu opens right-aligned under its button.
+const MENU_WIDTH = 178
 
 export function FileExplorer({ projectId, cwd, ptyId, terminalName }: FileExplorerProps) {
   const t = useT()
@@ -63,7 +69,9 @@ export function FileExplorer({ projectId, cwd, ptyId, terminalName }: FileExplor
   const [reloadKey, setReloadKey] = useState(0)
   const [liveCwd, setLiveCwd] = useState(cwd)
   const [preview, setPreview] = useState<Preview | null>(null)
+  const [collapseKey, setCollapseKey] = useState(0)
   const [menu, setMenu] = useState<ContextMenu | null>(null)
+  const [moreMenu, setMoreMenu] = useState<MoreMenu | null>(null)
   const [gitIndex, setGitIndex] = useState<GitExplorerIndex | null>(null)
   const menuRef = useRef<HTMLDivElement | null>(null)
   const lastGitRefreshRef = useRef(0)
@@ -120,13 +128,15 @@ export function FileExplorer({ projectId, cwd, ptyId, terminalName }: FileExplor
   }, [cwd, ptyId])
 
   useEffect(() => {
-    if (!menu) return
+    if (!menu && !moreMenu) return
     const close = (event: PointerEvent) => {
-      if (!menuRef.current?.contains(event.target as Node)) setMenu(null)
+      if (menuRef.current?.contains(event.target as Node)) return
+      setMenu(null)
+      setMoreMenu(null)
     }
     window.addEventListener('pointerdown', close)
     return () => window.removeEventListener('pointerdown', close)
-  }, [menu])
+  }, [menu, moreMenu])
 
   const addToGrid = (entry: DirectoryEntry) => {
     if (entry.is_dir) return
@@ -209,104 +219,160 @@ export function FileExplorer({ projectId, cwd, ptyId, terminalName }: FileExplor
   }
 
   return (
-    <div className={styles.explorer} onContextMenu={(event) => event.preventDefault()}>
-      <div className={styles.context} title={liveCwd}>
-        <span className={styles.contextName}>{terminalName}</span>
-        <span className={styles.contextPath}>{liveCwd}</span>
+    <>
+      <div className={styles.header}>
+        <span className={styles.headerLabel}>{t('ui.sidebar.explorer')}</span>
         <button
           type="button"
           className={styles.iconButton}
-          onClick={() => void openInFileExplorer(liveCwd)}
-          title={t('files.revealFolder')}
-          aria-label={t('files.revealFolder')}
+          onClick={(event) => {
+            const rect = event.currentTarget.getBoundingClientRect()
+            setMenu(null)
+            setMoreMenu({ x: Math.max(4, rect.right - MENU_WIDTH), y: rect.bottom + 4 })
+          }}
+          aria-haspopup="menu"
+          title={t('files.moreActions')}
+          aria-label={t('files.moreActions')}
         >
-          <FolderSearch size={13} />
-        </button>
-        <button
-          type="button"
-          className={styles.iconButton}
-          onClick={() => setReloadKey((value) => value + 1)}
-          title={t('files.refresh')}
-          aria-label={t('files.refresh')}
-        >
-          <RefreshCw size={13} />
+          <MoreHorizontal size={14} />
         </button>
       </div>
-      <DirectoryNode
-        projectId={projectId}
-        path={liveCwd}
-        name={rootName(liveCwd)}
-        depth={0}
-        initialOpen
-        reloadKey={reloadKey}
-        gitIndex={gitIndex}
-        onOpen={addToGrid}
-        onPreview={showPreview}
-        onOpenMarkdownSidebar={openMarkdownInSidebar}
-        onContextMenu={(event, entry) => {
-          event.preventDefault()
-          event.stopPropagation()
-          setMenu({ entry, x: event.clientX, y: event.clientY })
-        }}
-      />
-
-      {menu ? (
-        <div
-          ref={menuRef}
-          className={styles.contextMenu}
-          style={{ left: menu.x, top: menu.y }}
-          role="menu"
-        >
-          {!menu.entry.is_dir ? (
-            <>
-              <MenuAction
-                icon={<LayoutGrid size={13} />}
-                label={t('files.addToGrid')}
-                onClick={() => addToGrid(menu.entry)}
-              />
-              <MenuAction
-                icon={<Eye size={13} />}
-                label={t('files.preview')}
-                onClick={() => void showPreview(menu.entry)}
-              />
-              {MARKDOWN_PATTERN.test(menu.entry.path) ? (
-                <MenuAction
-                  icon={<PanelRightOpen size={13} />}
-                  label={t('files.openMarkdownSidebar')}
-                  onClick={() => openMarkdownInSidebar(menu.entry)}
-                />
-              ) : null}
-            </>
-          ) : null}
-          <MenuAction
-            icon={<FolderSearch size={13} />}
-            label={t('files.reveal')}
-            onClick={() => {
-              setMenu(null)
-              void openInFileExplorer(menu.entry.path)
-            }}
-          />
-          <MenuAction
-            icon={<Pencil size={13} />}
-            label={t('files.rename')}
-            onClick={() => void renameEntry(menu.entry)}
-          />
-          <MenuAction
-            danger
-            icon={<Trash2 size={13} />}
-            label={t('files.delete')}
-            onClick={() => void deleteEntry(menu.entry)}
-          />
+      <div className={styles.explorer} onContextMenu={(event) => event.preventDefault()}>
+        <div className={styles.context} title={liveCwd}>
+          {terminalName ? <span className={styles.contextName}>{terminalName}</span> : null}
+          <span className={styles.contextPath}>{liveCwd}</span>
+          <button
+            type="button"
+            className={styles.iconButton}
+            onClick={() => void openInFileExplorer(liveCwd)}
+            title={t('files.revealFolder')}
+            aria-label={t('files.revealFolder')}
+          >
+            <FolderSearch size={13} />
+          </button>
+          <button
+            type="button"
+            className={styles.iconButton}
+            onClick={() => setReloadKey((value) => value + 1)}
+            title={t('files.refresh')}
+            aria-label={t('files.refresh')}
+          >
+            <RefreshCw size={13} />
+          </button>
         </div>
-      ) : null}
+        <DirectoryNode
+          projectId={projectId}
+          path={liveCwd}
+          name={rootName(liveCwd)}
+          depth={0}
+          initialOpen
+          reloadKey={reloadKey}
+          collapseKey={collapseKey}
+          gitIndex={gitIndex}
+          onOpen={addToGrid}
+          onPreview={showPreview}
+          onOpenMarkdownSidebar={openMarkdownInSidebar}
+          onContextMenu={(event, entry) => {
+            event.preventDefault()
+            event.stopPropagation()
+            // One menu at a time: they share the ref that outside clicks are tested against.
+            setMoreMenu(null)
+            setMenu({ entry, x: event.clientX, y: event.clientY })
+          }}
+        />
 
-      <FilePreviewModal
-        preview={preview}
-        onClose={() => setPreview(null)}
-        onAdd={() => preview && addToGrid(preview)}
-        onOpenMarkdownSidebar={() => preview && openMarkdownInSidebar(preview)}
-      />
-    </div>
+        {moreMenu ? (
+          <div
+            ref={menuRef}
+            className={styles.contextMenu}
+            style={{ left: moreMenu.x, top: moreMenu.y }}
+            role="menu"
+          >
+            <MenuAction
+              icon={<RefreshCw size={13} />}
+              label={t('files.refresh')}
+              onClick={() => {
+                setMoreMenu(null)
+                setReloadKey((value) => value + 1)
+              }}
+            />
+            <MenuAction
+              icon={<ChevronsDownUp size={13} />}
+              label={t('files.collapseAll')}
+              onClick={() => {
+                setMoreMenu(null)
+                setCollapseKey((value) => value + 1)
+              }}
+            />
+            <MenuAction
+              icon={<FolderSearch size={13} />}
+              label={t('files.reveal')}
+              onClick={() => {
+                setMoreMenu(null)
+                void openInFileExplorer(liveCwd)
+              }}
+            />
+          </div>
+        ) : null}
+
+        {menu ? (
+          <div
+            ref={menuRef}
+            className={styles.contextMenu}
+            style={{ left: menu.x, top: menu.y }}
+            role="menu"
+          >
+            {!menu.entry.is_dir ? (
+              <>
+                <MenuAction
+                  icon={<LayoutGrid size={13} />}
+                  label={t('files.addToGrid')}
+                  onClick={() => addToGrid(menu.entry)}
+                />
+                <MenuAction
+                  icon={<Eye size={13} />}
+                  label={t('files.preview')}
+                  onClick={() => void showPreview(menu.entry)}
+                />
+                {MARKDOWN_PATTERN.test(menu.entry.path) ? (
+                  <MenuAction
+                    icon={<PanelRightOpen size={13} />}
+                    label={t('files.openMarkdownSidebar')}
+                    onClick={() => openMarkdownInSidebar(menu.entry)}
+                  />
+                ) : null}
+              </>
+            ) : null}
+            <MenuAction
+              icon={<FolderSearch size={13} />}
+              label={t('files.reveal')}
+              onClick={() => {
+                setMenu(null)
+                void openInFileExplorer(menu.entry.path)
+              }}
+            />
+            <MenuAction
+              icon={<Pencil size={13} />}
+              label={t('files.rename')}
+              onClick={() => void renameEntry(menu.entry)}
+            />
+            <MenuAction
+              danger
+              icon={<Trash2 size={13} />}
+              label={t('files.delete')}
+              onClick={() => void deleteEntry(menu.entry)}
+            />
+          </div>
+        ) : null}
+
+        <FilePreviewModal
+          preview={preview}
+          onClose={() => setPreview(null)}
+          onAdd={() => preview && addToGrid(preview)}
+          onOpenMarkdownSidebar={() => preview && openMarkdownInSidebar(preview)}
+        />
+      </div>
+    </>
   )
 }
 
@@ -317,6 +383,7 @@ function DirectoryNode({
   depth,
   initialOpen = false,
   reloadKey,
+  collapseKey,
   gitIndex,
   onOpen,
   onPreview,
@@ -329,6 +396,7 @@ function DirectoryNode({
   depth: number
   initialOpen?: boolean
   reloadKey: number
+  collapseKey: number
   gitIndex: GitExplorerIndex | null
   onOpen: (entry: DirectoryEntry) => void
   onPreview: (entry: DirectoryEntry) => void
@@ -345,6 +413,11 @@ function DirectoryNode({
   const dirKindClass = dirGit ? styles[`git_${dirGit.kind}`] : ''
   const dirDotClass = dirGit ? styles[`dot_${dirGit.kind}`] : ''
   const dirTitle = dirGit ? `${path} (${t(dirGit.labelKey)})` : path
+
+  useEffect(() => {
+    // The root stays open so "collapse all" never leaves an empty explorer.
+    if (collapseKey) setOpen(depth === 0)
+  }, [collapseKey, depth])
 
   useEffect(() => {
     if (!open) return
@@ -414,6 +487,7 @@ function DirectoryNode({
                       name={entry.name}
                       depth={depth + 1}
                       reloadKey={reloadKey}
+                      collapseKey={collapseKey}
                       gitIndex={gitIndex}
                       onOpen={onOpen}
                       onPreview={onPreview}

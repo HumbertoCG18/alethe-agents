@@ -373,6 +373,9 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ### Changed
 
+- **Notifications can be read in full and copied.** Click a notification to show its whole
+  message (it stays until you close it); the copy button next to the X copies the title and the
+  message.
 - **Night tab: concluded tasks under Completed.** Entries of the latest night whose task is already
   concluded in the registry move to a collapsed Completed section, so the night lists only what is
   still open.
@@ -541,6 +544,13 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
   pane says why. Image and video evidence is checked only when it is opened. The Markdown viewer's
   tab history from earlier versions is not restored, and file panes saved before this version ask to
   be opened again before they load, since neither recorded where the file came from.
+- **The orchestrator's quota warning names its window.** It says whether the session, weekly, Opus
+  or a model's weekly limit crossed the threshold, so it no longer looks like it contradicts the
+  usage indicator.
+- **Long task titles wrap in the Todo panel.** They no longer end in an ellipsis; the title
+  wraps inside the panel width.
+- **The Files tab browses the project's folder without a terminal, and its "…" menu works.** The
+  menu refreshes the tree, collapses all folders, and reveals the folder in the file manager.
 - **The Todo panel shows its title once.** The settings gear moved to the Overview, Night and
   Personal row.
 - **Scrollbars follow the theme again.** The Git graph and the folder and plugin pickers showed the

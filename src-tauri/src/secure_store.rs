@@ -76,12 +76,6 @@ impl SecretStore for OsSecretStore {
     }
 }
 
-pub fn delete_github_sync_token(profile_id: &str) -> Result<(), String> {
-    OsSecretStore
-        .delete(profile_id, SecretKind::GithubSyncToken)
-        .map_err(|error| error.to_string())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

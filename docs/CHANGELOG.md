@@ -537,6 +537,14 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ### Fixed
 
+- **A profile that fails to delete keeps its credentials.** Its folder is removed and the profile
+  list saved before its GitHub sync token and Spotify secrets are deleted, so a folder that cannot
+  be removed (for example, a file still open in it on Windows) leaves the profile listed with its
+  credentials instead of without them.
+- **ai-memory follows the active profile.** Switching to another profile, or deleting the one
+  ai-memory was started for, stops the server Alethe started for the previous profile, so the new
+  profile no longer reads and writes the old profile's memory. When ai-memory is enabled for the
+  profile switched to, its own server starts automatically.
 - **Campaign and night files open only from inside the repository.** A text file named by the
   campaign registry or night evidence is read, listed in the Markdown index, summarized or opened in
   the full reader only when it really lies in one of the repository's checkouts; one reached through

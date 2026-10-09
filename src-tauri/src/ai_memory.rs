@@ -186,7 +186,12 @@ pub fn ai_memory_detect(
     let ours = state
         .0
         .lock()
-        .map(|mut guard| matches!(guard.as_mut().map(|child| child.try_wait()), Some(Ok(None))))
+        .map(|mut guard| {
+            matches!(
+                guard.as_mut().map(|(child, _)| child.try_wait()),
+                Some(Ok(None))
+            )
+        })
         .unwrap_or(false);
 
     Ok(AiMemoryStatus {
@@ -405,16 +410,17 @@ pub fn parse_counts(stdout: &str) -> Counts {
     counts
 }
 
-/// The `ai-memory serve` child Alethe started, if any.
+/// The `ai-memory serve` child Alethe started, if any, with the data directory it was launched with
+/// (`None` for a copy the person installed themselves).
 ///
 /// This is process-global — one child for the whole app — while the data directory it was launched
 /// with (`managed_data_dir`) is per-profile. Switching profiles does not restart Alethe
 /// (`ProfilesModal.tsx`'s `switchProfile` only re-hydrates the store from the new profile's
-/// `projects.json`), so a server started under profile A keeps running, and keeps holding its port,
-/// after a switch to profile B. Not fixed here — flagged so the next change to profile switching
-/// accounts for it.
+/// `projects.json`), so the profile switch and delete commands call `stop_unless_serving`: a server
+/// started under profile A would otherwise keep reading and writing A's store after a switch to B.
+/// It starts again on demand for the active profile.
 #[derive(Default)]
-pub struct AiMemoryProcess(pub Mutex<Option<Child>>);
+pub struct AiMemoryProcess(pub Mutex<Option<(Child, Option<String>)>>);
 
 /// The data directory for a copy Alethe installed. A copy the person installed themselves keeps its
 /// data where they put it, so this is never passed for one of those.
@@ -630,7 +636,7 @@ pub fn ai_memory_start(
     let (cmd, data_dir) = command_for(&app, None);
 
     let mut guard = state.0.lock().map_err(|_| "ai_memory_lock".to_string())?;
-    if let Some(child) = guard.as_mut() {
+    if let Some((child, _)) = guard.as_mut() {
         if matches!(child.try_wait(), Ok(None)) {
             return Ok(());
         }
@@ -651,7 +657,7 @@ pub fn ai_memory_start(
         .stderr(Stdio::null())
         .spawn()
         .map_err(|e| format!("ai_memory_spawn:{e}"))?;
-    *guard = Some(child);
+    *guard = Some((child, data_dir));
     Ok(())
 }
 
@@ -659,11 +665,48 @@ pub fn ai_memory_start(
 /// quitting never leaves a server holding the port.
 pub fn stop_managed(state: &AiMemoryProcess) {
     if let Ok(mut guard) = state.0.lock() {
-        if let Some(mut child) = guard.take() {
+        if let Some((mut child, _)) = guard.take() {
             let _ = child.kill();
             let _ = child.wait();
         }
     }
+}
+
+/// Kills the child Alethe started when its data directory lies outside `profile_dir`, the profile
+/// that is active from now on. A copy the person installed themselves is not tied to a profile and
+/// keeps running.
+pub fn stop_unless_serving(state: &AiMemoryProcess, profile_dir: &Path) {
+    if let Ok(mut guard) = state.0.lock() {
+        // `Path::starts_with` compares whole components, so profile `ab` never passes for `a`.
+        if matches!(guard.as_ref(), Some((_, Some(dir))) if !Path::new(dir).starts_with(profile_dir))
+        {
+            if let Some((mut child, _)) = guard.take() {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+        }
+    }
+}
+
+/// A stand-in for `ai-memory serve`: a process that stays up until it is killed. On Windows it runs
+/// a copy of `ping` placed in `dir`, so `dir` cannot be removed while it runs — the lock the real
+/// binary puts on the profile folder it is installed in.
+#[cfg(test)]
+pub(crate) fn idle_child(dir: &Path) -> Child {
+    let mut command = if cfg!(windows) {
+        let ping = Path::new(&std::env::var("SystemRoot").unwrap()).join("System32\\PING.EXE");
+        let binary = dir.join(binary_name());
+        std::fs::create_dir_all(dir).unwrap();
+        std::fs::copy(ping, &binary).unwrap();
+        let mut command = Command::new(binary);
+        command.args(["-n", "60", "127.0.0.1"]);
+        command
+    } else {
+        let mut command = Command::new("sleep");
+        command.arg("60");
+        command
+    };
+    command.stdout(Stdio::null()).spawn().unwrap()
 }
 
 #[tauri::command]
@@ -731,6 +774,44 @@ mod tests {
             hook_config_cache().lock().unwrap().is_empty(),
             "the whole map is cleared, not just these two entries",
         );
+    }
+
+    #[test]
+    fn a_profile_change_stops_only_a_managed_server_that_serves_another_profile() {
+        let root =
+            std::env::temp_dir().join(format!("alethe-aimem-serving-{}", nanoid::nanoid!(8)));
+        let profile_a = root.join("profiles").join("a");
+        // Shares `a` as a string prefix: a plain string comparison would take it for profile `a`.
+        let profile_ab = root.join("profiles").join("ab");
+        let serving = |dir: &Path, data_dir: Option<PathBuf>| {
+            let data_dir = data_dir.map(|dir| dir.to_string_lossy().into_owned());
+            AiMemoryProcess(Mutex::new(Some((idle_child(dir), data_dir))))
+        };
+
+        let active = serving(&profile_a, Some(profile_a.join("ai-memory-data")));
+        stop_unless_serving(&active, &profile_a);
+        assert!(
+            active.0.lock().unwrap().is_some(),
+            "the active profile's server keeps running"
+        );
+
+        let other = serving(&profile_ab, Some(profile_ab.join("ai-memory-data")));
+        stop_unless_serving(&other, &profile_a);
+        assert!(
+            other.0.lock().unwrap().is_none(),
+            "another profile's server is stopped"
+        );
+
+        let own_copy = serving(&root, None);
+        stop_unless_serving(&own_copy, &profile_a);
+        assert!(
+            own_copy.0.lock().unwrap().is_some(),
+            "the person's own copy is left alone"
+        );
+
+        stop_managed(&active);
+        stop_managed(&own_copy);
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

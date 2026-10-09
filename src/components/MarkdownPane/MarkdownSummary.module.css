@@ -1,0 +1,63 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  color: var(--fg);
+  font: 12px/1.6 var(--font-sans);
+}
+.actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border);
+}
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.root button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  min-height: 30px;
+  padding: calc(var(--space-2) / 2) var(--space-2);
+  background: var(--bg-elevated);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font: 11px var(--font-sans);
+  cursor: pointer;
+}
+.root button:hover {
+  background: var(--panel-hover);
+  border-color: var(--accent);
+}
+.root button:focus-visible {
+  outline: 1px solid var(--accent);
+}
+.readButton {
+  flex: 1;
+  min-width: 0;
+}
+.settingsButton {
+  flex: 0 0 auto;
+}
+.root small {
+  color: var(--fg-faint);
+  font-size: 10px;
+}
+.root > div:not(.actions) {
+  padding: 0;
+  font-size: 12px;
+  line-height: 1.65;
+}
+.root h1,
+.root h2 {
+  font-size: 1.15em;
+}
+.root h3 {
+  font-size: 1.05em;
+}

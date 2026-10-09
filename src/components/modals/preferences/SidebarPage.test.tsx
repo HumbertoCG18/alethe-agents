@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { sidebarTabContributions } from '../../../lib/plugins'
 import { EMPTY_PROJECTS_FILE } from '../../../lib/types'
 import { useProjectsStore } from '../../../stores/projectsStore'
+import { useUiStore } from '../../../stores/uiStore'
 import { SidebarPage } from './SidebarPage'
 
 const icons = () => useProjectsStore.getState().preferences.sidebarIcons
@@ -77,5 +78,16 @@ describe('Sidebar preferences', () => {
     } finally {
       view.dispose()
     }
+  })
+
+  it('opens the Markdown settings from the Markdown row only', () => {
+    render(<SidebarPage />)
+
+    const buttons = screen.getAllByRole('button', { name: 'Markdown settings' })
+    expect(buttons).toHaveLength(1)
+    expect(screen.getByText('Markdown').closest('li')).toContainElement(buttons[0])
+    fireEvent.click(buttons[0])
+    expect(useUiStore.getState().openModal).toBe('preferences')
+    expect(useUiStore.getState().modalContext).toEqual({ category: 'markdown' })
   })
 })

@@ -172,11 +172,19 @@ export async function findCliLauncher(agent: string): Promise<string | null> {
  * screen asks to see a CLI that landed while the app was already running.
  */
 export async function refreshCliLauncher(command: string): Promise<string | null> {
+  toolchainProbe = undefined
   return invoke<string | null>('refresh_cli_launcher', { command })
 }
 
-export async function probeInstallToolchain(): Promise<InstallToolchain> {
-  return invoke<InstallToolchain>('probe_install_toolchain')
+let toolchainProbe: { expires: number; promise: Promise<InstallToolchain> } | undefined
+export function probeInstallToolchain(): Promise<InstallToolchain> {
+  if (toolchainProbe && toolchainProbe.expires > Date.now()) return toolchainProbe.promise
+  const promise = invoke<InstallToolchain>('probe_install_toolchain').catch((error) => {
+    toolchainProbe = undefined
+    throw error
+  })
+  toolchainProbe = { expires: Date.now() + 30_000, promise }
+  return promise
 }
 
 export async function agentCliVersion(agent: string): Promise<string | null> {

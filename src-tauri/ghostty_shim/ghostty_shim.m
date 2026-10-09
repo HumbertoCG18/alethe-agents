@@ -3,6 +3,7 @@
 // é resolvida pelo compilador, não reproduzida à mão no Rust.
 #import "ghostty_shim.h"
 #import <AppKit/AppKit.h>
+#import <CoreText/CoreText.h>
 #import <Carbon/Carbon.h>
 #import <dispatch/dispatch.h>
 #import "ghostty.h"
@@ -10,6 +11,25 @@
 // App global do Ghostty (singleton, como no app oficial e no wrapper Swift).
 static ghostty_app_t g_app = NULL;
 static ghostty_config_t g_config = NULL;
+
+// Register only in this process; never install fonts or rewrite the user's Ghostty config.
+bool alethe_ghostty_surface_set_font(void *surface, const char *config_path, const char *font_dir) {
+    if (surface == NULL || g_config == NULL) return false;
+    NSString *directory = [NSString stringWithUTF8String:font_dir];
+    for (NSString *file in @[@"Regular", @"Bold", @"Italic", @"BoldItalic"]) {
+        NSString *path = [directory stringByAppendingPathComponent:[file stringByAppendingString:@".ttf"]];
+        NSURL *url = [NSURL fileURLWithPath:path];
+        CTFontManagerRegisterFontsForURL((__bridge CFURLRef)url, kCTFontManagerScopeProcess, NULL);
+    }
+    ghostty_config_t config = ghostty_config_clone(g_config);
+    if (config == NULL) return false;
+    ghostty_config_load_file(config, config_path);
+    ghostty_config_finalize(config);
+    bool valid = ghostty_config_diagnostics_count(config) == 0;
+    if (valid) ghostty_surface_update_config((ghostty_surface_t)surface, config);
+    ghostty_config_free(config);
+    return valid;
+}
 
 // Captura do ÚLTIMO key enviado à surface — instrumentação para o teste headless
 // de digitação/dead-keys provar o que de fato chega ao terminal (sem depender de

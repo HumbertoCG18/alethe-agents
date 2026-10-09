@@ -18,6 +18,7 @@ import {
   Home,
   Mic,
   Plug,
+  Settings2,
   Sparkles,
 } from 'lucide-react'
 import type { ReactNode } from 'react'
@@ -38,6 +39,7 @@ import {
 } from '../../../lib/sidebarIcons'
 import { useSidebarViews } from '../../../lib/viewPlacement'
 import { useProjectsStore } from '../../../stores/projectsStore'
+import { useUiStore } from '../../../stores/uiStore'
 import controls from '../controls.module.css'
 import { SettingsSection } from './primitives'
 import styles from './SidebarPage.module.css'
@@ -221,6 +223,17 @@ function IconRow({
       )}
       <Icon size={14} />
       <span>{label}</span>
+      {id === 'markdown' ? (
+        <button
+          type="button"
+          className={controls.iconBtnSm}
+          aria-label={t('prefs.sidebarMarkdownSettings')}
+          title={t('prefs.sidebarMarkdownSettings')}
+          onClick={() => useUiStore.getState().openModal_('preferences', { category: 'markdown' })}
+        >
+          <Settings2 size={13} />
+        </button>
+      ) : null}
       <button
         type="button"
         role="switch"

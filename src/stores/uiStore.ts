@@ -90,6 +90,9 @@ const DUPLICATE_TOAST_WINDOW_MS = 5_000
 type UiState = {
   openModal: ModalKind
   modalContext: Record<string, unknown> | null
+  /** Session-only: one collapsed state for the Markdown summary of every document. */
+  markdownSummaryCollapsed: boolean
+  toggleMarkdownSummaryCollapsed: () => void
   showMainMenu: boolean
   ramMb: number | null
   memoryStats: MemoryStats | null
@@ -205,6 +208,9 @@ type UiState = {
 export const useUiStore = create<UiState>((set) => ({
   openModal: null,
   modalContext: null,
+  markdownSummaryCollapsed: false,
+  toggleMarkdownSummaryCollapsed: () =>
+    set((s) => ({ markdownSummaryCollapsed: !s.markdownSummaryCollapsed })),
   showMainMenu: false,
   ramMb: null,
   memoryStats: null,

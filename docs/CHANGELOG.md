@@ -10,6 +10,32 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ## [Unreleased]
 
+- Markdown settings follow the Preferences layout with one section per option, and add an age window (30 days by default) that hides dated documents from the sidebar index. Undated documents and those of open campaigns stay visible; the toolbar toggle shows how many completed or older documents are hidden. The age window also hides documents in archive folders (`_archive`, `archive`, `Feitos`) and reads dates written as `YYYY_MM_DD` or `YYYY.MM.DD`; Sidebar preferences have a shortcut to these Markdown settings.
+- The default shell picker names each shell (PowerShell 7, its Microsoft Store install, Windows PowerShell, Command Prompt, WSL, Git Bash) with its path, lists every PowerShell 7 install, finds Git Bash outside PATH and names the platform default. Git Bash opens as an interactive login shell.
+- The project Markdown index respects Git ignores and discovers development documentation instead of tutor content or generated corpora. Shared discovery, persistent project/profile indexes, searchable paged groups and lazy collapsed sections keep the sidebar responsive; returning to the window refreshes the index at most once a minute.
+- Campaign document counts follow registry associations, with completed campaigns hidden by default and shown through a toolbar toggle; groups use the same collapsible headers as the Todo sidebar. Worktree copies are grouped while alternative versions remain accessible; obsolete report paths can recover through unambiguous project index matches.
+- The full Markdown reader uses a responsive document and question layout with the app's themed agent selector. Summary actions and typography match the compact sidebar. The summary can be collapsed from its header, and the choice carries across documents for the session.
+
+- Markdown summary settings use themed searchable selectors, current Claude aliases and the installed Codex model catalog. Background discovery is shared, bounded and hidden on Windows; opening settings no longer starts an interactive agent or flashes a Node probe console.
+- Terminal settings offer shells discovered on PATH and installed font families, with persistent local choices and visible fallback notices. Font changes apply to open xterm and native macOS terminals without restarting their processes. Markdown settings now follow Terminal and agents in the navigation.
+- Terminal font selection replaces the separate terminal palette picker; existing saved palettes remain compatible.
+- The shell and font pickers now save to the same settings as the upstream **Shell** and **Terminal font** controls: a shell chosen in an earlier fork build carries over, **Other executable…** still picks a shell outside PATH, and a picked font is stored ahead of the default font stack as its fallback. The bundled Caskaydia Cove Nerd Font is offered at the top of the font list.
+- Searchable option menus stay within their settings dialog, preserving focus, arrow-key navigation and mouse-wheel scrolling. Escape closes the menu before the Preferences window.
+
+- Night campaigns use compact expandable cards containing only night tasks. Campaign progress stays out of Personal and requires a running selected campaign in Overview or Night.
+- Campaign dependencies use compact app controls with saving, success and failure feedback. Registry tasks left in progress show no active execution when their campaign has no running terminal or worker.
+- The Markdown sidebar lists expandable campaign, report and other document groups from the open project's checkouts, with active campaign documents first. Missing files can be closed individually or recovered through the existing worktree path resolver.
+
+- AGY document generation remains unavailable until its CLI tool isolation can be verified.
+- Configurable Markdown summaries with Claude Code or Codex, model selection and Caveman, Medium or Detailed styles. Changing settings refreshes the visible summary; unchanged documents reuse results during the app session.
+- A dedicated Markdown reader window with full document rendering and selected-text questions to an agent, existing orchestration worker or open individual night session. Night evidence opens the same summary flow.
+
+- Late Markdown file reads and summary responses no longer replace the newly selected document. Pending summaries are cancelled when their last reader leaves, and queue time counts toward the generation deadline.
+- Closing a native reader releases its file watches; answers retain the submitted selection and question.
+- The Night tab offers campaign launch choices; blocked campaign indicators turn red and update when dependencies are released.
+- Right sidebar icon preferences are accessible from its toolbar.
+- Pull requests are scoped to a selectable project and refresh automatically, discarding stale responses after project changes.
+
 - Campaign session dialogs offer individual terminals or orchestration; compact campaign rows identify unfinished campaign prerequisites.
 
 - Campaigns show the last active selection and open the New session dialog before creating an agent session. Existing sessions can still be focused directly.
@@ -347,13 +373,12 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ### Changed
 
-- **Relevant Markdown in the right sidebar's Markdown tab.** With no file open, the tab lists the
-  active campaign's handoff and the Markdown evidence of its tasks, grouped by folder in the file
-  explorer's rows, then the project's planning docs; only files that exist are listed. The list
-  button in the header shows it while a file is open, and picking a file opens it.
+- **Notifications can be read in full and copied.** Click a notification to show its whole
+  message (it stays until you close it); the copy button next to the X copies the title and the
+  message.
 - **Night tab: concluded tasks under Completed.** Entries of the latest night whose task is already
   concluded in the registry move to a collapsed Completed section, so the night lists only what is
-  still open. Its progress bar is hidden once every task of the night is concluded.
+  still open.
 - **Fresher agent lines and tab titles, lighter Remote Control.** A campaign agent's line and
   pending question in the Todo panel, and the titles of Claude Code and Codex tabs, now follow the
   session as its transcript grows, instead of waiting for the agent to stop or for a timer. Each
@@ -514,13 +539,12 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 - **Long task titles wrap in the Todo panel.** They no longer end in an ellipsis; the title
   wraps inside the panel width.
+- **The Files tab browses the project's folder without a terminal, and its "…" menu works.** The
+  menu refreshes the tree, collapses all folders, and reveals the folder in the file manager.
 - **The Todo panel shows its title once.** The settings gear moved to the Overview, Night and
   Personal row.
-- **Markdown tabs close cleanly.** A single Markdown tab can be closed, closing the last one keeps
-  the Markdown tab on its list, and a file that fails to load shows the list under the error.
-- **Scrollbars follow the theme again.** The Markdown tab strip, the Git graph and the folder and
-  plugin pickers showed the native scrollbar because a standard scrollbar property was turning the
-  theme off.
+- **Scrollbars follow the theme again.** The Git graph and the folder and plugin pickers showed the
+  native scrollbar because a standard scrollbar property was turning the theme off.
 - **Removing a custom agent and turning on Remote Control ask first again.** In the app the old
   check never waited for an answer, so the agent was removed at once and Remote Control turned on
   without its consent prompt. Both now use the native confirmation dialog.

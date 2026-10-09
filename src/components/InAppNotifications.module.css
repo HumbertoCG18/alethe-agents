@@ -48,7 +48,7 @@
   overflow: hidden;
 }
 
-.toastText strong {
+.toastMain strong {
   flex-shrink: 0;
   font-size: 12px;
   font-weight: 600;
@@ -56,7 +56,22 @@
   white-space: nowrap;
 }
 
-.toastText span {
+.toastMain {
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.toastMain span {
   min-width: 0;
   overflow: hidden;
   color: var(--fg-muted);
@@ -64,6 +79,27 @@
   line-height: 1.2;
   white-space: nowrap;
   text-overflow: ellipsis;
+}
+
+/* Expanded: the pill becomes a card so the wrapped message keeps a sane shape. */
+.toastExpanded {
+  align-items: flex-start;
+  border-radius: var(--radius-md);
+}
+
+.toastExpanded .toastMain {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.toastExpanded .toastMain span {
+  display: block;
+  max-height: 240px;
+  overflow-y: auto;
+  text-overflow: clip;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .toastClose {

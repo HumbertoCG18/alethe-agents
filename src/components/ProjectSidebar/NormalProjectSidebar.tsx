@@ -10,17 +10,7 @@ import {
   useSensor,
   useSensors,
 } from '@dnd-kit/core'
-import {
-  Folder,
-  FolderPlus,
-  Grid3x3,
-  Home,
-  MoreHorizontal,
-  Plus,
-  RefreshCw,
-  Search,
-  Users,
-} from 'lucide-react'
+import { Files, Folder, FolderPlus, Home, Plus, RefreshCw, Search, Users } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 
@@ -46,7 +36,7 @@ import { EmptyState } from '../EmptyState'
 import { SidebarNowPlaying } from '../SidebarNowPlaying'
 import { UserProfile } from '../UserProfile'
 import { ContextMenu, type MenuItem } from './ContextMenu'
-import { FileExplorer } from './FileExplorer'
+import { FilesPanel } from './FilesPanel'
 import { NormalGroupNode as GroupNode } from './NormalGroupNode'
 import { LayoutFooter, WorkspaceLayoutFooter } from './LayoutFooter'
 import { NormalProjectNode as ProjectNode } from './NormalProjectNode'
@@ -483,8 +473,8 @@ export function NormalProjectSidebar() {
   }
 
   const tabs: Record<string, { label: string; Icon: SidebarTabContribution['icon'] }> = {
-    projects: { label: t('ui.sidebar.projects'), Icon: Grid3x3 },
-    files: { label: t('ui.sidebar.files'), Icon: Folder },
+    projects: { label: t('ui.sidebar.projects'), Icon: Folder },
+    files: { label: t('ui.sidebar.files'), Icon: Files },
   }
   for (const tab of contributedTabs)
     tabs[tab.id] = { label: sidebarTabLabel(t, tab), Icon: tab.icon }
@@ -571,31 +561,7 @@ export function NormalProjectSidebar() {
 
       {sidebarTab === 'files' ? (
         <section className={styles.explorerPanel}>
-          <div className={styles.explorerHeader}>
-            <span className={styles.explorerLabel}>{t('ui.sidebar.explorer')}</span>
-            <MoreHorizontal size={14} />
-          </div>
-          {sidebarTerminal && sidebarSubTab && activeProject ? (
-            <FileExplorer
-              projectId={activeProject.id}
-              cwd={sidebarSubTab.cwd || sidebarTerminal.cwd}
-              ptyId={sidebarSubTab.ptyId}
-              terminalName={sidebarTerminal.name}
-            />
-          ) : (
-            <div className={styles.explorerEmpty}>
-              <EmptyState
-                compact
-                icon={<FolderPlus size={18} />}
-                title={t('ui.sidebar.emptyTitle')}
-                description={t('ui.sidebar.emptyDesc')}
-                primaryAction={{
-                  label: t('ui.sidebar.emptyAction'),
-                  onClick: () => openModal('newProject'),
-                }}
-              />
-            </div>
-          )}
+          <FilesPanel project={activeProject} terminal={sidebarTerminal} subTab={sidebarSubTab} />
         </section>
       ) : null}
 

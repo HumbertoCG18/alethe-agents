@@ -232,8 +232,11 @@ fn reserve_spawn(sessions: &PtySessions, id: &str) -> Result<Option<SpawnReserva
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SpawnPtyResponse {
     pub id: String,
+    /// A plain shell's own shell no longer runs, so the default one took its place.
+    pub shell_fallback: bool,
 }
 
 #[derive(Clone, Serialize)]
@@ -268,6 +271,28 @@ pub fn pty_exists(sessions: State<'_, PtySessions>, id: String) -> Result<bool, 
     Ok(sessions.contains_key(&id))
 }
 
+/// What a tab launches: its override, else the fallback, when that is an absolute file (a plain
+/// tab's own shell, then the default from Preferences; or an agent's CLI path), else the agent CLI
+/// found on PATH. Both come from editable app data, so they pass the default shell's check. The
+/// flag says a plain shell's own shell was given but no longer runs.
+fn resolve_launcher(
+    launcher_override: Option<&str>,
+    fallback_launcher: Option<&str>,
+    requested_command: Option<&str>,
+) -> (Option<String>, bool) {
+    let (shell, fell_back) =
+        crate::terminal_settings::pick_shell(launcher_override, fallback_launcher);
+    let launcher = shell.or_else(|| {
+        let command = requested_command?.trim();
+        if command.is_empty() {
+            return None;
+        }
+        find_windows_cli_launcher(command).map(|path| path.to_string_lossy().to_string())
+    });
+    // An agent's override is its CLI path, not a shell of the tab's own.
+    (launcher, fell_back && requested_command.is_none())
+}
+
 #[tauri::command]
 pub async fn spawn_pty(
     app: AppHandle,
@@ -279,10 +304,10 @@ pub async fn spawn_pty(
     command: Option<String>,
     cwd: Option<String>,
     extra_args: Option<Vec<String>>,
-    // launcher_override: path absoluto que supersede o auto-detect. Frontend
+    // Absolute launcher paths that supersede auto-detect, in this order; see `resolve_launcher`.
     launcher_override: Option<String>,
-
-    // canvas) — nunca polui o ambiente global nem outros terminais.
+    fallback_launcher: Option<String>,
+    // Extra environment for this terminal only, never the global one or other terminals'.
     env: Option<std::collections::HashMap<String, String>>,
     // Set only by orchestrator shells: the line the shell runs and exits with.
     command_line: Option<String>,
@@ -303,7 +328,10 @@ pub async fn spawn_pty(
             prepare_memory_for_boot(&app, &id)
         })?
         else {
-            return Ok(SpawnPtyResponse { id });
+            return Ok(SpawnPtyResponse {
+                id,
+                shell_fallback: false,
+            });
         };
         let memory_wait_ms = begun.memory_wait_ms;
 
@@ -328,6 +356,8 @@ pub async fn spawn_pty(
             None
         };
         let mut resolved_launcher: Option<String> = None;
+        // A WSL folder opens the distro's shell, so no shell of the tab's own is skipped there.
+        let mut shell_fallback = false;
         let mut command = if let Some(target) = wsl_target.as_ref() {
             crate::wsl::command_builder_for_wsl(
                 target,
@@ -337,26 +367,11 @@ pub async fn spawn_pty(
                 command_line.as_deref(),
             )
         } else {
-            resolved_launcher = if let Some(override_path) = launcher_override
-                .as_deref()
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(PathBuf::from)
-                .filter(|p| p.is_file())
-            {
-                Some(override_path.to_string_lossy().to_string())
-            } else {
-                requested_command
-                    .as_deref()
-                    .and_then(|raw| {
-                        let trimmed = raw.trim();
-                        if trimmed.is_empty() {
-                            return None;
-                        }
-                        find_windows_cli_launcher(trimmed)
-                    })
-                    .map(|path| path.to_string_lossy().to_string())
-            };
+            (resolved_launcher, shell_fallback) = resolve_launcher(
+                launcher_override.as_deref(),
+                fallback_launcher.as_deref(),
+                requested_command.as_deref(),
+            );
             let mut command = command_builder_for_terminal(
                 requested_command.as_deref(),
                 resolved_launcher.as_deref(),
@@ -830,7 +845,7 @@ pub async fn spawn_pty(
             });
         }
 
-        Ok(SpawnPtyResponse { id })
+        Ok(SpawnPtyResponse { id, shell_fallback })
     })
     .await
     .map_err(|error| format!("spawn_pty: falha na task bloqueante: {error}"))?
@@ -902,6 +917,7 @@ pub async fn restart_pty(
     cwd: Option<String>,
     extra_args: Option<Vec<String>>,
     launcher_override: Option<String>,
+    fallback_launcher: Option<String>,
     env: Option<HashMap<String, String>>,
     command_line: Option<String>,
 ) -> Result<SpawnPtyResponse, String> {
@@ -940,6 +956,7 @@ pub async fn restart_pty(
         cwd,
         extra_args,
         launcher_override,
+        fallback_launcher,
         env,
         command_line,
     )
@@ -1950,6 +1967,35 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("alethe-{tag}-{nanos}"));
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn a_shell_from_the_frontend_runs_only_as_an_absolute_file() {
+        // Tests run from the crate root, where `Cargo.toml` is a file under a relative path.
+        assert!(Path::new("Cargo.toml").is_file());
+        let shell = |path| resolve_launcher(Some(path), None, None).0;
+        assert_eq!(shell("Cargo.toml"), None);
+        assert_eq!(shell("cmd /c whoami"), None);
+        assert_eq!(shell("   "), None);
+        let absolute = std::env::current_dir().unwrap().join("Cargo.toml");
+        let absolute = absolute.to_string_lossy();
+        assert_eq!(shell(&absolute).as_deref(), Some(&*absolute));
+    }
+
+    #[test]
+    fn a_plain_shell_falls_back_to_the_default_then_auto_detect_and_says_so() {
+        let path = |name: &str| {
+            let path = std::env::current_dir().unwrap().join(name);
+            path.to_string_lossy().into_owned()
+        };
+        let (installed, gone) = (path("Cargo.toml"), path("missing-shell.exe"));
+        let plain = |own: &str, default: &str| resolve_launcher(Some(own), Some(default), None);
+        assert_eq!(plain(&installed, &gone), (Some(installed.clone()), false));
+        assert_eq!(plain(&gone, &installed), (Some(installed.clone()), true));
+        // Neither runs: no launcher, so the builder takes the platform's own shell.
+        assert_eq!(plain(&gone, &gone), (None, true));
+        // An agent's missing CLI path is no shell of a tab's own: no notice about one.
+        assert!(!resolve_launcher(Some(&gone), None, Some("alethe-missing-cli")).1);
     }
 
     #[test]

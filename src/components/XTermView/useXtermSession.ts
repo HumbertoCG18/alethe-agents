@@ -23,7 +23,7 @@ import { claudeSessionFromHook } from '../../lib/claudeSessionTracking'
 import { getLocale, translate } from '../../lib/i18n'
 import { isOrchestratorShellPty } from '../../lib/orchestratorShells'
 import { isWindows } from '../../lib/platform'
-import { ptyLaunchTarget } from '../../lib/ptyLaunchTarget'
+import { noticeShellFallback, ptyLaunchTarget } from '../../lib/ptyLaunchTarget'
 import { usePtyPanelVisible } from '../../lib/ptyVisibility'
 import { router9EnvFor } from '../../lib/router9'
 import {
@@ -71,6 +71,7 @@ import {
   snapshotCodexSessions,
   snapshotOpenCodeSessions,
   spawnPty,
+  type SpawnPtyResponse,
   writeClipboardText,
   writePty,
 } from '../../lib/tauri'
@@ -1221,6 +1222,7 @@ export function useXtermSession(params: {
         }
 
         let launcherOverride: string | undefined
+        let fallbackLauncher: string | undefined
         let autoLauncher: string | null = null
         const wslTarget = wslTargetFor(
           cwd,
@@ -1273,7 +1275,9 @@ export function useXtermSession(params: {
             autoLauncher = auto
           }
         } else {
-          launcherOverride = ptyLaunchTarget(command).launcherOverride
+          const target = ptyLaunchTarget(command, ptyId)
+          launcherOverride = target.launcherOverride
+          fallbackLauncher = target.fallbackLauncher
           if (launcherOverride) {
             console.info(`[pty-launch] shell using override: ${launcherOverride}`)
           }
@@ -1542,7 +1546,7 @@ export function useXtermSession(params: {
         // A pty that is still alive is reattached, not relaunched: its process keeps whatever it
         // was launched with, so only a real launch is recorded.
         const launchesClaude = claudeExtras ? !(await ptyExists(ptyId).catch(() => true)) : false
-        let response: { id: string }
+        let response: SpawnPtyResponse
         try {
           response = await spawnPty({
             cols: terminal.cols,
@@ -1552,12 +1556,14 @@ export function useXtermSession(params: {
             cwd: cwd ?? undefined,
             extraArgs: spawnArgs,
             launcherOverride,
+            fallbackLauncher,
             env: launchEnv,
           })
         } finally {
           releaseSpawnSlot()
         }
         console.info(`[pty-launch] ${command ?? 'shell'} spawn OK id=${response.id}`)
+        noticeShellFallback(response, launcherOverride)
         if (claudeExtras && launchesClaude)
           recordClaudeLaunch(response.id, claudeExtras.orchestrator)
         // A new process: whatever was given to or typed into an earlier one is over.

@@ -377,6 +377,11 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ### Changed
 
+- **Pick the shell per terminal.** New terminal and New tab offer a Shell picker for Shell tabs,
+  listing the shells found on this machine, so Windows PowerShell can run next to PowerShell 7
+  without changing the default shell in Preferences. Each tab keeps its shell across restarts; if
+  it is uninstalled, the tab opens on the default shell and a notice says so. Agent tabs keep the
+  shell they require.
 - **Notifications can be read in full and copied.** Click a notification to show its whole
   message (it stays until you close it); the copy button next to the X copies the title and the
   message.

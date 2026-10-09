@@ -211,6 +211,7 @@ export type ProjectsState = ProjectsFile & {
         useRouter9?: boolean
         campaignId?: string
         ptyId?: string
+        shell?: string
       }
       worktreeAgentId?: string
       gsdSyncViewer?: boolean
@@ -233,6 +234,7 @@ export type ProjectsState = ProjectsFile & {
         handoff?: AgentHandoffBootstrap
         runtimeProfile?: AgentRuntimeProfile
         useRouter9?: boolean
+        shell?: string
       }
     },
   ) => Promise<Terminal>
@@ -312,6 +314,7 @@ export type ProjectsState = ProjectsFile & {
       extraArgs?: string[]
       handoff?: AgentHandoffBootstrap
       runtimeProfile?: AgentRuntimeProfile
+      shell?: string
     },
   ) => SubTab
   closeSubTab: (projectId: string, terminalId: string, tabId: string) => void

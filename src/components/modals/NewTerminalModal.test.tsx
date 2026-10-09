@@ -27,6 +27,13 @@ vi.mock('../../lib/tauri', async (importOriginal) => ({
       }),
   ),
 }))
+vi.mock('../../lib/tauri/terminalSettings', () => ({
+  discoverShells: vi.fn(async () => [
+    { id: 'C:\\Program Files\\PowerShell\\7\\pwsh.exe', kind: 'pwsh', isDefault: true },
+    { id: 'C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', kind: 'powershell' },
+  ]),
+}))
+const WINDOWS_POWERSHELL = 'C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'
 
 const createAgentTerminal = vi.fn(async () => ({ id: 'terminal-1' }))
 let projectId = ''
@@ -104,6 +111,54 @@ describe('new terminal modal', () => {
     fireEvent.click(submitButton())
 
     await waitFor(() => expect(createdIn()).toEqual(['D:\\elsewhere']))
+  })
+
+  it('creates a plain shell on the shell picked for it', async () => {
+    fireEvent.change(folderField(), { target: { value: 'D:\\elsewhere' } })
+    choose('Agent', 'shell')
+    fireEvent.click(screen.getByRole('button', { name: 'Shell' }))
+    fireEvent.click(await screen.findByRole('option', { name: /^Windows PowerShell/ }))
+    fireEvent.click(submitButton())
+
+    await waitFor(() => expect(createAgentTerminal).toHaveBeenCalledTimes(1))
+    expect(createAgentTerminal.mock.calls[0]).toMatchObject([
+      projectId,
+      { firstTab: { type: 'shell', shell: WINDOWS_POWERSHELL } },
+    ])
+  })
+
+  it('gives an agent no shell of its own', async () => {
+    fireEvent.change(folderField(), { target: { value: 'D:\\elsewhere' } })
+    choose('Agent', 'shell')
+    fireEvent.click(screen.getByRole('button', { name: 'Shell' }))
+    fireEvent.click(await screen.findByRole('option', { name: /^Windows PowerShell/ }))
+    choose('Agent', 'claude')
+    fireEvent.click(submitButton())
+
+    await waitFor(() => expect(createAgentTerminal).toHaveBeenCalledTimes(1))
+    const [, args] = createAgentTerminal.mock.calls[0] as unknown as [
+      string,
+      { firstTab: { shell?: string } },
+    ]
+    expect(args.firstTab.shell).toBeUndefined()
+  })
+
+  it('offers no shell for a WSL folder, which opens the distro shell', async () => {
+    fireEvent.change(folderField(), { target: { value: 'D:\\elsewhere' } })
+    choose('Agent', 'shell')
+    fireEvent.click(screen.getByRole('button', { name: 'Shell' }))
+    fireEvent.click(await screen.findByRole('option', { name: /^Windows PowerShell/ }))
+    fireEvent.change(folderField(), { target: { value: '\\\\wsl.localhost\\Ubuntu\\home\\dev' } })
+
+    expect(screen.queryByRole('button', { name: 'Shell' })).toBeNull()
+    fireEvent.click(submitButton())
+    await waitFor(() => expect(createAgentTerminal).toHaveBeenCalledTimes(1))
+    const [, args] = createAgentTerminal.mock.calls[0] as unknown as [
+      string,
+      { firstTab: { type: string; shell?: string } },
+    ]
+    expect(args.firstTab).toMatchObject({ type: 'shell' })
+    expect(args.firstTab.shell).toBeUndefined()
   })
 })
 

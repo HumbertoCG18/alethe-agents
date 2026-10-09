@@ -13,9 +13,11 @@ import {
 import { isShellAgentType, type AgentRuntimeProfile, type AgentType } from '../../lib/types'
 import { AgentIcon } from '../icons/AgentIcons'
 import { useT } from '../../lib/i18n'
+import { wslTargetFor } from '../../lib/wsl'
 import { Modal } from './Modal'
 import controls from './controls.module.css'
 import picker from './agentPicker.module.css'
+import { ShellSelect } from './ShellSelect'
 
 export function NewSubTabModal() {
   const t = useT()
@@ -27,6 +29,7 @@ export function NewSubTabModal() {
   const closeModal = useUiStore((s) => s.closeModal)
   const createSubTab = useProjectsStore((s) => s.createSubTab)
   const enabled = useProjectsStore((s) => s.preferences.enabledAgents)
+  const wslEnabled = useProjectsStore((s) => s.preferences.enabledFeatures.wsl)
   const terminalTheme = useProjectsStore(
     (s) => s.preferences.terminalTheme ?? s.preferences.uiTheme,
   )
@@ -40,6 +43,8 @@ export function NewSubTabModal() {
   const [runtimeProfile, setRuntimeProfile] = useState<AgentRuntimeProfile>('lean')
   const [cwd, setCwd] = useState('')
   const [unrestricted, setUnrestricted] = useState<Partial<Record<AgentType, boolean>>>({})
+  /** A plain shell's own shell; '' keeps the default from Preferences. */
+  const [shell, setShell] = useState('')
 
   const visibleAgents = useAgentTypes()
     .filter((type) => isAgentEnabled(enabled, type))
@@ -60,7 +65,12 @@ export function NewSubTabModal() {
     setRuntimeProfile('lean')
     setCwd('')
     setUnrestricted({})
+    setShell('')
   }
+
+  const tabCwd = cwd.trim() || inheritedCwd
+  // A WSL folder opens the distro's own shell, so there is no shell to pick there.
+  const picksShell = type === 'shell' && !wslTargetFor(tabCwd, wslEnabled)
 
   const submit = () => {
     if (!context?.projectId || !context?.terminalId) return
@@ -68,9 +78,11 @@ export function NewSubTabModal() {
     const extraArgs = unrestricted[type] && flag ? [flag] : undefined
     createSubTab(context.projectId, context.terminalId, {
       type,
-      cwd: cwd.trim() || inheritedCwd,
+      cwd: tabCwd,
       extraArgs,
       runtimeProfile,
+      // Agent launchers keep the shell they require.
+      shell: picksShell && shell ? shell : undefined,
     })
     reset()
     closeModal()
@@ -168,6 +180,12 @@ export function NewSubTabModal() {
           })}
         </div>
       </div>
+      {picksShell ? (
+        <div className={controls.field}>
+          <span className={controls.label}>{t('prefs.shell')}</span>
+          <ShellSelect value={shell} onChange={setShell} />
+        </div>
+      ) : null}
       {!isShellAgentType(type) ? (
         <div className={controls.field}>
           <label className={controls.label}>{t('term.runtimeProfile')}</label>

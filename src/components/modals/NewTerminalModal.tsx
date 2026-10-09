@@ -39,6 +39,7 @@ import controls from './controls.module.css'
 import { Modal } from './Modal'
 import styles from './NewTerminalModal.module.css'
 import { RowSelect, type RowSelectOption } from './RowSelect'
+import { ShellSelect } from './ShellSelect'
 import { WslPathPicker } from './WslPathPicker'
 
 const PLANNER_AGENTS: AgentType[] = ['claude', 'codex']
@@ -92,6 +93,8 @@ export function NewTerminalModal() {
   const [cwd, setCwd] = useState('')
   const [unrestricted, setUnrestricted] = useState<Partial<Record<AgentType, boolean>>>({})
   const [selectedGridId, setSelectedGridId] = useState(UNGROUPED_GRID)
+  /** A plain shell's own shell; '' keeps the default from Preferences. */
+  const [shell, setShell] = useState('')
 
   const only = context?.only
   const isPlannerContext = context?.titleKey === 'term.newPlannerTitle'
@@ -151,6 +154,7 @@ export function NewTerminalModal() {
   useEffect(() => {
     if (!open) return
     setType(defaultType)
+    setShell('')
     setMode('terminal')
     setGoal('')
     setCreateMore(false)
@@ -181,6 +185,7 @@ export function NewTerminalModal() {
 
   const reset = () => {
     setType(defaultType)
+    setShell('')
     setMode('terminal')
     setGoal('')
     setCreateMore(false)
@@ -239,6 +244,9 @@ export function NewTerminalModal() {
           runtimeProfile,
           useRouter9: routingAvailable && useRouter9,
           initialInput: orchestrating && trimmedGoal ? trimmedGoal : undefined,
+          // Agent launchers keep the shell they require; a WSL folder opens the distro's shell.
+          shell:
+            type === 'shell' && shell && !wslTargetFor(finalCwd, wslEnabled) ? shell : undefined,
         },
       }
       if (!finalCwd) return
@@ -442,6 +450,15 @@ export function NewTerminalModal() {
               side={orchestrating ? t('term.plannerSide') : undefined}
             />
           </div>
+
+          {type === 'shell' && !wslTarget ? (
+            <div className={styles.field}>
+              <span className={styles.fieldLabel}>
+                <span className={styles.fieldLabelText}>{t('prefs.shell')}</span>
+              </span>
+              <ShellSelect value={shell} onChange={setShell} />
+            </div>
+          ) : null}
 
           <div className={styles.field}>
             <span className={styles.fieldLabel}>

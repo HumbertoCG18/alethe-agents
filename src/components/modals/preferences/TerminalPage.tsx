@@ -15,6 +15,7 @@ import {
 import {
   BUNDLED_TERMINAL_FONT,
   primaryFontFamily,
+  shellKindLabel,
   terminalFontStack,
 } from '../../../lib/terminalPreferences'
 import {
@@ -48,10 +49,8 @@ const AGENTS: { id: AgentType; label: string }[] = [
   { id: 'codewhale', label: 'Codewhale' },
 ]
 
-/** Shell families with a translated name; other shells show their executable name. */
 /** Option value that opens the file picker instead of choosing a listed shell. */
 const PICK_SHELL = '__pick__'
-const SHELL_KINDS = ['pwsh', 'pwshStore', 'powershell', 'cmd', 'wsl', 'gitBash']
 
 export function TerminalPage({ enabledCount }: { enabledCount: number }) {
   const t = useT()
@@ -93,8 +92,7 @@ export function TerminalPage({ enabledCount }: { enabledCount: number }) {
       active = false
     }
   }, [])
-  const shellName = (kind: string) =>
-    SHELL_KINDS.includes(kind) ? tDynamic(`prefs.shellKind.${kind}`) : kind
+  const shellName = (kind: string) => shellKindLabel(kind, tDynamic)
   const defaultShell = shells.find((item) => item.isDefault)
   const automaticShell = defaultShell
     ? t('prefs.shellAutomaticNamed', { name: shellName(defaultShell.kind) })

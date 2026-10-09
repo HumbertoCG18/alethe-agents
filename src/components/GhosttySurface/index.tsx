@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 
 import { isOverlayPresent, subscribeOverlayPresence } from '../../lib/overlayPresence'
+import { noticeShellFallback, ptyLaunchTarget } from '../../lib/ptyLaunchTarget'
 import { surfaceRectsEqual, visibleRectOf } from '../../lib/surfaceGeometry'
 import {
   ghosttySetFocus,
@@ -109,16 +110,18 @@ export function GhosttySurface({
       try {
         const { cwd, command } = spawnArgsRef.current
         const requestedFont = fontRef.current
+        // The surface is the tab's: a plain shell tab runs its own shell, else the default.
+        const target = command ? undefined : ptyLaunchTarget(null, surfaceId)
         const res = await ghosttySpawn({
           id: surfaceId,
           cwd,
           command,
-          shell: command
-            ? undefined
-            : (useProjectsStore.getState().preferences.shellPath ?? undefined),
+          shell: target?.launcherOverride,
+          fallbackShell: target?.fallbackLauncher,
           fontFamily: requestedFont,
         })
         if (disposed) return
+        noticeShellFallback(res, target?.launcherOverride)
         spawnedRef.current = true
         if (fontRef.current !== requestedFont) await ghosttySetFont(surfaceId, fontRef.current)
         onSpawnedRef.current?.(res.id)

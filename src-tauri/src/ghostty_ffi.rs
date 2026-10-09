@@ -23,6 +23,11 @@ extern "C" {
     pub fn alethe_ghostty_surface_set_size(surface: AletheSurface, width_px: u32, height_px: u32);
     pub fn alethe_ghostty_surface_set_content_scale(surface: AletheSurface, x: f64, y: f64);
     pub fn alethe_ghostty_surface_set_focus(surface: AletheSurface, focused: bool);
+    pub fn alethe_ghostty_surface_set_font(
+        surface: AletheSurface,
+        config: *const c_char,
+        font_dir: *const c_char,
+    ) -> bool;
     pub fn alethe_ghostty_surface_process_exited(surface: AletheSurface) -> bool;
     pub fn alethe_ghostty_surface_draw(surface: AletheSurface);
     pub fn alethe_ghostty_surface_free(surface: AletheSurface);

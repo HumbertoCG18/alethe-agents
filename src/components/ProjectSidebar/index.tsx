@@ -15,7 +15,6 @@ import {
   Folder,
   FolderPlus,
   Home,
-  MoreHorizontal,
   Plus,
   RefreshCw,
   Search,
@@ -48,7 +47,7 @@ import { EmptyState } from '../EmptyState'
 import { SidebarNowPlaying } from '../SidebarNowPlaying'
 import { UserProfile } from '../UserProfile'
 import { ContextMenu, type MenuItem } from './ContextMenu'
-import { FileExplorer } from './FileExplorer'
+import { FilesPanel } from './FilesPanel'
 import { GroupNode } from './GroupNode'
 import { NormalProjectSidebar } from './NormalProjectSidebar'
 import { LayoutFooter, WorkspaceLayoutFooter } from './LayoutFooter'
@@ -583,31 +582,7 @@ function CleanProjectSidebar() {
 
       {sidebarTab === 'files' ? (
         <section className={styles.explorerPanel}>
-          <div className={styles.explorerHeader}>
-            <span className={styles.explorerLabel}>{t('ui.sidebar.explorer')}</span>
-            <MoreHorizontal size={14} />
-          </div>
-          {sidebarTerminal && sidebarSubTab && activeProject ? (
-            <FileExplorer
-              projectId={activeProject.id}
-              cwd={sidebarSubTab.cwd || sidebarTerminal.cwd}
-              ptyId={sidebarSubTab.ptyId}
-              terminalName={sidebarTerminal.name}
-            />
-          ) : (
-            <div className={styles.explorerEmpty}>
-              <EmptyState
-                compact
-                icon={<FolderPlus size={18} />}
-                title={t('ui.sidebar.emptyTitle')}
-                description={t('ui.sidebar.emptyDesc')}
-                primaryAction={{
-                  label: t('ui.sidebar.emptyAction'),
-                  onClick: () => openModal('newProject'),
-                }}
-              />
-            </div>
-          )}
+          <FilesPanel project={activeProject} terminal={sidebarTerminal} subTab={sidebarSubTab} />
         </section>
       ) : null}
 

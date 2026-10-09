@@ -15,6 +15,8 @@
 extern "C" {
 #endif
 
+bool alethe_ghostty_surface_set_font(void *surface, const char *config_path, const char *font_dir);
+
 // Handle opaco de uma surface (na prática um ghostty_surface_t).
 typedef void *alethe_surface_t;
 

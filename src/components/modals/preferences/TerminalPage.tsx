@@ -1,5 +1,5 @@
 import { Activity, Minus, Plus, RotateCcw } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 import { cliPathMatchesAgent } from '../../../lib/agentCliPath'
 import { agentLabel, resolveAgentCliCommand } from '../../../lib/agentProviders'
@@ -7,6 +7,16 @@ import { askConfirm, pickFile } from '../../../lib/dialog'
 import { useT, useTDynamic } from '../../../lib/i18n'
 import { isMacOS, isWindows } from '../../../lib/platform'
 import { countLiveResumablePanes, resetLastSession } from '../../../lib/resetLastSession'
+import {
+  discoverShells,
+  installedFontFamilies,
+  type ShellOption,
+} from '../../../lib/tauri/terminalSettings'
+import {
+  BUNDLED_TERMINAL_FONT,
+  primaryFontFamily,
+  terminalFontStack,
+} from '../../../lib/terminalPreferences'
 import {
   agentCliCommand,
   type AgentType,
@@ -16,7 +26,7 @@ import {
 import { SPAWN_CONCURRENCY_LIMITS, useProjectsStore } from '../../../stores/projectsStore'
 import { useUiStore } from '../../../stores/uiStore'
 import { AgentIcon } from '../../icons/AgentIcons'
-import controls from '../controls.module.css'
+import { Dropdown } from '../../ui/Dropdown'
 import styles from '../PreferencesModal.module.css'
 import { CustomAgentsSection } from './CustomAgentsSection'
 import { SettingsSection } from './primitives'
@@ -38,6 +48,11 @@ const AGENTS: { id: AgentType; label: string }[] = [
   { id: 'codewhale', label: 'Codewhale' },
 ]
 
+/** Shell families with a translated name; other shells show their executable name. */
+/** Option value that opens the file picker instead of choosing a listed shell. */
+const PICK_SHELL = '__pick__'
+const SHELL_KINDS = ['pwsh', 'pwshStore', 'powershell', 'cmd', 'wsl', 'gitBash']
+
 export function TerminalPage({ enabledCount }: { enabledCount: number }) {
   const t = useT()
   const tDynamic = useTDynamic()
@@ -49,7 +64,49 @@ export function TerminalPage({ enabledCount }: { enabledCount: number }) {
   const pushToast = useUiStore((state) => state.pushToast)
   const openModal = useUiStore((state) => state.openModal_)
   const [resetting, setResetting] = useState(false)
-  const [fontDraft, setFontDraft] = useState(preferences.terminalFontFamily)
+  const [shells, setShells] = useState<ShellOption[]>([])
+  const [fonts, setFonts] = useState<string[]>([])
+  const [shellError, setShellError] = useState(false)
+  const [fontError, setFontError] = useState(false)
+  const [loading, setLoading] = useState(true)
+  useEffect(() => {
+    let active = true
+    void Promise.all([
+      discoverShells()
+        .then((items) => {
+          if (active) setShells(items)
+        })
+        .catch(() => {
+          if (active) setShellError(true)
+        }),
+      installedFontFamilies()
+        .then((items) => {
+          if (active) setFonts(items)
+        })
+        .catch(() => {
+          if (active) setFontError(true)
+        }),
+    ]).finally(() => {
+      if (active) setLoading(false)
+    })
+    return () => {
+      active = false
+    }
+  }, [])
+  const shellName = (kind: string) =>
+    SHELL_KINDS.includes(kind) ? tDynamic(`prefs.shellKind.${kind}`) : kind
+  const defaultShell = shells.find((item) => item.isDefault)
+  const automaticShell = defaultShell
+    ? t('prefs.shellAutomaticNamed', { name: shellName(defaultShell.kind) })
+    : t('prefs.shellAutomatic')
+  // The saved value is a stack; the picker shows the family it starts with, '' for the default.
+  const fontChoice =
+    preferences.terminalFontFamily === DEFAULT_TERMINAL_FONT_FAMILY
+      ? ''
+      : primaryFontFamily(preferences.terminalFontFamily)
+  const defaultFontLabel = t('prefs.terminalFontDefault', {
+    name: primaryFontFamily(DEFAULT_TERMINAL_FONT_FAMILY),
+  })
   const concurrency = preferences.spawnConcurrency
   const setConcurrency = (n: number) =>
     setPreferences({
@@ -79,15 +136,6 @@ export function TerminalPage({ enabledCount }: { enabledCount: number }) {
       return
     }
     setCliPath(agent, picked)
-  }
-
-  const commitFont = () => {
-    const next = fontDraft.trim() || DEFAULT_TERMINAL_FONT_FAMILY
-    setFontDraft(next)
-    if (next === preferences.terminalFontFamily) return
-    setPreferences({ terminalFontFamily: next })
-    // Mounted terminals reread the font and refit, the way they follow `alethe:zoom-changed`.
-    window.dispatchEvent(new CustomEvent('alethe:terminal-font-changed'))
   }
 
   const onPickShellPath = async () => {
@@ -133,6 +181,83 @@ export function TerminalPage({ enabledCount }: { enabledCount: number }) {
 
   return (
     <>
+      <SettingsSection
+        id="default-shell"
+        title={t('prefs.defaultShell')}
+        description={t('prefs.defaultShellDesc')}
+      >
+        <Dropdown
+          className={styles.select}
+          value={preferences.shellPath ?? ''}
+          ariaLabel={t('prefs.defaultShell')}
+          searchable
+          searchPlaceholder={t('prefs.shellSearch')}
+          onChange={(shell) => {
+            if (shell === PICK_SHELL) void onPickShellPath()
+            else setPreferences({ shellPath: shell || null })
+          }}
+          displayValue={(() => {
+            const saved = shells.find((item) => item.id === preferences.shellPath)
+            return saved ? shellName(saved.kind) : (preferences.shellPath ?? automaticShell)
+          })()}
+          options={[
+            { value: '', label: automaticShell },
+            ...shells.map((item) => ({
+              value: item.id,
+              label: (
+                <>
+                  {shellName(item.kind)}
+                  <small className={styles.shellPath}>{item.id}</small>
+                </>
+              ),
+              searchText: `${shellName(item.kind)} ${item.id}`,
+            })),
+            { value: PICK_SHELL, label: t('prefs.shellPickOther') },
+          ]}
+        />
+        {shellError ? <p role="alert">{t('prefs.shellDiscoveryError')}</p> : null}
+        {!loading &&
+        preferences.shellPath &&
+        !shells.some((item) => item.id === preferences.shellPath) ? (
+          <p className={styles.resourceHint}>{t('prefs.shellCustom')}</p>
+        ) : null}
+      </SettingsSection>
+      <SettingsSection
+        id="terminal-font"
+        title={t('prefs.terminalFont')}
+        description={t('prefs.terminalFontDesc')}
+      >
+        <Dropdown
+          className={styles.select}
+          value={fontChoice}
+          ariaLabel={t('prefs.terminalFont')}
+          searchable
+          searchPlaceholder={t('prefs.fontSearch')}
+          displayValue={fontChoice || defaultFontLabel}
+          onChange={(family) => {
+            setPreferences({
+              terminalFontFamily: family ? terminalFontStack(family) : DEFAULT_TERMINAL_FONT_FAMILY,
+            })
+            // Mounted terminals reread the font and refit, the way they follow `alethe:zoom-changed`.
+            window.dispatchEvent(new CustomEvent('alethe:terminal-font-changed'))
+          }}
+          options={[
+            { value: '', label: defaultFontLabel },
+            { value: BUNDLED_TERMINAL_FONT, label: BUNDLED_TERMINAL_FONT },
+            ...fonts
+              .filter((family) => family !== BUNDLED_TERMINAL_FONT)
+              .map((family) => ({ value: family, label: family })),
+          ]}
+        />
+        {loading ? <p role="status">{t('prefs.terminalDiscoveryLoading')}</p> : null}
+        {fontError ? <p role="alert">{t('prefs.fontDiscoveryError')}</p> : null}
+        {!loading &&
+        fontChoice &&
+        fontChoice !== BUNDLED_TERMINAL_FONT &&
+        !fonts.includes(fontChoice) ? (
+          <p role="alert">{t('prefs.fontMissing')}</p>
+        ) : null}
+      </SettingsSection>
       <SettingsSection
         id="resource-policy"
         title={t('prefs.resourcePolicy')}
@@ -216,48 +341,6 @@ export function TerminalPage({ enabledCount }: { enabledCount: number }) {
               </label>
             )
           })}
-        </div>
-      </SettingsSection>
-
-      <SettingsSection id="shell-path" title={t('prefs.shell')} description={t('prefs.shellDesc')}>
-        <div className={styles.shellPathRow}>
-          <span className={styles.cliPathValue} title={preferences.shellPath ?? undefined}>
-            {preferences.shellPath ?? t('prefs.cliPathAuto')}
-          </span>
-          <span className={styles.cliPathActions}>
-            <button type="button" onClick={() => void onPickShellPath()}>
-              {t('prefs.cliPathSet')}
-            </button>
-            {preferences.shellPath ? (
-              <button type="button" onClick={() => setPreferences({ shellPath: null })}>
-                {t('prefs.cliPathReset')}
-              </button>
-            ) : null}
-          </span>
-        </div>
-      </SettingsSection>
-
-      <SettingsSection
-        id="terminal-font"
-        title={t('prefs.terminalFont')}
-        description={t('prefs.terminalFontDesc')}
-      >
-        <div className={styles.integrationFields}>
-          <label>
-            <span>{t('prefs.terminalFontFamily')}</span>
-            <input
-              className={controls.input}
-              value={fontDraft}
-              placeholder={DEFAULT_TERMINAL_FONT_FAMILY}
-              // Committing per keystroke would reflow every mounted terminal on partial font names.
-              onChange={(event) => setFontDraft(event.target.value)}
-              onBlur={commitFont}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') event.currentTarget.blur()
-              }}
-              spellCheck={false}
-            />
-          </label>
         </div>
       </SettingsSection>
 

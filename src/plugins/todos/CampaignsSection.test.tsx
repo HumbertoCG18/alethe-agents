@@ -285,7 +285,7 @@ describe('CampaignsSection', () => {
     await expandSection()
     expect(screen.getByText('OITO')).toBeInTheDocument()
     expect(screen.getByText('1/8 · 13%')).toBeInTheDocument()
-    expect(screen.getByText('In progress, 4 ready')).toBeInTheDocument()
+    expect(screen.getByText('Not running, 4 ready')).toBeInTheDocument()
     expect(screen.getByText('1/1+? · 100%')).toBeInTheDocument()
     expect(screen.getByText('Waits for ABERTA')).toBeInTheDocument()
 
@@ -462,7 +462,7 @@ describe('CampaignsSection', () => {
     const oito = screen.getByText('OITO').closest('[data-lane]')
     expect(oito).toHaveAttribute('data-lane', 'interrupted')
     expect(oito).not.toHaveAttribute('data-status')
-    expect(oito).toHaveTextContent('In progress, 4 ready')
+    expect(oito).toHaveTextContent('Not running, 4 ready')
     useTerminalsStore.getState().reset()
   })
 
@@ -1623,7 +1623,9 @@ describe('Night card', () => {
     expect(screen.getByText('a1b2c3d').tagName).toBe('SPAN')
     fireEvent.click(screen.getByRole('button', { name: 'docs/motor.md' }))
     await waitFor(() =>
-      expect(useUiStore.getState().linkViewerUrl).toBe('C:\\repo-feature\\docs\\motor.md'),
+      expect(useUiStore.getState().rightSidebarMarkdown?.path ?? null).toBe(
+        'C:\\repo-feature\\docs\\motor.md',
+      ),
     )
     expect(findRelativePath).toHaveBeenCalledWith('C:\\repo', 'docs/motor.md')
   })
@@ -1715,12 +1717,16 @@ describe('Night card', () => {
     expect(findRelativePath).not.toHaveBeenCalled()
     expect(vi.mocked(listDirectory).mock.calls.every(([path]) => path === NIGHTS)).toBe(true)
     expect(openInFileExplorer).not.toHaveBeenCalled()
-    expect(useUiStore.getState().linkViewerUrl).toBeNull()
+    expect(useUiStore.getState().rightSidebarMarkdown?.path ?? null).toBeNull()
     expect(useProjectsStore.getState().projects[0].terminals).toHaveLength(panes)
   }
 
   it('opens evidence only inside the checkouts, never asking the disk about another path', async () => {
-    useUiStore.setState({ linkViewerUrl: null })
+    useUiStore.setState({
+      linkViewerUrl: null,
+      rightSidebarMarkdown: null,
+      rightSidebarMarkdownTabs: [],
+    })
     fs.files.set(REGISTRY, JSON.stringify(exemplo))
     fs.files.set(
       `${NIGHTS}\\2026-10-03.json`,
@@ -1751,7 +1757,11 @@ describe('Night card', () => {
   })
 
   it('refuses a rooted path without a drive, which Windows would resolve on the current drive', async () => {
-    useUiStore.setState({ linkViewerUrl: null })
+    useUiStore.setState({
+      linkViewerUrl: null,
+      rightSidebarMarkdown: null,
+      rightSidebarMarkdownTabs: [],
+    })
     fs.files.set(REGISTRY, JSON.stringify(exemplo))
     fs.files.set(
       `${NIGHTS}\\2026-10-03.json`,
@@ -1769,7 +1779,11 @@ describe('Night card', () => {
   })
 
   it('looks evidence up when clicked: one removed since the card showed it opens nothing', async () => {
-    useUiStore.setState({ linkViewerUrl: null })
+    useUiStore.setState({
+      linkViewerUrl: null,
+      rightSidebarMarkdown: null,
+      rightSidebarMarkdownTabs: [],
+    })
     fs.files.set(REGISTRY, JSON.stringify(exemplo))
     fs.files.set(
       `${NIGHTS}\\2026-10-03.json`,
@@ -1790,7 +1804,13 @@ describe('Night card', () => {
   })
 
   it('opens a folder through its report, else in the file explorer, and names evidence found nowhere', async () => {
-    useUiStore.setState({ toasts: [], notifications: [], linkViewerUrl: null })
+    useUiStore.setState({
+      toasts: [],
+      notifications: [],
+      linkViewerUrl: null,
+      rightSidebarMarkdown: null,
+      rightSidebarMarkdownTabs: [],
+    })
     fs.files.set(REGISTRY, JSON.stringify(exemplo))
     // Each folder and its files; the report is the first of relatorio.md, README.md and
     // handoff.md, else its only Markdown file.
@@ -1818,7 +1838,7 @@ describe('Night card', () => {
     )
     render(<TodoSidebar />)
     fireEvent.click(await screen.findByRole('button', { name: /^Night of/ }))
-    const viewer = () => useUiStore.getState().linkViewerUrl
+    const viewer = () => useUiStore.getState().rightSidebarMarkdown?.path ?? null
     const link = async (evidence: string) =>
       fireEvent.click(await screen.findByRole('button', { name: evidence }))
     const panes = () => useProjectsStore.getState().projects[0].terminals.length
@@ -1862,7 +1882,13 @@ describe('Night card', () => {
     }
 
     beforeEach(() => {
-      useUiStore.setState({ toasts: [], notifications: [], linkViewerUrl: null })
+      useUiStore.setState({
+        toasts: [],
+        notifications: [],
+        linkViewerUrl: null,
+        rightSidebarMarkdown: null,
+        rightSidebarMarkdownTabs: [],
+      })
       useTodosStore.setState({ tab: 'tasks' })
     })
 
@@ -2040,7 +2066,9 @@ describe('Night card', () => {
       // Markdown opens in the viewer, any other file in a pane, as from a terminal link.
       await choose('OITO-07', 'Open evidence')
       await waitFor(() =>
-        expect(useUiStore.getState().linkViewerUrl).toBe('C:\\repo-feature\\docs\\oito.md'),
+        expect(useUiStore.getState().rightSidebarMarkdown?.path ?? null).toBe(
+          'C:\\repo-feature\\docs\\oito.md',
+        ),
       )
       await choose('PARADA-01', 'Open evidence')
       await waitFor(() =>
@@ -2352,7 +2380,11 @@ describe('Todo sections', () => {
         ? new Promise((resolve) => (release = resolve))
         : Promise.resolve(`${cwd}\\${path.replace(/\//g, '\\')}`),
     )
-    useUiStore.setState({ linkViewerUrl: null })
+    useUiStore.setState({
+      linkViewerUrl: null,
+      rightSidebarMarkdown: null,
+      rightSidebarMarkdownTabs: [],
+    })
     try {
       render(<TodoSidebar />)
       await waitFor(() => expect(gate2Rows()).toEqual(['OITO-07']))
@@ -2365,10 +2397,12 @@ describe('Todo sections', () => {
       fireEvent.click(within(gate2()!).getByRole('button', { name: /^OITO-07 / }))
       fireEvent.click(screen.getByRole('menuitem', { name: 'Open evidence' }))
       await act(async () => {})
-      expect(useUiStore.getState().linkViewerUrl).toBeNull()
+      expect(useUiStore.getState().rightSidebarMarkdown?.path ?? null).toBeNull()
       await act(async () => release('C:\\repo-feature\\docs\\report.md'))
       await waitFor(() =>
-        expect(useUiStore.getState().linkViewerUrl).toBe('C:\\repo-feature\\docs\\report.md'),
+        expect(useUiStore.getState().rightSidebarMarkdown?.path ?? null).toBe(
+          'C:\\repo-feature\\docs\\report.md',
+        ),
       )
       expect(lookup).toHaveBeenLastCalledWith('C:\\repo-feature', 'docs/report.md')
     } finally {
@@ -2384,7 +2418,11 @@ describe('Todo sections', () => {
     fs.files.set(REGISTRY, JSON.stringify(data))
     fs.found.set('docs/oito.md', 'C:\\repo\\docs\\oito.md')
     const tagged = openTerminal('C:\\repo', 'claude', 'PARADA')
-    useUiStore.setState({ linkViewerUrl: null })
+    useUiStore.setState({
+      linkViewerUrl: null,
+      rightSidebarMarkdown: null,
+      rightSidebarMarkdownTabs: [],
+    })
     render(<TodoSidebar />)
     await waitFor(() => expect(gate2Rows()).toEqual(['OITO-07', 'NOTURNA-01', 'PARADA-01']))
     const trigger = (id: string) =>
@@ -2407,7 +2445,11 @@ describe('Todo sections', () => {
     fireEvent.click(trigger('OITO-07'))
     fireEvent.click(screen.getByRole('menuitem', { name: 'Open evidence' }))
     expect(trigger('OITO-07')).toHaveFocus()
-    await waitFor(() => expect(useUiStore.getState().linkViewerUrl).toBe('C:\\repo\\docs\\oito.md'))
+    await waitFor(() =>
+      expect(useUiStore.getState().rightSidebarMarkdown?.path ?? null).toBe(
+        'C:\\repo\\docs\\oito.md',
+      ),
+    )
 
     // No evidence, no Open evidence; Continue goes to the campaign's tab.
     fireEvent.click(trigger('PARADA-01'))
@@ -2681,7 +2723,15 @@ describe('Task detail', () => {
     useTodosStore.setState({ activeCampaigns: { [projectId()]: 'OITO' } })
   }
 
-  beforeEach(() => useUiStore.setState({ toasts: [], notifications: [], linkViewerUrl: null }))
+  beforeEach(() =>
+    useUiStore.setState({
+      toasts: [],
+      notifications: [],
+      linkViewerUrl: null,
+      rightSidebarMarkdown: null,
+      rightSidebarMarkdownTabs: [],
+    }),
+  )
 
   it('expands a task row into its result, evidence, waits, workers, night and findings', async () => {
     seed()
@@ -2749,7 +2799,9 @@ describe('Task detail', () => {
 
     fireEvent.click(open)
     await waitFor(() =>
-      expect(useUiStore.getState().linkViewerUrl).toBe('C:\\repo\\docs\\oito-02.md'),
+      expect(useUiStore.getState().rightSidebarMarkdown?.path ?? null).toBe(
+        'C:\\repo\\docs\\oito-02.md',
+      ),
     )
     expect(findRelativePath).toHaveBeenCalledWith('C:\\repo', 'docs/oito-02.md')
 
@@ -3137,7 +3189,7 @@ describe('Todo tabs', () => {
     expect(tab(/^Personal/)).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByText('Personal one')).toBeInTheDocument()
     expect(screen.getByPlaceholderText('Add a task…')).toBeInTheDocument()
-    expect(screen.getByRole('progressbar')).toHaveTextContent('0 / 1')
+    expect(screen.queryByRole('progressbar')).toBeNull()
     expect(header(/^Campaigns/)).toBeNull()
     expect(useTodosStore.getState().tab).toBe('personal')
 
@@ -3221,7 +3273,7 @@ describe('Todo tabs', () => {
       within(oito)
         .getByRole('button', { name: /^OITO ·/ })
         .getAttribute('title'),
-    ).toMatch(/^Assisted · .* · In progress, 4 ready$/)
+    ).toMatch(/^Assisted · .* · Not running, 4 ready$/)
 
     // Each add field writes to its own campaign.
     fireEvent.click(
@@ -3497,7 +3549,7 @@ describe('Active campaign step', () => {
     const oito = active('OITO')!
     const head = within(oito).getByRole('button', { name: /^OITO ·/ })
     expect(head.getAttribute('title')).toContain('Assisted')
-    expect(head.getAttribute('title')).toContain('In progress, 4 ready')
+    expect(head.getAttribute('title')).toContain('Not running, 4 ready')
     await waitFor(() => expect(head).toHaveTextContent('1 queued'))
     expect(within(oito).queryByRole('button', { name: 'Details' })).toBeNull()
     expect(screen.queryByRole('button', { name: /the add field$/ })).toBeNull()
@@ -3517,7 +3569,7 @@ describe('Active campaign step', () => {
     expect(field()).toBeNull()
   })
 
-  it('fills the Night tab bar with the latest night tasks done now, over their count', async () => {
+  it('hides the Night tab bar when the diary exists but no campaign is running', async () => {
     fs.files.set(REGISTRY, JSON.stringify(exemplo))
     // OITO-01 is done in the registry; OITO-03 is listed twice; MOTOR-09 is not in it.
     night(['OITO-01', 'ok'], ['OITO-03', 'falhou'], ['OITO-03', 'aguarda-voce'], ['MOTOR-09', 'ok'])
@@ -3525,26 +3577,26 @@ describe('Active campaign step', () => {
     useTodosStore.setState({ tab: 'night' })
     render(<TodoSidebar />)
     const bar = () => screen.queryByRole('progressbar')
-    await waitFor(() => expect(bar()).toHaveTextContent('1 / 3'))
-    expect(bar()!.querySelector('[title]')).toHaveAttribute('title', 'Night of 10/03 · 1/3')
+    await screen.findByText('OITO', { exact: true })
+    expect(bar()).toBeNull()
 
     // Overview keeps its campaign segments.
     fireEvent.click(screen.getByRole('tab', { name: /^Overview/ }))
     expect(bar()).toBeNull()
   })
 
-  it('hides the Night tab bar once every night task is concluded', async () => {
+  it('keeps the running night campaign bar even when the diary has nothing open', async () => {
     fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    // The bar follows the selected running campaign with a night task (OITO-08), not the diary.
     night(['OITO-01', 'ok'])
-    openTerminal('C:\\repo', 'claude', 'OITO')
-    useTodosStore.setState({ tab: 'night' })
+    const id = useProjectsStore.getState().projects[0].id
+    useTodosStore.setState({ tab: 'night', activeCampaigns: { [id]: 'OITO' } })
+    orchestrator.jobs = [{ id: 'o', task: 'OITO-03', status: 'running', cwd: 'C:\\repo' }]
     render(<TodoSidebar />)
-    await waitFor(() => expect(listDirectory).toHaveBeenCalledWith(NIGHTS))
-    await act(async () => {})
-    expect(screen.queryByRole('progressbar')).toBeNull()
+    await waitFor(() => expect(screen.getByRole('progressbar')).toHaveTextContent('1 / 8'))
   })
 
-  it('hides the Night tab bar without a diary', async () => {
+  it('shows no Night tab bar when no night campaign is running', async () => {
     fs.files.set(REGISTRY, JSON.stringify(exemplo))
     useTodosStore.setState({ tab: 'night' })
     render(<TodoSidebar />)
@@ -4086,7 +4138,7 @@ describe('Personal list', () => {
     expect(doneGroup).toHaveAttribute('aria-expanded', 'false')
     fireEvent.click(doneGroup)
     expect(titles()).toEqual(['Loose one', 'Write the doc', 'Finished one'])
-    expect(screen.getByRole('progressbar')).toHaveTextContent('1 / 3')
+    expect(screen.queryByRole('progressbar')).toBeNull()
   })
 
   it('reorders open todos by dragging one onto another in the list', () => {
@@ -4116,6 +4168,7 @@ describe('campaign dependency editor', () => {
     render(<Section />)
     await expandSection()
     fireEvent.click(screen.getByText('OITO', { exact: true }).closest('button')!)
+    fireEvent.click(screen.getByRole('button', { name: /^Depends on/ }))
     const editor = screen.getByRole('group', { name: 'Depends on' })
     fireEvent.click(within(editor).getByRole('checkbox', { name: /^PARADA/ }))
     fireEvent.click(within(editor).getByRole('button', { name: 'Save dependencies' }))
@@ -4134,6 +4187,7 @@ describe('campaign dependency editor', () => {
     render(<Section />)
     await expandSection()
     fireEvent.click(screen.getByText('OITO', { exact: true }).closest('button')!)
+    fireEvent.click(screen.getByRole('button', { name: /^Depends on/ }))
     const editor = screen.getByRole('group', { name: 'Depends on' })
     fireEvent.click(within(editor).getByRole('checkbox', { name: /^PARADA/ }))
     const changed = withOito(exemplo, { titulo: 'Concurrent update' })
@@ -4145,6 +4199,7 @@ describe('campaign dependency editor', () => {
         (item: { id: string }) => item.id === 'OITO',
       ).titulo,
     ).toBe('Concurrent update')
+    expect(await screen.findByRole('alert')).toHaveTextContent('Could not save dependencies')
   })
 })
 
@@ -4185,6 +4240,7 @@ it('preserves a dependency draft when an unrelated task update reloads the regis
   render(<Section />)
   await expandSection()
   fireEvent.click(screen.getByText('OITO', { exact: true }).closest('button')!)
+  fireEvent.click(screen.getByRole('button', { name: /^Depends on/ }))
   const editor = screen.getByRole('group', { name: 'Depends on' })
   fireEvent.click(within(editor).getByRole('checkbox', { name: /^PARADA/ }))
   await editRegistry((data) => {
@@ -4197,4 +4253,95 @@ it('preserves a dependency draft when an unrelated task update reloads the regis
     JSON.parse(fs.files.get(REGISTRY)!).campanhas.find((item: { id: string }) => item.id === 'OITO')
       .depende_de,
   ).not.toContain('PARADA')
+})
+
+describe('Night campaign access and blocking indicators', () => {
+  it('opens the full campaign session flow from Night without a diary', async () => {
+    fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    useTodosStore.setState({ tab: 'night' })
+    render(<TodoSidebar />)
+    await screen.findByText('OITO', { exact: true })
+    fireEvent.click(screen.getByRole('button', { name: 'Open campaign OITO' }))
+    expect(useUiStore.getState().openModal).toBe('newTerminal')
+    await confirmSession('codex')
+    expect(agentTerminals()[0].tabs[0]).toMatchObject({ type: 'codex', campaignId: 'OITO' })
+  })
+  it('updates the blocked indicator when the registry releases a prerequisite', async () => {
+    const data = structuredClone(exemplo)
+    const dependent = data.campanhas.find((c) => c.id === 'NOTURNA')!
+    dependent.depende_de = ['OITO']
+    dependent.tarefas.forEach((task) => {
+      task.estado = 'pronta'
+      task.depende_de = []
+    })
+    fs.files.set(REGISTRY, JSON.stringify(data))
+    render(<Section />)
+    await expandSection()
+    const row = () => screen.getByText('NOTURNA').closest('[data-blocked]')
+    expect(row()).toHaveAttribute('data-blocked', 'true')
+    dependent.depende_de = []
+    fs.files.set(REGISTRY, JSON.stringify(data))
+    act(() => fs.onChange?.(REGISTRY))
+    await waitFor(() => expect(row()).toHaveAttribute('data-blocked', 'false'))
+  })
+})
+
+describe('visual feedback regressions', () => {
+  it('shows only night campaign cards and expands only their night tasks', async () => {
+    fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    useTodosStore.setState({ tab: 'night' })
+    render(<TodoSidebar />)
+    expect(await screen.findByText('OITO', { exact: true })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^Campaigns/ })).toBeNull()
+    expect(screen.queryByText('ABERTA', { exact: true })).toBeNull()
+    fireEvent.click(screen.getByText('OITO', { exact: true }).closest('button')!)
+    expect(screen.getByText('OITO-08', { exact: true })).toBeInTheDocument()
+    expect(screen.queryByText('OITO-02', { exact: true })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Open campaign OITO' }))
+    expect(useUiStore.getState().openModal).toBe('newTerminal')
+  })
+  it('hides progress in Personal even when personal tasks exist', () => {
+    useTodosStore.setState({
+      tab: 'personal',
+      todos: [{ id: 'personal', title: 'Personal item', completed: false, tags: [] }],
+    })
+    render(<TodoSidebar />)
+    expect(screen.queryByRole('progressbar')).toBeNull()
+  })
+  it('does not label registry-only progress as a live execution', async () => {
+    fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    render(<Section />)
+    await expandSection()
+    fireEvent.click(screen.getByText('OITO', { exact: true }).closest('button')!)
+    const row = screen.getByText('OITO-02', { exact: true }).closest('li')!
+    expect(row).toHaveTextContent('Not running')
+    expect(screen.queryByText('In progress, 4 ready')).toBeNull()
+    expect(task('OITO-02')?.estado).toBe('em execução')
+  })
+  it('confirms a saved dependency after the atomic write succeeds', async () => {
+    fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    render(<Section />)
+    await expandSection()
+    fireEvent.click(screen.getByText('OITO', { exact: true }).closest('button')!)
+    fireEvent.click(screen.getByRole('button', { name: /^Depends on/ }))
+    const editor = screen.getByRole('group', { name: 'Depends on' })
+    fireEvent.click(within(editor).getByRole('checkbox', { name: /^PARADA/ }))
+    fireEvent.click(within(editor).getByRole('button', { name: 'Save dependencies' }))
+    expect(await screen.findByRole('status')).toHaveTextContent('Dependencies saved')
+    expect(
+      JSON.parse(fs.files.get(REGISTRY)!).campanhas.find((c: { id: string }) => c.id === 'OITO')
+        .depende_de,
+    ).toContain('PARADA')
+  })
+})
+
+it('shows selected live night campaign progress and keeps it out of Personal', async () => {
+  fs.files.set(REGISTRY, JSON.stringify(exemplo))
+  const id = useProjectsStore.getState().projects[0].id
+  useTodosStore.setState({ tab: 'night', activeCampaigns: { [id]: 'OITO' } })
+  orchestrator.jobs = [{ id: 'night-job', task: 'OITO-08', status: 'running', cwd: 'C:\\repo' }]
+  render(<TodoSidebar />)
+  expect(await screen.findByRole('progressbar')).toHaveTextContent('1 / 8')
+  fireEvent.click(screen.getByRole('tab', { name: /^Personal/ }))
+  expect(screen.queryByRole('progressbar')).toBeNull()
 })

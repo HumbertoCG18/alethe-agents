@@ -129,6 +129,8 @@ export type GhosttySpawnArgs = {
   cwd?: string
 
   command?: string
+  shell?: string
+  fontFamily?: string | null
 }
 
 export async function ghosttySpawn(args: GhosttySpawnArgs): Promise<GhosttySurfaceResponse> {
@@ -136,7 +138,13 @@ export async function ghosttySpawn(args: GhosttySpawnArgs): Promise<GhosttySurfa
     id: args.id,
     cwd: args.cwd,
     command: args.command,
+    shell: args.shell,
+    fontFamily: args.fontFamily,
   })
+}
+
+export async function ghosttySetFont(id: string, fontFamily: string | null): Promise<void> {
+  await invoke('ghostty_set_font', { id, fontFamily })
 }
 
 export async function ghosttySyncFrame(id: string, rect: WebRect, scale: number): Promise<void> {

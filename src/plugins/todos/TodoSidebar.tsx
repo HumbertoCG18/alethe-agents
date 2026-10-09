@@ -221,7 +221,6 @@ export function TodoSidebar() {
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(() => new Set())
   const addInputRef = useRef<HTMLInputElement>(null)
   const tabsId = useId()
-  const locale = useProjectsStore((state) => state.preferences.language)
   const tab = useTodosStore((state) => state.tab)
   const setTab = useTodosStore((state) => state.setTab)
   const view = useCampaignView()
@@ -292,41 +291,23 @@ export function TodoSidebar() {
 
   const active = todos.filter((todo) => !todo.completed)
   const completed = todos.filter((todo) => todo.completed)
-  // The latest night's tasks, and those of them done in the registry now.
-  const nightTasks = [...new Set(diary?.entries.map((entry) => entry.task))]
-  const doneNow = new Set(
-    campaigns.flatMap((campaign) =>
-      campaign.tasks.filter((task) => task.state === 'concluída').map((task) => task.id),
-    ),
-  )
-  // Personal and Night keep their totals; Overview follows the selected running campaign.
-  const parts: ProgressPart[] | null =
+  const parts: ProgressPart[] =
     tab === 'personal'
-      ? [{ name: null, done: completed.length, total: todos.length, more: false }]
-      : tab === 'night'
-        ? diary && nightTasks.some((id) => !doneNow.has(id))
-          ? [
-              {
-                name: t('todo.night.title', { date: nightDay(diary.date, locale) }),
-                done: nightTasks.filter((id) => doneNow.has(id)).length,
-                total: nightTasks.length,
-                more: false,
-              },
-            ]
-          : null
-        : campaigns
-            .filter(
-              (campaign) =>
-                campaign.id === view.activeId &&
-                live.get(campaign.id) === 'working' &&
-                campaign.situation.kind !== 'done',
-            )
-            .map((campaign) => ({
-              name: campaign.id,
-              done: campaign.done,
-              total: campaign.total,
-              more: !campaign.decomposed,
-            }))
+      ? []
+      : campaigns
+          .filter(
+            (campaign) =>
+              campaign.id === view.activeId &&
+              live.get(campaign.id) === 'working' &&
+              campaign.situation.kind !== 'done' &&
+              (tab !== 'night' || campaign.night),
+          )
+          .map((campaign) => ({
+            name: campaign.id,
+            done: campaign.done,
+            total: campaign.total,
+            more: !campaign.decomposed,
+          }))
 
   // The Ctrl+N listener is installed once: it runs the latest render's handler. On Tasks it goes to
   // the add field of the focused campaign when it is active, else of the first active one;
@@ -770,6 +751,7 @@ export function TodoSidebar() {
   const night = (
     <>
       <NightStatus projectId={view.projectId} />
+      <CampaignsSection view={view} workers={workers} nightOnly />
       {view.registry && diary ? (
         <NightCard registry={view.registry} diary={diary} edits={edits} />
       ) : (
@@ -1293,6 +1275,8 @@ function ActiveCampaign({
 }) {
   const t = useT()
   const facts = useCampaignFacts(campaign, registry.checkouts)
+  const working =
+    useCampaignLive(registry.projectId, [campaign], workers).get(campaign.id) === 'working'
   const [doneOpen, setDoneOpen] = useState(false)
   const openTasks = campaignTaskView(campaign.tasks, 'active').filter(
     (task) => !pending.has(task.id),
@@ -1314,6 +1298,7 @@ function ActiveCampaign({
       workers={workers}
       sources={sources}
       step={step}
+      working={working}
     />
   )
   const add = t('todo.campaignAddPlaceholder', { id: campaign.id })
@@ -1325,7 +1310,12 @@ function ActiveCampaign({
         open={open}
         onToggle={onToggle}
         variant="sub"
-        title={[facts.window, facts.worktree, facts.updated, situationLabel(t, campaign.situation)]
+        title={[
+          facts.window,
+          facts.worktree,
+          facts.updated,
+          situationLabel(t, campaign.situation, working),
+        ]
           .filter(Boolean)
           .join(' · ')}
         extra={
@@ -1505,6 +1495,7 @@ function CampaignTaskRow({
   sources,
   actions,
   step = false,
+  working = false,
 }: {
   task: CampaignTask
   /** Shown in place of its state, where the list mixes campaigns. */
@@ -1517,6 +1508,7 @@ function CampaignTaskRow({
   actions?: TaskActions
   /** Shows its result, the step it is at, under its title while it is open. */
   step?: boolean
+  working?: boolean
 }) {
   const t = useT()
   const [expanded, setExpanded] = useState(false)
@@ -1527,6 +1519,7 @@ function CampaignTaskRow({
   // A task done elsewhere has no state here to go back to.
   const label = t(done ? (undoable ? 'todo.reopen' : STATE_KEYS[task.state]) : 'todo.complete')
   const live = workersLabel(t, workers.get(task.id))
+  const inactive = task.state === 'em execução' && !working && !workers.get(task.id)?.running
   // Through its steps when it has them, its result in the tooltip; else its result.
   const progress = stepProgress(task)
   const stepLine =
@@ -1588,8 +1581,11 @@ function CampaignTaskRow({
       {campaignId ? (
         <span className={campaignStyles.id}>{campaignId}</span>
       ) : done ? null : (
-        <span className={campaignStyles.chip} data-lane={TASK_LANES[task.state]}>
-          {t(STATE_KEYS[task.state])}
+        <span
+          className={campaignStyles.chip}
+          data-lane={inactive ? 'interrupted' : TASK_LANES[task.state]}
+        >
+          {t(inactive ? 'todo.campaigns.inactiveTask' : STATE_KEYS[task.state])}
         </span>
       )}
       {step && !done && stepLine ? (

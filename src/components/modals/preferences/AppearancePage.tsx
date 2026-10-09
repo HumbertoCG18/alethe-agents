@@ -16,7 +16,6 @@ export function AppearancePage() {
   const contributedViews = useContributions(sidebarTabContributions)
   const preferences = useProjectsStore((state) => state.preferences)
   const setUiTheme = useProjectsStore((state) => state.setUiTheme)
-  const setTerminalTheme = useProjectsStore((state) => state.setTerminalTheme)
   const setUiZoom = useProjectsStore((state) => state.setUiZoom)
   const setPreferences = useProjectsStore((state) => state.setPreferences)
   return (
@@ -190,25 +189,6 @@ export function AppearancePage() {
             )
           })}
         </div>
-      </SettingsSection>
-
-      <SettingsSection
-        id="terminal-theme"
-        title={t('prefs.terminalTheme')}
-        description={t('prefs.terminalThemeDesc')}
-      >
-        <Dropdown
-          className={styles.select}
-          value={preferences.terminalTheme ?? ''}
-          onChange={(value) =>
-            setTerminalTheme(value ? (value as typeof preferences.uiTheme) : null)
-          }
-          ariaLabel={t('prefs.terminalTheme')}
-          options={[
-            { value: '', label: t('common.followUi') },
-            ...themeOptions.map((theme) => ({ value: theme.id, label: themeLabel(t, theme.id) })),
-          ]}
-        />
       </SettingsSection>
 
       <SettingsSection id="ui-zoom" title={t('prefs.uiZoom')} description={t('prefs.uiZoomDesc')}>

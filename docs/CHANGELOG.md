@@ -537,6 +537,12 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ### Fixed
 
+- **Claude usage says why it could not be read, and asks less often.** The usage card names the
+  cause of a failed read: rate limited (with the time to try again), sign-in expired, offline, or
+  unavailable. Every reader, including the orchestrator's quota warnings, shares one read per
+  minute, failed or not, and after a rate limit no read is sent until the wait the service asked
+  for has passed (at most an hour; 5 minutes when it does not say). Each failure is written to
+  `app-events.log` with its status.
 - **Orchestrator shells in a WSL folder run their command.** They opened an idle login shell in the
   distro while the board showed them running; the command now runs there, and the board sees it
   exit.

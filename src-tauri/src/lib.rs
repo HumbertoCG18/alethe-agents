@@ -41,6 +41,7 @@ mod handoff;
 mod health_probe;
 mod jev;
 mod logging;
+mod markdown_reader;
 mod mcp_agents;
 mod mcp_catalog;
 mod mcp_health;
@@ -84,6 +85,7 @@ mod spotify;
 mod stats;
 mod supervisor;
 mod telemetry;
+mod terminal_settings;
 mod validation;
 mod webview_media;
 mod window_style;
@@ -215,6 +217,15 @@ pub fn run() {
         .manage(resource_supervisor)
         .manage(ghostty_bridge::GhosttySurfaces::default())
         .manage(filesystem::FileWatchers::default())
+        .on_window_event(|window, event| {
+            if matches!(event, tauri::WindowEvent::Destroyed) {
+                filesystem::release_window_watchers(
+                    &window.state::<filesystem::FileWatchers>(),
+                    window.label(),
+                );
+                markdown_reader::close_window(window.label());
+            }
+        })
         .manage(discord_presence::DiscordPresence::new())
         .manage(planning::PlanningWatchers::default())
         .manage(cli_launch::PendingOpen::default())
@@ -311,6 +322,9 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            markdown_reader::markdown_generate,
+            markdown_reader::markdown_cancel,
+            markdown_reader::open_markdown_reader,
             agent_events::agent_hooks_settings_path,
             agent_events::codex_hooks_config_write,
             agent_events::codex_mcp_config_write,
@@ -368,6 +382,7 @@ pub fn run() {
             custom_agent_icons::custom_agent_icon_data_url,
             custom_agent_icons::remove_custom_agent_icon,
             filesystem::list_directory,
+            filesystem::list_project_markdown,
             filesystem::browse_directory,
             filesystem::home_directory,
             filesystem::read_text_file,
@@ -409,6 +424,7 @@ pub fn run() {
             pty::set_pty_visible,
             pty::set_pty_priority,
             ghostty_bridge::ghostty_spawn,
+            ghostty_bridge::ghostty_set_font,
             ghostty_bridge::ghostty_sync_frame,
             ghostty_bridge::ghostty_set_hidden,
             ghostty_bridge::ghostty_kill,
@@ -422,6 +438,8 @@ pub fn run() {
             projects::save_projects,
             projects::clone_github_repo,
             cli_resolver::discover_provider_models,
+            terminal_settings::discover_shells,
+            terminal_settings::installed_font_families,
             profiles::list_profiles,
             profiles::list_profile_summaries,
             profiles::get_active_profile,

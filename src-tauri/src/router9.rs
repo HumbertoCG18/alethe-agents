@@ -14,7 +14,7 @@ use std::time::Duration;
 use serde::Serialize;
 use tauri::AppHandle;
 
-use crate::cli_resolver::{cli_version_at, find_windows_cli_launcher};
+use crate::cli_resolver::find_windows_cli_launcher;
 use crate::git_control::hide_console;
 use crate::paths::profile_data_dir;
 
@@ -75,9 +75,44 @@ fn external_install() -> Router9Install {
     };
     Router9Install {
         installed: true,
-        version: cli_version_at(&path),
+        version: external_version_at(&path),
         path: Some(path.to_string_lossy().into_owned()),
     }
+}
+
+/// Passive settings discovery reads the package metadata; it never starts the router CLI.
+fn external_version_at(launcher: &Path) -> Option<String> {
+    let resolved = launcher
+        .canonicalize()
+        .unwrap_or_else(|_| launcher.to_path_buf());
+    for parent in resolved.ancestors().skip(1).take(5) {
+        for manifest in [
+            parent.join("package.json"),
+            parent
+                .join("node_modules")
+                .join(PACKAGE)
+                .join("package.json"),
+            parent
+                .join("lib")
+                .join("node_modules")
+                .join(PACKAGE)
+                .join("package.json"),
+        ] {
+            let Some(value) = fs::read_to_string(manifest)
+                .ok()
+                .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+            else {
+                continue;
+            };
+            if value.get("name").and_then(serde_json::Value::as_str) == Some(PACKAGE) {
+                return value
+                    .get("version")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string);
+            }
+        }
+    }
+    None
 }
 
 fn install_dir(app: &AppHandle) -> Result<PathBuf, String> {
@@ -235,7 +270,9 @@ pub fn router9_start(
         .append(true)
         .open(&log)
         .map_err(|e| format!("log_open_failed:{e}"))?;
-    let err = out.try_clone().map_err(|e| format!("log_open_failed:{e}"))?;
+    let err = out
+        .try_clone()
+        .map_err(|e| format!("log_open_failed:{e}"))?;
 
     let mut command = match source {
         Router9Source::Managed => {
@@ -249,7 +286,10 @@ pub fn router9_start(
             let mut command = Command::new(node);
             // The managed copy keeps its data beside the profile so it never shares state with an
             // install the user maintains themselves.
-            command.arg(&script).current_dir(&dir).env("DATA_DIR", &data);
+            command
+                .arg(&script)
+                .current_dir(&dir)
+                .env("DATA_DIR", &data);
             command
         }
         Router9Source::External => {
@@ -279,4 +319,25 @@ pub fn router9_start(
 pub fn router9_stop(state: tauri::State<'_, Router9Process>) -> Result<(), String> {
     stop_managed(state.inner());
     Ok(())
+}
+
+#[cfg(test)]
+mod metadata_tests {
+    use super::*;
+    #[test]
+    fn external_version_is_read_without_executing_the_launcher() {
+        let root =
+            std::env::temp_dir().join(format!("alethe-router-metadata-{}", nanoid::nanoid!()));
+        let package = root.join("node_modules").join(PACKAGE);
+        fs::create_dir_all(&package).unwrap();
+        let launcher = root.join("9router.cmd");
+        fs::write(&launcher, "this launcher must never execute").unwrap();
+        fs::write(
+            package.join("package.json"),
+            r#"{"name":"9router","version":"1.2.3"}"#,
+        )
+        .unwrap();
+        assert_eq!(external_version_at(&launcher), Some("1.2.3".into()));
+        fs::remove_dir_all(root).unwrap();
+    }
 }

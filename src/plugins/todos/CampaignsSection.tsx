@@ -78,18 +78,20 @@ export function CampaignsSection({
   workers = NO_WORKERS,
   pending = NO_TASKS,
   finished = false,
+  nightOnly = false,
 }: {
   view: CampaignView
   /** Live orchestrator workers per task; the active campaign shows its own. */
   workers?: ReadonlyMap<string, TaskWorkers>
   /** The tasks Pending lists, left out of the rows' details. */
   pending?: ReadonlySet<string>
+  nightOnly?: boolean
   finished?: boolean
 }) {
   const { projectId, registry, activeId } = view
   const edits = useCampaignEdits(view)
   const t = useT()
-  const [collapsed, setCollapsed] = useState(true)
+  const [collapsed, setCollapsed] = useState(!nightOnly)
   const [closed, setClosed] = useState<ReadonlySet<Group>>(() => new Set())
   const live = useCampaignLive(projectId, registry?.campaigns ?? [], workers)
 
@@ -97,7 +99,11 @@ export function CampaignsSection({
   const done = (campaign: Campaign) => campaign.situation.kind === 'done'
   // Stable sort: the active campaign first in its group, the rest in priority order.
   const campaigns = registry.campaigns
-    .filter((campaign) => (finished ? done(campaign) : !done(campaign) && !live.has(campaign.id)))
+    .filter(
+      (campaign) =>
+        (finished ? done(campaign) : !done(campaign) && (nightOnly || !live.has(campaign.id))) &&
+        (!nightOnly || campaign.night),
+    )
     .sort((a, b) => Number(b.id === activeId) - Number(a.id === activeId))
   if (finished && campaigns.length === 0) return null
   const invalid = !finished && registry.errors.length > 0
@@ -114,6 +120,7 @@ export function CampaignsSection({
     <CampaignRow
       key={campaign.id}
       campaign={campaign}
+      nightOnly={nightOnly}
       checkouts={registry.checkouts}
       pending={pending}
       active={campaign.id === activeId}
@@ -139,7 +146,13 @@ export function CampaignsSection({
   return (
     <section className={sidebarStyles.section}>
       <SectionToggle
-        name={t(finished ? 'todo.campaigns.completed' : 'todo.campaigns.title')}
+        name={t(
+          nightOnly
+            ? 'todo.campaigns.nightTitle'
+            : finished
+              ? 'todo.campaigns.completed'
+              : 'todo.campaigns.title',
+        )}
         count={invalid ? '!' : campaigns.length}
         open={!collapsed}
         onToggle={() => setCollapsed((current) => !current)}
@@ -155,7 +168,7 @@ export function CampaignsSection({
             ))}
           </ul>
         </div>
-      ) : finished ? (
+      ) : finished || nightOnly ? (
         <div className={sidebarStyles.list}>
           {campaigns.map((campaign) => row(campaign, live.get(campaign.id)))}
         </div>
@@ -191,6 +204,7 @@ export function CampaignsSection({
 
 function CampaignRow({
   campaign,
+  nightOnly,
   checkouts,
   pending,
   active,
@@ -202,6 +216,7 @@ function CampaignRow({
   source,
 }: {
   campaign: Campaign
+  nightOnly: boolean
   checkouts: GitCheckouts
   pending: ReadonlySet<string>
   active: boolean
@@ -224,6 +239,13 @@ function CampaignRow({
       className={styles.campaign}
       data-lane={live ? undefined : SITUATION_LANES[campaign.situation.kind]}
       data-status={live}
+      data-blocked={
+        campaign.situation.kind === 'done'
+          ? undefined
+          : prerequisites.length > 0 ||
+            campaign.situation.kind === 'blocked' ||
+            campaign.situation.kind === 'waits'
+      }
       data-active={active ? 'true' : undefined}
       aria-current={active ? 'true' : undefined}
     >
@@ -245,7 +267,9 @@ function CampaignRow({
             {`${campaign.done}/${campaign.total}${campaign.decomposed ? '' : '+?'} · ${campaign.percent}%`}
           </span>
           {live ? <span>{t(LIVE_KEYS[live])}</span> : null}
-          <span className={styles.situation}>{situationLabel(t, campaign.situation)}</span>
+          <span className={styles.situation}>
+            {situationLabel(t, campaign.situation, live === 'working')}
+          </span>
           {prerequisites.length > 0 ? (
             <span className={styles.situation}>
               {t('todo.campaigns.prerequisites', { ids: prerequisites.join(', ') })}
@@ -277,11 +301,22 @@ function CampaignRow({
           />
           <ul className={styles.tasks}>
             {campaign.tasks
-              .filter((task) => !pending.has(task.id))
+              .filter((task) => !pending.has(task.id) && (!nightOnly || task.window === 'noite'))
               .map((task) => (
                 <li key={task.id} className={styles.task}>
-                  <span className={styles.chip} data-lane={TASK_LANES[task.state]}>
-                    {t(STATE_KEYS[task.state])}
+                  <span
+                    className={styles.chip}
+                    data-lane={
+                      task.state === 'em execução' && live !== 'working'
+                        ? 'interrupted'
+                        : TASK_LANES[task.state]
+                    }
+                  >
+                    {t(
+                      task.state === 'em execução' && live !== 'working'
+                        ? 'todo.campaigns.inactiveTask'
+                        : STATE_KEYS[task.state],
+                    )}
                   </span>
                   <span className={styles.taskBody}>
                     <span className={styles.taskTitle} title={task.title}>
@@ -347,54 +382,86 @@ export function CampaignDependencies({
     )
   }, [campaign.dependsOn, source, draft.dirty])
   const [saving, setSaving] = useState(false)
+  const [open, setOpen] = useState(false)
+  const [feedback, setFeedback] = useState<'saved' | 'failed' | null>(null)
   return (
-    <fieldset className={styles.dependencies} disabled={saving || edits.busy}>
-      <legend>{t('todo.campaigns.dependencies')}</legend>
-      {campaigns
-        .filter((item) => item.id !== campaign.id)
-        .map((item) => (
-          <label key={item.id}>
-            <input
-              type="checkbox"
-              checked={draft.ids.includes(item.id)}
-              onChange={(event) => {
-                const checked = event.target.checked
-                setDraft((current) => ({
-                  ...current,
-                  dirty: true,
-                  ids: checked
-                    ? [...current.ids, item.id]
-                    : current.ids.filter((id) => id !== item.id),
-                }))
+    <div className={styles.dependencies}>
+      <SectionToggle
+        name={t('todo.campaigns.dependencies')}
+        count={draft.ids.length}
+        open={open}
+        onToggle={() => setOpen((value) => !value)}
+        variant="sub"
+      />
+      {open ? (
+        <fieldset disabled={saving || edits.busy} aria-label={t('todo.campaigns.dependencies')}>
+          <div className={styles.dependencyOptions}>
+            {campaigns
+              .filter((item) => item.id !== campaign.id)
+              .map((item) => (
+                <label key={item.id}>
+                  <input
+                    type="checkbox"
+                    checked={draft.ids.includes(item.id)}
+                    onChange={(event) => {
+                      setFeedback(null)
+                      const checked = event.target.checked
+                      setDraft((current) => ({
+                        ...current,
+                        dirty: true,
+                        ids: checked
+                          ? [...current.ids, item.id]
+                          : current.ids.filter((id) => id !== item.id),
+                      }))
+                    }}
+                  />
+                  <span title={`${item.id} · ${item.title}`}>
+                    <strong>{item.id}</strong> · {item.title}
+                  </span>
+                </label>
+              ))}
+          </div>
+          <div className={styles.dependencyActions}>
+            <button
+              type="button"
+              disabled={!draft.dirty}
+              className={`${controls.btn} ${controls.btnSm}`}
+              onClick={async () => {
+                setSaving(true)
+                setFeedback(null)
+                try {
+                  if (await edits.dependencies(campaign, draft.ids, draft.base)) {
+                    setDraft((current) => ({ ...current, dirty: false }))
+                    setFeedback('saved')
+                  } else setFeedback('failed')
+                } finally {
+                  setSaving(false)
+                }
               }}
-            />
-            {item.id} · {item.title}
-          </label>
-        ))}
-      <button
-        type="button"
-        className={`${controls.btn} ${controls.btnSm}`}
-        onClick={async () => {
-          setSaving(true)
-          try {
-            if (await edits.dependencies(campaign, draft.ids, draft.base))
-              setDraft((current) => ({ ...current, dirty: false }))
-          } finally {
-            setSaving(false)
-          }
-        }}
-      >
-        {t('todo.campaigns.saveDependencies')}
-      </button>
-      {draft.dirty ? (
-        <button
-          type="button"
-          className={`${controls.btn} ${controls.btnSm}`}
-          onClick={() => setDraft({ ids: campaign.dependsOn, base: source, dirty: false })}
-        >
-          {t('todo.campaigns.discardDependencies')}
-        </button>
+            >
+              {t(saving ? 'todo.campaigns.savingDependencies' : 'todo.campaigns.saveDependencies')}
+            </button>
+            {draft.dirty ? (
+              <button
+                type="button"
+                className={`${controls.btn} ${controls.btnSm}`}
+                onClick={() => setDraft({ ids: campaign.dependsOn, base: source, dirty: false })}
+              >
+                {t('todo.campaigns.discardDependencies')}
+              </button>
+            ) : null}
+          </div>
+        </fieldset>
       ) : null}
-    </fieldset>
+      {feedback ? (
+        <p className={styles.dependencyFeedback} role={feedback === 'saved' ? 'status' : 'alert'}>
+          {t(
+            feedback === 'saved'
+              ? 'todo.campaigns.savedDependencies'
+              : 'todo.campaigns.failedDependencies',
+          )}
+        </p>
+      ) : null}
+    </div>
   )
 }

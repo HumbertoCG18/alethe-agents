@@ -80,6 +80,10 @@ export function Dropdown({
     )
   })
   const showCustomOption = allowCustomValue && normalizedSearch.length >= 2 && !hasExactMatch
+  // Keep portaled controls inside the owning dialog's focus scope and scroll lock.
+  const portalRoot =
+    triggerRef.current?.closest<HTMLElement>('[data-alethe-modal-content], [role="dialog"]') ??
+    document.body
 
   const closeMenu = (restoreFocus = false) => {
     setOpen(false)
@@ -92,19 +96,36 @@ export function Dropdown({
     const updatePosition = () => {
       const rect = triggerRef.current?.getBoundingClientRect()
       if (!rect) return
-      const width = Math.min(320, Math.max(220, rect.width), window.innerWidth - 16)
+      const modalRect = portalRoot === document.body ? null : portalRoot.getBoundingClientRect()
+      const bounds = modalRect ?? {
+        left: 0,
+        top: 0,
+        right: window.innerWidth,
+        bottom: window.innerHeight,
+        width: window.innerWidth,
+      }
+      const scale =
+        modalRect && portalRoot.offsetWidth ? modalRect.width / portalRoot.offsetWidth : 1
+      const width = Math.min(320 * scale, Math.max(220 * scale, rect.width), bounds.width - 16)
       const searchHeight = searchable ? 42 : 0
       const estimatedHeight = Math.min(
         280,
         Math.max(40, visibleOptions.length * 32 + searchHeight + 8),
       )
-      const spaceBelow = window.innerHeight - rect.bottom - 8
-      const spaceAbove = rect.top - 8
+      const spaceBelow = bounds.bottom - rect.bottom - 8
+      const spaceAbove = rect.top - bounds.top - 8
       const opensBelow = spaceBelow >= Math.min(estimatedHeight, 180) || spaceBelow >= spaceAbove
       const maxHeight = Math.max(96, Math.min(280, opensBelow ? spaceBelow : spaceAbove))
       const top = opensBelow ? rect.bottom + 5 : rect.top - maxHeight - 5
-      const left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8))
-      setPosition({ left, top: Math.max(8, top), width, maxHeight })
+      const left = Math.max(bounds.left + 8, Math.min(rect.left, bounds.right - width - 8))
+      setPosition({
+        left: (left - (modalRect?.left ?? 0)) / scale - (modalRect ? portalRoot.clientLeft : 0),
+        top:
+          (Math.max(bounds.top + 8, top) - (modalRect?.top ?? 0)) / scale -
+          (modalRect ? portalRoot.clientTop : 0),
+        width: width / scale,
+        maxHeight: maxHeight / scale,
+      })
     }
     updatePosition()
     window.addEventListener('resize', updatePosition)
@@ -113,7 +134,7 @@ export function Dropdown({
       window.removeEventListener('resize', updatePosition)
       window.removeEventListener('scroll', updatePosition, true)
     }
-  }, [open, searchable, visibleOptions.length])
+  }, [open, searchable, visibleOptions.length, portalRoot])
 
   useEffect(() => {
     if (!open) return
@@ -165,6 +186,29 @@ export function Dropdown({
     else if (showCustomOption) choose(search.trim())
   }
 
+  const handleMenuKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return
+    const options = Array.from(
+      menuRef.current?.querySelectorAll<HTMLButtonElement>(
+        'button[role="option"]:not(:disabled)',
+      ) ?? [],
+    )
+    if (!options.length) return
+    event.preventDefault()
+    const current = options.indexOf(document.activeElement as HTMLButtonElement)
+    const next =
+      event.key === 'Home'
+        ? 0
+        : event.key === 'End'
+          ? options.length - 1
+          : event.key === 'ArrowDown'
+            ? (current + 1) % options.length
+            : current < 0
+              ? options.length - 1
+              : (current - 1 + options.length) % options.length
+    options[next]?.focus()
+  }
+
   return (
     <div className={styles.root}>
       <button
@@ -195,6 +239,7 @@ export function Dropdown({
               className={styles.menu}
               data-alethe-dropdown-menu=""
               style={{
+                position: portalRoot === document.body ? 'fixed' : 'absolute',
                 left: position.left,
                 top: position.top,
                 width: position.width,
@@ -202,6 +247,8 @@ export function Dropdown({
               }}
               onPointerDown={(event) => event.stopPropagation()}
               onMouseDown={(event) => event.stopPropagation()}
+              onWheel={(event) => event.stopPropagation()}
+              onKeyDown={handleMenuKeyDown}
             >
               {searchable ? (
                 <div className={styles.searchBox}>
@@ -256,7 +303,7 @@ export function Dropdown({
                 ) : null}
               </div>
             </div>,
-            document.body,
+            portalRoot,
           )
         : null}
     </div>

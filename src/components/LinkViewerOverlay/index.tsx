@@ -82,7 +82,7 @@ export function LinkViewerOverlay() {
         </div>
         <div className={styles.body}>
           {video ? (
-            <VideoPreview path={url} className={styles.video} />
+            <VideoPreview path={url} scope={null} className={styles.video} />
           ) : markdownFile && markdown !== null ? (
             <div className={styles.markdown}>
               <Suspense fallback={<span>{t('ui.markdown.loading')}</span>}>

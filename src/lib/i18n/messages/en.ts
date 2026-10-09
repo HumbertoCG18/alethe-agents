@@ -86,6 +86,11 @@ export const en = {
   'markdown.legacyPane':
     'This file was opened before Alethe checked repository links. Open it again to load it.',
   'markdown.legacyPaneOpen': 'Open it again',
+  'markdown.saveError': "Couldn't save {name}. Your edit is still in the editor.",
+  'markdown.saveOutsideRepository':
+    'This file now points outside the repository through a link, so it was not saved.',
+  'media.outsideRepository':
+    'This file points outside the repository through a link, so it was not opened.',
   'rightSidebar.configure': 'Configure sidebar',
   'prs.project': 'Project',
   'prs.selectProject': 'Select a project',

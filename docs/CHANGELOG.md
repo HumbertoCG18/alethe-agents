@@ -44,6 +44,10 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ### Added
 
+- **Window freezes are logged.** When the app's main thread stops answering for two seconds, one
+  `app.stall` line goes to `app-events.log` with how long it had been blocked and the last command
+  it ran, and an `app.stall.end` line gives the whole length once it answers again, so a frozen
+  window can be diagnosed afterwards, even one that never recovers.
 - **Worktree picker, with projects on their main checkout by default.** **Worktrees…** in a
   project's menu lists the repository's worktrees with their branch and last commit, marks the main
   checkout, and marks a worktree stale when its branch is already merged into the main checkout's

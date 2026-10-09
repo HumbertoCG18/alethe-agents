@@ -93,6 +93,11 @@ export const ptBR: Record<MessageKey, string> = {
   'markdown.legacyPane':
     'Este arquivo foi aberto antes de o Alethe verificar links do repositório. Abra-o de novo para carregá-lo.',
   'markdown.legacyPaneOpen': 'Abrir de novo',
+  'markdown.saveError': 'Não consegui salvar {name}. Sua edição continua no editor.',
+  'markdown.saveOutsideRepository':
+    'Este arquivo agora aponta para fora do repositório por um link, por isso não foi salvo.',
+  'media.outsideRepository':
+    'Este arquivo aponta para fora do repositório por um link, por isso não foi aberto.',
   'rightSidebar.configure': 'Configurar barra lateral',
   'prs.project': 'Projeto',
   'prs.selectProject': 'Selecione um projeto',
@@ -1819,6 +1824,12 @@ export const ptBR: Record<MessageKey, string> = {
   'widget.noTokenConfigured': 'sem token configurado',
   'widget.connectToSeeUsage': 'conecte para ver o uso',
   'widget.usageUnavailableHint': 'o serviço de uso recusou a consulta; tente de novo em instantes',
+  'widget.usageRateLimited': 'limite de consultas de uso',
+  'widget.usageRateLimitedHint': 'o serviço de uso pediu para aguardar; tente de novo às {time}',
+  'widget.usageSignInExpired': 'login expirado',
+  'widget.usageSignInExpiredHint': 'entre de novo no Claude Code para ver o uso',
+  'widget.usageOffline': 'offline',
+  'widget.usageOfflineHint': 'não foi possível falar com o serviço de uso; verifique a conexão',
   'widget.usage5h': 'uso 5h',
   'widget.resetIn': 'reset em {time}',
   'widget.resetsIn': 'reseta em {time}',

@@ -33,6 +33,7 @@ export const ImagePane = memo(function ImagePane({
   const clearPaneSelection = useUiStore((state) => state.clearPaneSelection)
   const groupPanes = useProjectsStore((state) => state.groupPanes)
   const deleteTerminal = useProjectsStore((state) => state.deleteTerminal)
+  const reopenLegacyFilePane = useProjectsStore((state) => state.reopenLegacyFilePane)
   const paneRef = useRef<HTMLDivElement | null>(null)
   const draggable = useDraggable({ id: `pane:${terminal.id}`, disabled: isFocusMode || preview })
   const droppable = useDroppable({ id: `pane:${terminal.id}`, disabled: isFocusMode || preview })
@@ -124,7 +125,11 @@ export const ImagePane = memo(function ImagePane({
         ) : null}
       </header>
       <div className={styles.body}>
-        <ImagePreview path={filePath} />
+        <ImagePreview
+          path={filePath}
+          scope={terminal.fileScope}
+          onReopen={() => reopenLegacyFilePane(projectId, terminal.id)}
+        />
       </div>
     </div>
   )

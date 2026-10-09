@@ -58,9 +58,8 @@ export const taskCampaign = (campaigns: readonly Campaign[], taskId: string) =>
  * the main one) and the other worktrees: Markdown in the viewer and anything else in a pane, as the
  * terminal's link menu opens a file; a folder's report in the viewer, else the folder in the file
  * explorer. A path outside the checkouts, found nowhere, or reached through a link, opens nothing
- * and says so. The viewer and the pane open scoped to `base`, so text reads, summaries and the full
- * reader follow the same rule; an image or a video pane loads through the asset protocol and is
- * checked only here.
+ * and says so. The viewer and the pane open scoped to `base`, so text reads, saves, summaries, the
+ * full reader, images and videos follow the same rule (see `ScopedMedia`).
  */
 export async function openEvidence(
   registry: Registry,

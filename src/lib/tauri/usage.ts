@@ -22,6 +22,13 @@ export type ClaudeUsage = {
   model_limits?: ClaudeModelLimit[]
 }
 
+/** Why a Claude usage read failed; `retryAt` (epoch ms) ends a rate-limit back-off. */
+export type ClaudeUsageFailure = {
+  kind: 'no_token' | 'rate_limited' | 'unauthorized' | 'offline' | 'unavailable'
+  retryAt?: number
+}
+
+/** Rejects with `kind[:status[:retry_after_secs]]`, read by `claudeUsageCache`. */
 export async function getClaudeUsage(): Promise<ClaudeUsage> {
   return withUsageAccess('claude', () => invoke<ClaudeUsage>('get_claude_usage'))
 }

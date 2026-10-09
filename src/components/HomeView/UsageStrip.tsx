@@ -3,7 +3,7 @@ import { useState, type ReactNode } from 'react'
 import { loadClaudeUsage } from '../../lib/claudeUsageCache'
 import { getCachedCodexUsage } from '../../lib/codexUsageCache'
 import { getCachedAntigravityUsage } from '../../lib/antigravityUsageCache'
-import { translate, getLocale, useT } from '../../lib/i18n'
+import { translate, getLocale, intlLocale, useT, type TFunction } from '../../lib/i18n'
 import { AGENT_TYPE_LABELS } from '../../lib/types'
 import { USAGE_PROVIDERS, type UsageProviderDef } from '../../lib/usageProviders'
 import {
@@ -11,6 +11,7 @@ import {
   hasCodexWindow,
   type AntigravityUsage,
   type ClaudeUsage,
+  type ClaudeUsageFailure,
   type CodexUsage,
 } from '../../lib/tauri'
 import { useProjectsStore } from '../../stores/projectsStore'
@@ -57,6 +58,37 @@ function pctNum(v: number): number {
 
 async function refreshClaude(): Promise<void> {
   await loadClaudeUsage(true)
+}
+
+type FailureText = { title: string; hint: string }
+
+/** Names why a Claude usage read failed and what to do about it. */
+function claudeFailureText(failure: ClaudeUsageFailure, t: TFunction): FailureText {
+  switch (failure.kind) {
+    case 'no_token':
+      return { title: t('widget.noTokenConfigured'), hint: t('widget.connectToSeeUsage') }
+    case 'rate_limited': {
+      // A clock time stays true while the card sits unchanged; a countdown would freeze.
+      const retryAt = failure.retryAt ?? 0
+      const time = new Date(retryAt).toLocaleTimeString(intlLocale(getLocale()), {
+        hour: '2-digit',
+        minute: '2-digit',
+      })
+      return {
+        title: t('widget.usageRateLimited'),
+        hint:
+          retryAt > Date.now()
+            ? t('widget.usageRateLimitedHint', { time })
+            : t('widget.usageUnavailableHint'),
+      }
+    }
+    case 'unauthorized':
+      return { title: t('widget.usageSignInExpired'), hint: t('widget.usageSignInExpiredHint') }
+    case 'offline':
+      return { title: t('widget.usageOffline'), hint: t('widget.usageOfflineHint') }
+    default:
+      return { title: t('widget.usageUnavailable'), hint: t('widget.usageUnavailableHint') }
+  }
 }
 
 async function refreshCodex(): Promise<void> {
@@ -143,6 +175,7 @@ function CardHead({
   accent,
   hasData,
   onRefresh,
+  note,
 }: {
   badgeClass: string
   icon: ReactNode
@@ -151,6 +184,8 @@ function CardHead({
   accent: string
   hasData: boolean
   onRefresh: () => Promise<void>
+  /** Why the data shown is not live, in place of the live badge. */
+  note?: FailureText
 }) {
   const t = useT()
   const [refreshing, setRefreshing] = useState(false)
@@ -172,6 +207,11 @@ function CardHead({
           <span className={styles.live}>
             <span className={styles.liveDot} style={{ background: accent }} />
             {t('widget.live')}
+          </span>
+        )}
+        {!hasData && note && (
+          <span className={styles.live} title={note.hint}>
+            {note.title}
           </span>
         )}
         <button
@@ -275,6 +315,8 @@ function ClaudeCard({ usage }: { usage: ClaudeUsage | null }) {
   const t = useT()
   const usageError = useUiStore((s) => s.claudeUsageError)
   const accent = 'var(--agent-claude)'
+  // Before the first read there is no error yet; the card asks for a sign-in as it always did.
+  const failure = claudeFailureText(usageError ?? { kind: 'no_token' }, t)
 
   const head = (
     <CardHead
@@ -283,24 +325,20 @@ function ClaudeCard({ usage }: { usage: ClaudeUsage | null }) {
       name="claude code"
       plan={usage ? 'max · 5x' : undefined}
       accent={accent}
-      // A reading kept from before a failed refresh is not live.
+      // A reading kept from before a failed refresh is not live; the head says why.
       hasData={!!usage && !usageError}
       onRefresh={refreshClaude}
+      note={usage && usageError ? failure : undefined}
     />
   )
 
   if (!usage) {
-    const unavailable = usageError === 'unavailable'
     return (
       <div className={styles.usageCard}>
         {head}
         <div className={styles.usageEmpty}>
-          <span className={styles.usageEmptyTitle}>
-            {unavailable ? t('widget.usageUnavailable') : t('widget.noTokenConfigured')}
-          </span>
-          <span className={styles.usageEmptyHint}>
-            {unavailable ? t('widget.usageUnavailableHint') : t('widget.connectToSeeUsage')}
-          </span>
+          <span className={styles.usageEmptyTitle}>{failure.title}</span>
+          <span className={styles.usageEmptyHint}>{failure.hint}</span>
         </div>
       </div>
     )

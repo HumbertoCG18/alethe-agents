@@ -713,19 +713,7 @@ pub async fn find_repository_file(cwd: String, path: String) -> Result<Option<St
 pub async fn read_repository_text_file(cwd: String, path: String) -> Result<String, String> {
     tokio::task::spawn_blocking(move || {
         use std::io::Read;
-        let file = PathBuf::from(path.trim());
-        existing_file(&file)?;
-        let mut opened = open_unlinked(&file).map_err(|error| {
-            // O_NOFOLLOW refuses a symlink at the last component.
-            #[cfg(unix)]
-            if error.raw_os_error() == Some(libc::ELOOP) {
-                return OUTSIDE_REPOSITORY.to_string();
-            }
-            error.to_string()
-        })?;
-        if !opened_inside(&opened, &canonical_checkouts(Path::new(cwd.trim()))) {
-            return Err(OUTSIDE_REPOSITORY.to_string());
-        }
+        let mut opened = open_in_checkouts(&cwd, &path, false)?;
         let mut text = String::new();
         opened
             .read_to_string(&mut text)
@@ -736,10 +724,86 @@ pub async fn read_repository_text_file(cwd: String, path: String) -> Result<Stri
     .map_err(|error| error.to_string())?
 }
 
-/// Opens `path` for reading without following a link at its last component.
-fn open_unlinked(path: &Path) -> std::io::Result<fs::File> {
+/// The largest file `read_repository_file_base64` returns: 32 MiB, about 43 MB once encoded.
+const MAX_REPOSITORY_FILE_BYTES: u64 = 32 * 1024 * 1024;
+
+/// `read_repository_text_file` for an image, as base64 for a `data:` URL (the CSP's `img-src` has no
+/// `blob:`); "file too large" past `MAX_REPOSITORY_FILE_BYTES`.
+#[tauri::command]
+pub async fn read_repository_file_base64(cwd: String, path: String) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || {
+        use base64::Engine;
+        use std::io::Read;
+        let mut bytes = Vec::new();
+        open_in_checkouts(&cwd, &path, false)?
+            .take(MAX_REPOSITORY_FILE_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|error| error.to_string())?;
+        if bytes.len() as u64 > MAX_REPOSITORY_FILE_BYTES {
+            return Err("file too large".to_string());
+        }
+        Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+/// Whether the file at `path` is inside `cwd`'s checkouts right now, by the same open-file check as
+/// `read_repository_text_file`, for a video the player then loads by path.
+#[tauri::command]
+pub async fn check_repository_file(cwd: String, path: String) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || open_in_checkouts(&cwd, &path, false).map(drop))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+/// `write_text_file` for a file pane opened from repository text: the existing file is opened
+/// without following a last-component link, checked like `read_repository_text_file`, and only
+/// then truncated and written through that same handle, so no link leads the write out of the
+/// checkouts.
+#[tauri::command]
+pub async fn write_repository_text_file(
+    cwd: String,
+    path: String,
+    content: String,
+) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        use std::io::Write;
+        let mut opened = open_in_checkouts(&cwd, &path, true)?;
+        opened
+            .set_len(0)
+            .and_then(|()| opened.write_all(content.as_bytes()))
+            .and_then(|()| opened.flush())
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+/// Opens the existing file at `path`, for writing too when `write`, without following a link at its
+/// last component, and keeps it only when that open file lies inside `cwd`'s checkouts.
+fn open_in_checkouts(cwd: &str, path: &str, write: bool) -> Result<fs::File, String> {
+    let file = PathBuf::from(path.trim());
+    existing_file(&file)?;
+    let opened = open_unlinked(&file, write).map_err(|error| {
+        // O_NOFOLLOW refuses a symlink at the last component.
+        #[cfg(unix)]
+        if error.raw_os_error() == Some(libc::ELOOP) {
+            return OUTSIDE_REPOSITORY.to_string();
+        }
+        error.to_string()
+    })?;
+    if !opened_inside(&opened, &canonical_checkouts(Path::new(cwd.trim()))) {
+        return Err(OUTSIDE_REPOSITORY.to_string());
+    }
+    Ok(opened)
+}
+
+/// Opens `path` for reading, and writing when `write`, without following a link at its last
+/// component. Nothing is truncated or created.
+fn open_unlinked(path: &Path, write: bool) -> std::io::Result<fs::File> {
     let mut options = fs::OpenOptions::new();
-    options.read(true);
+    options.read(true).write(write);
     #[cfg(windows)]
     std::os::windows::fs::OpenOptionsExt::custom_flags(
         &mut options,
@@ -752,17 +816,30 @@ fn open_unlinked(path: &Path) -> std::io::Result<fs::File> {
 
 /// Whether the open `file` is a plain file under one of the canonical `roots`, by the place the
 /// system reports for the open file itself: no path is resolved again, so no swap can match it.
+/// A file with another hard link is refused too: that name may lie outside the roots, and a read
+/// or write through this one reaches the same content.
 fn opened_inside(file: &fs::File, roots: &[PathBuf]) -> bool {
     let Ok(metadata) = file.metadata() else {
         return false;
     };
     #[cfg(windows)]
     let plain = {
-        use std::os::windows::fs::MetadataExt;
-        metadata.is_file() && metadata.file_attributes() & 0x400 == 0
+        use std::os::windows::{fs::MetadataExt, io::AsRawHandle};
+        use windows_sys::Win32::Storage::FileSystem::GetFileInformationByHandle;
+        let mut information = Default::default();
+        // SAFETY: the handle is open for the whole call, which only fills `information`.
+        let read =
+            unsafe { GetFileInformationByHandle(file.as_raw_handle() as _, &mut information) };
+        metadata.is_file()
+            && metadata.file_attributes() & 0x400 == 0
+            && read != 0
+            && information.nNumberOfLinks == 1
     };
     #[cfg(not(windows))]
-    let plain = metadata.is_file();
+    let plain = {
+        use std::os::unix::fs::MetadataExt;
+        metadata.is_file() && metadata.nlink() == 1
+    };
     plain && final_path(file).is_some_and(|real| roots.iter().any(|root| real.starts_with(root)))
 }
 
@@ -1355,7 +1432,7 @@ mod tests {
         let roots = [main.canonicalize().unwrap()];
 
         link_directory(&docs, &outside);
-        let opened = open_unlinked(&path).unwrap();
+        let opened = open_unlinked(&path, false).unwrap();
         fs::remove_dir(&docs)
             .or_else(|_| fs::remove_file(&docs))
             .unwrap();
@@ -1364,7 +1441,7 @@ mod tests {
         assert!(in_checkouts(&main, &path));
         assert!(!opened_inside(&opened, &roots));
         drop(opened);
-        assert!(opened_inside(&open_unlinked(&path).unwrap(), &roots));
+        assert!(opened_inside(&open_unlinked(&path, false).unwrap(), &roots));
         let _ = fs::remove_dir_all(&parent);
     }
 
@@ -1381,13 +1458,126 @@ mod tests {
         fs::write(outside.join("report.md"), "private").unwrap();
         link_directory(&main.join("docs"), &outside);
 
-        let opened = open_unlinked(&main.join("docs").join("report.md")).unwrap();
+        let opened = open_unlinked(&main.join("docs").join("report.md"), false).unwrap();
         let real = outside.canonicalize().unwrap().join("report.md");
         assert_eq!(final_path(&opened), Some(real));
         assert!(!opened_inside(&opened, &[main.canonicalize().unwrap()]));
         drop(opened);
         let _ = fs::remove_dir(main.join("docs")).or_else(|_| fs::remove_file(main.join("docs")));
         let _ = fs::remove_dir_all(&parent);
+    }
+
+    // Images and videos opened from repository text, and saves from such a pane, hold to the
+    // checkouts like its text reads (#123, #124): a link swapped in after the lookup is refused, and
+    // the save never writes through it.
+    #[tokio::test]
+    async fn repository_media_and_saves_refuse_a_link_swapped_in_after_the_lookup() {
+        let parent = scratch("repository-media");
+        let main = parent.join("repo");
+        let docs = main.join("docs");
+        let outside = parent.join("outside");
+        fs::create_dir_all(&docs).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        let file = docs.join("shot.png");
+        fs::write(&file, "the original content").unwrap();
+        fs::write(outside.join("shot.png"), "private").unwrap();
+        let text = |path: &Path| path.to_string_lossy().into_owned();
+        let bytes = |path: &Path| read_repository_file_base64(text(&main), text(path));
+        let check = |path: &Path| check_repository_file(text(&main), text(path));
+        let save = |path: &Path, content: &str| {
+            write_repository_text_file(text(&main), text(path), content.into())
+        };
+        let untouched = || fs::read_to_string(outside.join("shot.png")).unwrap() == "private";
+        let refused = Some(OUTSIDE_REPOSITORY.to_string());
+
+        assert!(matches!(
+            find_repository_file(text(&main), "docs/shot.png".into()).await,
+            Ok(Some(_))
+        ));
+        assert_eq!(check(&file).await, Ok(()));
+        // The save replaces the whole content, even with a shorter one.
+        assert_eq!(save(&file, "saved").await, Ok(()));
+        assert_eq!(fs::read_to_string(&file).unwrap(), "saved");
+        assert_eq!(bytes(&file).await, Ok("c2F2ZWQ=".into()));
+        let large = docs.join("large.png");
+        fs::File::create(&large)
+            .unwrap()
+            .set_len(MAX_REPOSITORY_FILE_BYTES + 1)
+            .unwrap();
+        assert_eq!(bytes(&large).await, Err("file too large".into()));
+
+        // Once looked up, `docs` is swapped for a link out of the repository.
+        fs::remove_dir_all(&docs).unwrap();
+        link_directory(&docs, &outside);
+        assert_eq!(bytes(&file).await.err(), refused);
+        assert_eq!(check(&file).await.err(), refused);
+        assert_eq!(save(&file, "leaked").await.err(), refused);
+        assert!(untouched());
+        let _ = fs::remove_dir(&docs).or_else(|_| fs::remove_file(&docs));
+        #[cfg(unix)]
+        {
+            fs::create_dir_all(&docs).unwrap();
+            let link = docs.join("link.png");
+            std::os::unix::fs::symlink(outside.join("shot.png"), &link).unwrap();
+            assert_eq!(bytes(&link).await.err(), refused);
+            assert_eq!(check(&link).await.err(), refused);
+            assert_eq!(save(&link, "leaked").await.err(), refused);
+            assert!(untouched());
+        }
+        let _ = fs::remove_dir_all(&parent);
+    }
+
+    // A hard link in the checkout is the outside file under another name: it is refused before any
+    // read or truncation.
+    #[tokio::test]
+    async fn repository_files_with_another_hard_link_are_refused() {
+        let parent = scratch("repository-hard-link");
+        let main = parent.join("repo");
+        let outside = parent.join("outside");
+        fs::create_dir_all(&main).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        let private = outside.join("shot.png");
+        fs::write(&private, "private").unwrap();
+        let link = main.join("shot.png");
+        fs::hard_link(&private, &link).unwrap();
+        let cwd = main.to_string_lossy().into_owned();
+        let path = link.to_string_lossy().into_owned();
+        let refused = Some(OUTSIDE_REPOSITORY.to_string());
+
+        let read = read_repository_text_file(cwd.clone(), path.clone());
+        assert_eq!(read.await.err(), refused);
+        let bytes = read_repository_file_base64(cwd.clone(), path.clone());
+        assert_eq!(bytes.await.err(), refused);
+        assert_eq!(
+            check_repository_file(cwd.clone(), path.clone()).await.err(),
+            refused
+        );
+        let save = write_repository_text_file(cwd, path, "leaked".into());
+        assert_eq!(save.await.err(), refused);
+        assert_eq!(fs::read_to_string(&private).unwrap(), "private");
+        let _ = fs::remove_dir_all(&parent);
+    }
+
+    // A blank scope names no checkout, not the folder the app runs in: this crate's own files, in a
+    // checkout, are refused under it.
+    #[tokio::test]
+    async fn a_blank_scope_refuses_every_repository_file() {
+        let file = Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
+        let path = file.to_string_lossy().into_owned();
+        let refused = Some(OUTSIDE_REPOSITORY.to_string());
+        let own = check_repository_file(env!("CARGO_MANIFEST_DIR").into(), path.clone());
+        assert_eq!(own.await, Ok(()));
+        for cwd in ["", "  "] {
+            let read = read_repository_text_file(cwd.into(), path.clone());
+            assert_eq!(read.await.err(), refused);
+            let bytes = read_repository_file_base64(cwd.into(), path.clone());
+            assert_eq!(bytes.await.err(), refused);
+            assert_eq!(
+                check_repository_file(cwd.into(), path.clone()).await.err(),
+                refused
+            );
+        }
+        assert!(!in_checkouts(Path::new(""), &file));
     }
 
     // Git prints `//server/share/repo`; a printed path may come canonicalized, as `\\?\UNC\...`.

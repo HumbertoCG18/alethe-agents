@@ -445,10 +445,6 @@ fn delete_tokens(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-pub(crate) fn delete_profile_secrets(profile_id: &str) -> Result<(), String> {
-    delete_spotify_secrets(&OsSecretStore, profile_id)
-}
-
 #[derive(Deserialize)]
 struct TokenResponse {
     access_token: String,

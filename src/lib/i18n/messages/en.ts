@@ -86,6 +86,11 @@ export const en = {
   'markdown.legacyPane':
     'This file was opened before Alethe checked repository links. Open it again to load it.',
   'markdown.legacyPaneOpen': 'Open it again',
+  'markdown.saveError': "Couldn't save {name}. Your edit is still in the editor.",
+  'markdown.saveOutsideRepository':
+    'This file now points outside the repository through a link, so it was not saved.',
+  'media.outsideRepository':
+    'This file points outside the repository through a link, so it was not opened.',
   'rightSidebar.configure': 'Configure sidebar',
   'prs.project': 'Project',
   'prs.selectProject': 'Select a project',
@@ -1786,6 +1791,12 @@ export const en = {
   'widget.noTokenConfigured': 'no token configured',
   'widget.connectToSeeUsage': 'connect to see usage',
   'widget.usageUnavailableHint': 'the usage service refused the request; try again shortly',
+  'widget.usageRateLimited': 'usage rate limited',
+  'widget.usageRateLimitedHint': 'the usage service asked to wait; try again at {time}',
+  'widget.usageSignInExpired': 'sign-in expired',
+  'widget.usageSignInExpiredHint': 'sign in to Claude Code again to see usage',
+  'widget.usageOffline': 'offline',
+  'widget.usageOfflineHint': 'could not reach the usage service; check the connection',
   'widget.usage5h': 'usage 5h',
   'widget.resetIn': 'reset in {time}',
   'widget.resetsIn': 'resets in {time}',

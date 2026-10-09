@@ -784,7 +784,7 @@
 .todoTitle {
   min-width: 0;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 5px;
   padding: 4px 0;
   overflow: hidden;
@@ -816,6 +816,11 @@ button.todoTitle {
 .todoTitleText {
   display: block;
   min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Agent message and step line stay on one line. */
+.detailMeta.todoTitleText {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

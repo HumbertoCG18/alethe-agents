@@ -512,6 +512,8 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ### Fixed
 
+- **Long task titles wrap in the Todo panel.** They no longer end in an ellipsis; the title
+  wraps inside the panel width.
 - **The Todo panel shows its title once.** The settings gear moved to the Overview, Night and
   Personal row.
 - **Markdown tabs close cleanly.** A single Markdown tab can be closed, closing the last one keeps

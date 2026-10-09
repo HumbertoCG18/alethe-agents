@@ -13,13 +13,14 @@ export const TODOS_MANIFEST: PluginManifest = {
     'ui.modal',
     'invoke:ensure_todo_template',
     // Campaigns: reads and watches .workflow/campanhas.json, lists the git worktrees, locates a
-    // campaign's handoff file, and writes tasks and states, and the night scheduler's `parou`
-    // diary lines, under campanhas.py's lock.
+    // campaign's handoff file and a task's evidence, and writes tasks and states, and the night
+    // scheduler's `parou` diary lines, under campanhas.py's lock.
     'invoke:read_text_file',
     'invoke:watch_file',
     'invoke:unwatch_file',
     'invoke:worktree_checkouts',
     'invoke:find_relative_path',
+    'invoke:find_repository_file',
     'invoke:campaign_registry_write',
   ],
   // At startup for the night scheduler, which runs whether or not the tab was opened.

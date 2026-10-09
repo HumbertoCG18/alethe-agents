@@ -19,7 +19,12 @@ import { useMarkdownFile } from '../../hooks/useMarkdownFile'
 import { askConfirm } from '../../lib/dialog'
 import { useT } from '../../lib/i18n'
 import { pathSegments } from '../../lib/paths'
-import { openInFileExplorer, writeClipboardText, writeTextFile } from '../../lib/tauri'
+import {
+  openInFileExplorer,
+  OUTSIDE_REPOSITORY,
+  writeClipboardText,
+  writeTextFile,
+} from '../../lib/tauri'
 import { isLightTheme } from '../../lib/themes'
 import type { Terminal as TerminalEntry } from '../../lib/types'
 import { useProjectsStore } from '../../stores/projectsStore'
@@ -44,7 +49,15 @@ export const MarkdownPane = memo(function MarkdownPane({
 }: MarkdownPaneProps) {
   const t = useT()
   const filePath = terminal.filePath ?? ''
-  const { content, error: readError, reload } = useMarkdownFile(filePath || null)
+  // Saved before `fileScope` existed: where the file came from is unknown, so nothing is read until
+  // the user opens it again.
+  const legacy = terminal.fileScope === undefined
+  const reopenLegacyFilePane = useProjectsStore((s) => s.reopenLegacyFilePane)
+  const {
+    content,
+    error: readError,
+    reload,
+  } = useMarkdownFile(legacy ? null : filePath || null, terminal.fileScope)
   const [draft, setDraft] = useState('')
   const [editing, setEditing] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -313,10 +326,26 @@ export const MarkdownPane = memo(function MarkdownPane({
       </header>
 
       <div className={styles.body}>
-        {error ? (
+        {legacy ? (
           <div className={styles.empty}>
             <FileText size={20} />
-            <span>{t('ui.markdown.loadError', { path: filePath })}</span>
+            <span>{t('markdown.legacyPane')}</span>
+            <button
+              type="button"
+              className={styles.retryBtn}
+              onClick={() => reopenLegacyFilePane(projectId, terminal.id)}
+            >
+              {t('markdown.legacyPaneOpen')}
+            </button>
+          </div>
+        ) : error ? (
+          <div className={styles.empty}>
+            <FileText size={20} />
+            <span>
+              {error === OUTSIDE_REPOSITORY
+                ? t('markdown.outsideRepository')
+                : t('ui.markdown.loadError', { path: filePath })}
+            </span>
             <button type="button" className={styles.retryBtn} onClick={() => void reload()}>
               {t('ui.markdown.refresh')}
             </button>
@@ -352,7 +381,12 @@ export const MarkdownPane = memo(function MarkdownPane({
               markdownPaneScrollPositions.set(filePath, event.currentTarget.scrollTop)
             }
           >
-            <MarkdownSummary path={filePath} content={content} dark={dark} />
+            <MarkdownSummary
+              path={filePath}
+              scope={terminal.fileScope}
+              content={content}
+              dark={dark}
+            />
           </div>
         )}
       </div>

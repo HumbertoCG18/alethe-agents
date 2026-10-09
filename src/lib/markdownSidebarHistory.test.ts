@@ -5,7 +5,10 @@ import {
   isMarkdownPath,
   MAX_MARKDOWN_SIDEBAR_HISTORY,
   parseMarkdownSidebarHistory,
+  readMarkdownSidebarHistory,
+  writeMarkdownSidebarHistory,
 } from './markdownSidebarHistory'
+import { writeScopedStorage } from './storageNamespace'
 
 describe('markdown sidebar history', () => {
   it('accepts Markdown variants and rejects unrelated files', () => {
@@ -34,8 +37,8 @@ describe('markdown sidebar history', () => {
     const history = parseMarkdownSidebarHistory(
       JSON.stringify({
         tabs: [
-          { path: 'C:\\docs\\README.md', title: '' },
-          { path: 'C:\\docs\\ignored.txt', title: 'ignored' },
+          { path: 'C:\\docs\\README.md', title: '', scope: null },
+          { path: 'C:\\docs\\ignored.txt', title: 'ignored', scope: null },
           null,
         ],
         activePath: 'missing.md',
@@ -43,8 +46,30 @@ describe('markdown sidebar history', () => {
     )
 
     expect(history).toEqual({
-      tabs: [{ path: 'C:\\docs\\README.md', title: 'README.md' }],
+      tabs: [{ path: 'C:\\docs\\README.md', title: 'README.md', scope: null }],
       activePath: 'C:\\docs\\README.md',
     })
+  })
+
+  it('round-trips a checkout scope and an explicit null; entries without either are dropped', () => {
+    localStorage.clear()
+    const tabs = [
+      { path: 'C:\\repo\\docs\\x.md', title: 'x.md', scope: 'C:\\repo' },
+      { path: 'C:\\docs\\picked.md', title: 'picked.md', scope: null },
+    ]
+    writeMarkdownSidebarHistory(tabs, 'C:\\docs\\picked.md')
+    expect(readMarkdownSidebarHistory()).toStrictEqual({ tabs, activePath: 'C:\\docs\\picked.md' })
+
+    const legacy = parseMarkdownSidebarHistory(
+      JSON.stringify({ tabs: [{ path: 'C:\\docs\\old.md', title: 'old.md' }] }),
+    )
+    expect(legacy).toEqual({ tabs: [], activePath: null })
+  })
+
+  it('does not restore a history saved before scopes were recorded', () => {
+    localStorage.clear()
+    const v1 = { tabs: [{ path: 'C:\\repo\\docs\\x.md', title: 'x.md' }], activePath: null }
+    writeScopedStorage('markdown-sidebar-history-v1', JSON.stringify(v1))
+    expect(readMarkdownSidebarHistory()).toEqual({ tabs: [], activePath: null })
   })
 })

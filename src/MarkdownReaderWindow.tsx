@@ -8,7 +8,7 @@ import { useMarkdownFile } from './hooks/useMarkdownFile'
 import { useT } from './lib/i18n'
 import { DEFAULT_MARKDOWN_SUMMARY, markdownQuestion } from './lib/markdownSummary'
 import { basename } from './lib/paths'
-import { ptyExists } from './lib/tauri'
+import { OUTSIDE_REPOSITORY, ptyExists } from './lib/tauri'
 import { generateMarkdown } from './lib/tauri/markdown'
 import {
   listenOrchestratorJobs,
@@ -26,14 +26,15 @@ const MarkdownRenderer = lazy(() =>
   })),
 )
 
-export function MarkdownReaderWindow({ path }: { path: string }) {
+/** `scope`: the checkout of a document named by repository text, read under its rule. */
+export function MarkdownReaderWindow({ path, scope }: { path: string; scope?: string }) {
   const t = useT()
   const hydrate = useProjectsStore((s) => s.hydrate)
   const preferences = useProjectsStore((s) => s.preferences)
   const projects = useProjectsStore((s) => s.projects)
   const theme = useAppliedTheme(preferences.uiTheme)
   const settings = preferences.markdownSummary ?? DEFAULT_MARKDOWN_SUMMARY
-  const { content, error, reload } = useMarkdownFile(path)
+  const { content, error, reload } = useMarkdownFile(path, scope)
   const [quote, setQuote] = useState('')
   const [question, setQuestion] = useState('')
   const [target, setTarget] = useState('')
@@ -181,7 +182,8 @@ export function MarkdownReaderWindow({ path }: { path: string }) {
         <div ref={documentRef} className={styles.document}>
           {error ? (
             <p role="alert">
-              {t('markdown.readError')} {error}
+              {t('markdown.readError')}{' '}
+              {error === OUTSIDE_REPOSITORY ? t('markdown.outsideRepository') : error}
             </p>
           ) : content === null ? (
             <p>{t('ui.markdown.loading')}</p>

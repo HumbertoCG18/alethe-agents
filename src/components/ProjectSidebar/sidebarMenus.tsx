@@ -625,7 +625,7 @@ export function createSidebarMenus(deps: SidebarMenuDeps) {
               label: t('rightSidebar.openMarkdown'),
               icon: <FileText size={14} />,
               onClick: () => {
-                openMarkdownSidebar(term.filePath!, term.name)
+                openMarkdownSidebar(term.filePath!, term.name, term.fileScope)
                 actions.setPreferences({ rightSidebarVisible: true })
               },
             },

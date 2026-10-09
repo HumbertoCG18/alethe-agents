@@ -50,6 +50,22 @@ export async function findRelativePath(cwd: string, path: string): Promise<strin
   return invoke<string | null>('find_relative_path', { cwd, path })
 }
 
+/** How the repository commands below reject a path that a link leads out of the checkouts. */
+export const OUTSIDE_REPOSITORY = 'outside_repository'
+
+/**
+ * `findRelativePath` for a path named by repository text (campaign registry, night diary): rejects
+ * with `OUTSIDE_REPOSITORY` when the match is a link or is reached through one out of the checkouts.
+ */
+export async function findRepositoryFile(cwd: string, path: string): Promise<string | null> {
+  return invoke<string | null>('find_repository_file', { cwd, path })
+}
+
+/** `readTextFile` for a path named by repository text, checked again against `cwd`'s checkouts. */
+export async function readRepositoryTextFile(cwd: string, path: string): Promise<string> {
+  return invoke<string>('read_repository_text_file', { cwd, path })
+}
+
 export async function writeTextFile(path: string, content: string): Promise<void> {
   await invoke('write_text_file', { path, content })
 }

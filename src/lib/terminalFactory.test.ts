@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { sidebarTerminalDisplayName } from './terminalFactory'
+import { makeFilePane, sidebarTerminalDisplayName } from './terminalFactory'
 import type { Terminal } from './types'
 
 // A sidebar row prefers a live auto-derived title (Claude's session title, or the active
@@ -45,4 +45,15 @@ describe('sidebarTerminalDisplayName', () => {
     const terminal = terminalWith({ name: 'tests', customName: true })
     expect(sidebarTerminalDisplayName(terminal, null)).toBe('tests')
   })
+})
+
+// Evidence named by repository text keeps its checkout, so the pane reads it under that rule.
+it('a file pane keeps the checkout it was opened with', () => {
+  expect(makeFilePane({ filePath: 'C:/repo/docs/report.txt', scope: 'C:/repo' })).toMatchObject({
+    kind: 'file',
+    filePath: 'C:/repo/docs/report.txt',
+    fileScope: 'C:/repo',
+  })
+  // A file the user picks is unscoped on purpose: null, unlike a pane saved before the field.
+  expect(makeFilePane({ filePath: 'C:/picked.txt', scope: null })).toHaveProperty('fileScope', null)
 })

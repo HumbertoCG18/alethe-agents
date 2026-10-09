@@ -81,6 +81,11 @@ export const en = {
   'markdown.worker': 'Worker',
   'markdown.nightWorker': 'Campaign / night worker',
   'markdown.readError': 'Could not read this document.',
+  'markdown.outsideRepository':
+    'This document points outside the repository through a link, so it was not read.',
+  'markdown.legacyPane':
+    'This file was opened before Alethe checked repository links. Open it again to load it.',
+  'markdown.legacyPaneOpen': 'Open it again',
   'rightSidebar.configure': 'Configure sidebar',
   'prs.project': 'Project',
   'prs.selectProject': 'Select a project',
@@ -943,6 +948,8 @@ export const en = {
   'todo.night.conclude': 'Conclude (Gate 2)',
   'todo.night.openEvidenceItem': 'Open evidence',
   'todo.night.evidenceMissing': 'Evidence not found: {path}',
+  'todo.night.evidenceOutsideRepository':
+    'This evidence points outside the repository through a link, so it was not opened: {path}',
   'todo.night.continue': 'Continue in the terminal',
   'todo.night.requeue': 'Back to the queue',
   'todo.nightMode.title': 'Night mode',
@@ -1661,6 +1668,8 @@ export const en = {
   'rightSidebar.catalog.details': 'Details',
   'rightSidebar.catalog.choose': 'Choose a document above or drop a Markdown file here.',
   'rightSidebar.markdownError': 'Could not load Markdown',
+  'rightSidebar.catalog.outsideCheckouts':
+    "This document is no longer in the project's checkouts. Refresh the catalog.",
   'rightSidebar.navigation': 'Right sidebar navigation',
   'rightSidebar.todoTab': 'Todo',
   'rightSidebar.markdownTab': 'Markdown',

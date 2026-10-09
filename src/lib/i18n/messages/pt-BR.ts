@@ -88,6 +88,11 @@ export const ptBR: Record<MessageKey, string> = {
   'markdown.worker': 'Worker',
   'markdown.nightWorker': 'Worker de campanha / noturno',
   'markdown.readError': 'Não foi possível ler este documento.',
+  'markdown.outsideRepository':
+    'Este documento aponta para fora do repositório por um link, por isso não foi lido.',
+  'markdown.legacyPane':
+    'Este arquivo foi aberto antes de o Alethe verificar links do repositório. Abra-o de novo para carregá-lo.',
+  'markdown.legacyPaneOpen': 'Abrir de novo',
   'rightSidebar.configure': 'Configurar barra lateral',
   'prs.project': 'Projeto',
   'prs.selectProject': 'Selecione um projeto',
@@ -964,6 +969,8 @@ export const ptBR: Record<MessageKey, string> = {
   'todo.night.conclude': 'Concluir (Gate 2)',
   'todo.night.openEvidenceItem': 'Abrir evidência',
   'todo.night.evidenceMissing': 'Evidência não encontrada: {path}',
+  'todo.night.evidenceOutsideRepository':
+    'Esta evidência aponta para fora do repositório por um link, por isso não foi aberta: {path}',
   'todo.night.continue': 'Continuar no terminal',
   'todo.night.requeue': 'Voltar para a fila',
   'todo.nightMode.title': 'Modo noturno',
@@ -1694,6 +1701,8 @@ export const ptBR: Record<MessageKey, string> = {
   'rightSidebar.catalog.details': 'Detalhes',
   'rightSidebar.catalog.choose': 'Escolha um documento acima ou arraste um Markdown para cá.',
   'rightSidebar.markdownError': 'Não foi possível carregar o Markdown',
+  'rightSidebar.catalog.outsideCheckouts':
+    'Este documento não está mais nos checkouts do projeto. Atualize o catálogo.',
   'rightSidebar.navigation': 'Navegação da sidebar direita',
   'rightSidebar.todoTab': 'Tarefas',
   'rightSidebar.markdownTab': 'Markdown',

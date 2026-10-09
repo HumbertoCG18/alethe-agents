@@ -60,7 +60,8 @@ function detachedBoardPane(): string | null {
 }
 
 const boardPane = detachedBoardPane()
-const readerPath = new URLSearchParams(window.location.search).get('markdown')
+const readerQuery = new URLSearchParams(window.location.search)
+const readerPath = readerQuery.get('markdown')
 if (boardPane || readerPath) {
   // The main window owns projects.json; this one only reads it.
   setProjectsReadOnly(true)
@@ -73,7 +74,7 @@ if (boardPane || readerPath) {
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     {readerPath ? (
-      <MarkdownReaderWindow path={readerPath} />
+      <MarkdownReaderWindow path={readerPath} scope={readerQuery.get('scope') ?? undefined} />
     ) : boardPane ? (
       <OrchestrationWindow terminalId={boardPane} />
     ) : (

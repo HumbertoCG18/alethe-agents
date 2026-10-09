@@ -86,10 +86,15 @@ fn development_markdown(path: &Path) -> bool {
 }
 
 fn plain_catalog_file(root: &Path, path: &Path) -> bool {
+    fs::symlink_metadata(path).is_ok_and(|metadata| metadata.is_file()) && plain_entry(root, path)
+}
+
+/// Neither a link nor, on Windows, a reparse point, and really under the canonical `root`.
+fn plain_entry(root: &Path, path: &Path) -> bool {
     let Ok(metadata) = fs::symlink_metadata(path) else {
         return false;
     };
-    if !metadata.is_file() || metadata.file_type().is_symlink() {
+    if metadata.file_type().is_symlink() {
         return false;
     }
     #[cfg(windows)]
@@ -463,13 +468,17 @@ pub fn delete_filesystem_entry(path: String) -> Result<(), String> {
 #[tauri::command]
 pub fn read_text_file(path: String) -> Result<String, String> {
     let file = PathBuf::from(path.trim());
-    match file.try_exists() {
-        Ok(false) => return Err("file not found".to_string()),
-        Err(error) => return Err(error.to_string()),
-        Ok(true) if !file.is_file() => return Err("not a file".to_string()),
-        Ok(true) => {}
-    }
+    existing_file(&file)?;
     fs::read_to_string(&file).map_err(|error| error.to_string())
+}
+
+fn existing_file(file: &Path) -> Result<(), String> {
+    match file.try_exists() {
+        Ok(false) => Err("file not found".to_string()),
+        Err(error) => Err(error.to_string()),
+        Ok(true) if !file.is_file() => Err("not a file".to_string()),
+        Ok(true) => Ok(()),
+    }
 }
 
 #[tauri::command]
@@ -679,6 +688,169 @@ pub async fn find_relative_path(cwd: String, path: String) -> Option<String> {
     .map(|found| found.to_string_lossy().into_owned())
 }
 
+pub(crate) const OUTSIDE_REPOSITORY: &str = "outside_repository";
+
+/// `find_relative_path` for a path named by repository text (campaign registry, night diary): the
+/// match must be a plain file or folder inside a checkout, not reached through a link (the rule of
+/// the Markdown catalog's scan), else the lookup fails with `OUTSIDE_REPOSITORY`.
+#[tauri::command]
+pub async fn find_repository_file(cwd: String, path: String) -> Result<Option<String>, String> {
+    tokio::task::spawn_blocking(move || {
+        let cwd = Path::new(cwd.trim());
+        match find_relative_path_inner(cwd, path.trim()) {
+            Some(found) if !in_checkouts(cwd, &found) => Err(OUTSIDE_REPOSITORY.to_string()),
+            found => Ok(found.map(|found| found.to_string_lossy().into_owned())),
+        }
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+/// `read_text_file` for a path named by repository text. The file is opened once and that open file
+/// is what is checked against `cwd`'s checkouts and then read, so a link swapped in after the lookup,
+/// or between the check and the read, is refused too.
+#[tauri::command]
+pub async fn read_repository_text_file(cwd: String, path: String) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || {
+        use std::io::Read;
+        let file = PathBuf::from(path.trim());
+        existing_file(&file)?;
+        let mut opened = open_unlinked(&file).map_err(|error| {
+            // O_NOFOLLOW refuses a symlink at the last component.
+            #[cfg(unix)]
+            if error.raw_os_error() == Some(libc::ELOOP) {
+                return OUTSIDE_REPOSITORY.to_string();
+            }
+            error.to_string()
+        })?;
+        if !opened_inside(&opened, &canonical_checkouts(Path::new(cwd.trim()))) {
+            return Err(OUTSIDE_REPOSITORY.to_string());
+        }
+        let mut text = String::new();
+        opened
+            .read_to_string(&mut text)
+            .map_err(|error| error.to_string())?;
+        Ok(text)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+/// Opens `path` for reading without following a link at its last component.
+fn open_unlinked(path: &Path) -> std::io::Result<fs::File> {
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(windows)]
+    std::os::windows::fs::OpenOptionsExt::custom_flags(
+        &mut options,
+        windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT,
+    );
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::custom_flags(&mut options, libc::O_NOFOLLOW);
+    options.open(path)
+}
+
+/// Whether the open `file` is a plain file under one of the canonical `roots`, by the place the
+/// system reports for the open file itself: no path is resolved again, so no swap can match it.
+fn opened_inside(file: &fs::File, roots: &[PathBuf]) -> bool {
+    let Ok(metadata) = file.metadata() else {
+        return false;
+    };
+    #[cfg(windows)]
+    let plain = {
+        use std::os::windows::fs::MetadataExt;
+        metadata.is_file() && metadata.file_attributes() & 0x400 == 0
+    };
+    #[cfg(not(windows))]
+    let plain = metadata.is_file();
+    plain && final_path(file).is_some_and(|real| roots.iter().any(|root| real.starts_with(root)))
+}
+
+/// The place of the open `file`, as the system resolved it; `None` where the system cannot tell,
+/// which refuses the read.
+#[cfg(unix)]
+fn final_path(file: &fs::File) -> Option<PathBuf> {
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::io::AsRawFd;
+        fs::read_link(format!("/proc/self/fd/{}", file.as_raw_fd())).ok()
+    }
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::unix::{ffi::OsStrExt, io::AsRawFd};
+        let mut buffer = vec![0u8; libc::PATH_MAX as usize];
+        // SAFETY: F_GETPATH writes a NUL-terminated path of at most MAXPATHLEN (PATH_MAX) bytes.
+        if unsafe { libc::fcntl(file.as_raw_fd(), libc::F_GETPATH, buffer.as_mut_ptr()) } == -1 {
+            return None;
+        }
+        let end = buffer.iter().position(|&byte| byte == 0)?;
+        Some(std::ffi::OsStr::from_bytes(&buffer[..end]).into())
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        let _ = file;
+        None
+    }
+}
+
+/// The path of the open `file`, spelled as `canonicalize` spells it (`\\?\C:\...`).
+#[cfg(windows)]
+fn final_path(file: &fs::File) -> Option<PathBuf> {
+    use std::os::windows::{ffi::OsStringExt, io::AsRawHandle};
+    use windows_sys::Win32::Storage::FileSystem::GetFinalPathNameByHandleW;
+    let mut buffer = vec![0u16; 512];
+    loop {
+        // SAFETY: the handle is open for the whole call, which writes at most `buffer.len()` units.
+        let length = unsafe {
+            GetFinalPathNameByHandleW(
+                file.as_raw_handle() as _,
+                buffer.as_mut_ptr(),
+                buffer.len() as u32,
+                0,
+            )
+        } as usize;
+        match length {
+            0 => return None,
+            fits if fits < buffer.len() => {
+                return Some(std::ffi::OsString::from_wide(&buffer[..fits]).into())
+            }
+            needed => buffer.resize(needed, 0),
+        }
+    }
+}
+
+/// Whether `path` passes `plain_entry` under one of the checkouts of `cwd`'s repository, or under
+/// `cwd` itself outside git.
+pub(crate) fn in_checkouts(cwd: &Path, path: &Path) -> bool {
+    canonical_checkouts(cwd)
+        .iter()
+        .any(|root| plain_entry(root, path))
+}
+
+/// The canonical roots of `cwd`'s checkouts, or of `cwd` itself outside git.
+fn canonical_checkouts(cwd: &Path) -> Vec<PathBuf> {
+    checkout_roots(cwd)
+        .unwrap_or_else(|| vec![cwd.to_path_buf()])
+        .iter()
+        .filter_map(|root| root.canonicalize().ok())
+        .collect()
+}
+
+/// The roots of every checkout of `cwd`'s repository, as git lists them.
+fn checkout_roots(cwd: &Path) -> Option<Vec<PathBuf>> {
+    let output = crate::git_control::git_command(cwd, &["worktree", "list", "--porcelain"]).ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter_map(|line| line.strip_prefix("worktree "))
+            .map(PathBuf::from)
+            .collect(),
+    )
+}
+
 fn find_relative_path_inner(cwd: &Path, path: &str) -> Option<PathBuf> {
     let path = Path::new(path);
     if path.as_os_str().is_empty() {
@@ -690,15 +862,7 @@ fn find_relative_path_inner(cwd: &Path, path: &str) -> Option<PathBuf> {
         return Some(direct);
     }
 
-    let output = crate::git_control::git_command(cwd, &["worktree", "list", "--porcelain"]).ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let roots: Vec<PathBuf> = String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .filter_map(|line| line.strip_prefix("worktree "))
-        .map(PathBuf::from)
-        .collect();
+    let roots = checkout_roots(cwd)?;
     let candidates: Vec<PathBuf> = if path.has_root() {
         // The innermost checkout holding it, since a worktree can live inside the main one. A path
         // spelled unlike git's roots (a `RUNNER~1` short name, macOS `/var` for `/private/var`) is
@@ -1089,6 +1253,140 @@ mod tests {
             let at = worktree.to_str().unwrap();
             let _ = checked_output(&main, &["worktree", "remove", "--force", at]);
         }
+        let _ = fs::remove_dir_all(&parent);
+    }
+
+    /// A junction on Windows, a symlink elsewhere. The tests that need it fail without it.
+    fn link_directory(link: &Path, target: &Path) {
+        #[cfg(windows)]
+        {
+            let output = std::process::Command::new("cmd")
+                .args(["/c", "mklink", "/J"])
+                .arg(link)
+                .arg(target)
+                .output()
+                .expect("cmd could not run mklink");
+            assert!(
+                output.status.success(),
+                "mklink /J could not create the junction: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(target, link).expect("could not create the symlink");
+    }
+
+    // Repository text (registry, night diary) names files in the checkouts: a link in one must not
+    // lead the lookup or the read out of them (#114).
+    #[tokio::test]
+    async fn repository_files_reached_through_a_link_are_refused() {
+        let parent = scratch("repository-file");
+        let main = parent.join("repo");
+        fs::create_dir_all(main.join("docs")).unwrap();
+        checked_output(&main, &["init", "-b", "main"]).unwrap();
+        checked_output(&main, &["config", "user.name", "Alethe Test"]).unwrap();
+        checked_output(&main, &["config", "user.email", "alethe@example.invalid"]).unwrap();
+        fs::write(main.join("a.txt"), "a\n").unwrap();
+        checked_output(&main, &["add", "-A"]).unwrap();
+        checked_output(&main, &["commit", "-m", "base"]).unwrap();
+        let nested = main.join(".claude").join("worktrees").join("nested");
+        let at = nested.to_str().unwrap();
+        checked_output(&main, &["worktree", "add", "-b", "nested", at, "HEAD"]).unwrap();
+        fs::write(main.join("docs").join("plain.md"), "plain").unwrap();
+        fs::create_dir_all(nested.join("docs")).unwrap();
+        fs::write(nested.join("docs").join("nested.md"), "nested").unwrap();
+        let outside = parent.join("outside");
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("report.md"), "private").unwrap();
+        let text = |path: &Path| path.to_string_lossy().into_owned();
+        let find = |cwd: &Path, path: &str| find_repository_file(text(cwd), path.into());
+        let read = |path: &Path| read_repository_text_file(text(&main), text(path));
+        let refused = Some(OUTSIDE_REPOSITORY.to_string());
+
+        assert!(matches!(find(&main, "docs/plain.md").await, Ok(Some(_))));
+        assert_eq!(
+            read(&main.join("docs").join("plain.md")).await,
+            Ok("plain".into())
+        );
+        assert_eq!(find(&main, "docs/missing.md").await, Ok(None));
+        // A worktree inside the main checkout is still one of the checkouts.
+        assert!(matches!(find(&nested, "docs/nested.md").await, Ok(Some(_))));
+        let inner = nested.join("docs").join("nested.md");
+        assert!(matches!(find(&main, &text(&inner)).await, Ok(Some(_))));
+        assert_eq!(read(&inner).await, Ok("nested".into()));
+        // Outside git, the folder itself is the checkout.
+        assert!(matches!(find(&outside, "report.md").await, Ok(Some(_))));
+
+        let linked = main.join("linked");
+        link_directory(&linked, &outside);
+        assert_eq!(find(&main, "linked/report.md").await.err(), refused);
+        assert_eq!(find(&main, "linked").await.err(), refused);
+        assert_eq!(read(&linked.join("report.md")).await.err(), refused);
+        // A file the user picks still opens through the link.
+        assert_eq!(
+            read_text_file(text(&linked.join("report.md"))),
+            Ok("private".into())
+        );
+        let _ = fs::remove_dir(&linked).or_else(|_| fs::remove_file(&linked));
+        #[cfg(unix)]
+        {
+            let link = main.join("docs").join("link.md");
+            std::os::unix::fs::symlink(outside.join("report.md"), &link).unwrap();
+            assert_eq!(find(&main, "docs/link.md").await.err(), refused);
+            assert_eq!(read(&link).await.err(), refused);
+        }
+
+        let _ = checked_output(&main, &["worktree", "remove", "--force", at]);
+        let _ = fs::remove_dir_all(&parent);
+    }
+
+    // The read checks the file it opened, not its path a second time: a link there at the open and
+    // gone before the check still reads as outside, even though the path now names a file inside.
+    #[test]
+    fn the_read_checks_the_file_it_opened_not_the_path() {
+        let parent = scratch("repository-swap");
+        let main = parent.join("repo");
+        let outside = parent.join("outside");
+        fs::create_dir_all(&main).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("report.md"), "private").unwrap();
+        let docs = main.join("docs");
+        let path = docs.join("report.md");
+        let roots = [main.canonicalize().unwrap()];
+
+        link_directory(&docs, &outside);
+        let opened = open_unlinked(&path).unwrap();
+        fs::remove_dir(&docs)
+            .or_else(|_| fs::remove_file(&docs))
+            .unwrap();
+        fs::create_dir_all(&docs).unwrap();
+        fs::write(&path, "inside").unwrap();
+        assert!(in_checkouts(&main, &path));
+        assert!(!opened_inside(&opened, &roots));
+        drop(opened);
+        assert!(opened_inside(&open_unlinked(&path).unwrap(), &roots));
+        let _ = fs::remove_dir_all(&parent);
+    }
+
+    // The open file names its own place, whatever link led to it: the check never resolves a path
+    // again, so no later swap can make it match (/proc/self/fd on Linux, F_GETPATH on macOS,
+    // GetFinalPathNameByHandleW on Windows).
+    #[test]
+    fn an_open_file_reports_its_real_place_behind_a_linked_folder() {
+        let parent = scratch("final-path");
+        let main = parent.join("repo");
+        let outside = parent.join("outside");
+        fs::create_dir_all(&main).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("report.md"), "private").unwrap();
+        link_directory(&main.join("docs"), &outside);
+
+        let opened = open_unlinked(&main.join("docs").join("report.md")).unwrap();
+        let real = outside.canonicalize().unwrap().join("report.md");
+        assert_eq!(final_path(&opened), Some(real));
+        assert!(!opened_inside(&opened, &[main.canonicalize().unwrap()]));
+        drop(opened);
+        let _ = fs::remove_dir(main.join("docs")).or_else(|_| fs::remove_file(main.join("docs")));
         let _ = fs::remove_dir_all(&parent);
     }
 

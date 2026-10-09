@@ -237,7 +237,13 @@ export type ProjectsState = ProjectsFile & {
     },
   ) => Promise<Terminal>
 
-  createFilePane: (projectId: string, args: { filePath: string; name?: string }) => Terminal
+  /** `scope`: see `Terminal.fileScope`; null for a file the user picked. */
+  createFilePane: (
+    projectId: string,
+    args: { filePath: string; name?: string; scope: string | null },
+  ) => Terminal
+  /** The user opens again a file pane saved before `fileScope`: it reads as a file they picked. */
+  reopenLegacyFilePane: (projectId: string, terminalId: string) => void
 
   createDiffPane: (
     projectId: string,

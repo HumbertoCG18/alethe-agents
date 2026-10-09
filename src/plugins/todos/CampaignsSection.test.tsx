@@ -74,6 +74,7 @@ vi.mock('../../lib/tauri', async (importOriginal) => ({
     return () => {}
   }),
   findRelativePath: vi.fn(async (_cwd: string, path: string) => fs.found.get(path) ?? fs.handoff),
+  findRepositoryFile: vi.fn(async (_cwd: string, path: string) => fs.found.get(path) ?? fs.handoff),
   // The files directly in a folder, as the list_directory command returns them.
   listDirectory: vi.fn(async (folder: string) => {
     const entries = [...fs.files.keys()]
@@ -126,6 +127,7 @@ import {
   campaignRegistryWrite,
   ensureTodoTemplate,
   findRelativePath,
+  findRepositoryFile,
   listDirectory,
   openInFileExplorer,
   orchestratorCancelJob,
@@ -1627,7 +1629,7 @@ describe('Night card', () => {
         'C:\\repo-feature\\docs\\motor.md',
       ),
     )
-    expect(findRelativePath).toHaveBeenCalledWith('C:\\repo', 'docs/motor.md')
+    expect(findRepositoryFile).toHaveBeenCalledWith('C:\\repo', 'docs/motor.md')
   })
 
   it('moves concluded entries to Completed, leaving the night with a zero count when all are done', async () => {
@@ -1714,7 +1716,7 @@ describe('Night card', () => {
       fireEvent.click(screen.getByRole('button', { name: text }))
       await waitFor(() => expect(lastToast()?.body, text).toBe(`Evidence not found: ${text}`))
     }
-    expect(findRelativePath).not.toHaveBeenCalled()
+    expect(findRepositoryFile).not.toHaveBeenCalled()
     expect(vi.mocked(listDirectory).mock.calls.every(([path]) => path === NIGHTS)).toBe(true)
     expect(openInFileExplorer).not.toHaveBeenCalled()
     expect(useUiStore.getState().rightSidebarMarkdown?.path ?? null).toBeNull()
@@ -1738,7 +1740,7 @@ describe('Night card', () => {
         entry('MOTOR-05', 'ok', 'C:\\repo-feature\\docs\\abs.md'),
       ]),
     )
-    // find_relative_path joins without any containment check.
+    // The mocked lookup joins without any containment check.
     fs.found.set('../outside/private.md', 'C:\\repo\\..\\outside\\private.md')
     render(<TodoSidebar />)
     fireEvent.click(await screen.findByRole('button', { name: /^Night of 10\/03/ }))
@@ -1752,7 +1754,7 @@ describe('Night card', () => {
     const panes = useProjectsStore.getState().projects[0].terminals.length
     fireEvent.click(screen.getByRole('button', { name: 'docs/ok.md' }))
     await waitFor(() => expect(lastToast()?.body).toBe('Evidence not found: docs/ok.md'))
-    expect(findRelativePath).toHaveBeenCalledWith('C:\\repo', 'docs/ok.md')
+    expect(findRepositoryFile).toHaveBeenCalledWith('C:\\repo', 'docs/ok.md')
     expect(useProjectsStore.getState().projects[0].terminals).toHaveLength(panes)
   })
 
@@ -2373,7 +2375,7 @@ describe('Todo sections', () => {
     fs.files.set(REGISTRY, JSON.stringify(data))
     // In the feature worktree the lookup hangs until released.
     let release: (path: string) => void = () => {}
-    const lookup = vi.mocked(findRelativePath)
+    const lookup = vi.mocked(findRepositoryFile)
     const usual = lookup.getMockImplementation()!
     lookup.mockImplementation((cwd, path) =>
       cwd === 'C:\\repo-feature'
@@ -2795,7 +2797,7 @@ describe('Task detail', () => {
     await waitFor(() => expect(row('OITO-02')).not.toBeNull())
     fireEvent.click(toggle('OITO-02'))
     const open = within(detail('OITO-02')!).getByRole('button', { name: 'Open docs/oito-02.md' })
-    expect(findRelativePath).not.toHaveBeenCalledWith('C:\\repo', 'docs/oito-02.md')
+    expect(findRepositoryFile).not.toHaveBeenCalledWith('C:\\repo', 'docs/oito-02.md')
 
     fireEvent.click(open)
     await waitFor(() =>
@@ -2803,7 +2805,7 @@ describe('Task detail', () => {
         'C:\\repo\\docs\\oito-02.md',
       ),
     )
-    expect(findRelativePath).toHaveBeenCalledWith('C:\\repo', 'docs/oito-02.md')
+    expect(findRepositoryFile).toHaveBeenCalledWith('C:\\repo', 'docs/oito-02.md')
 
     // Evidence that is not a path is shown as text, with nothing to open.
     await editRegistry((data) => {

@@ -6,7 +6,7 @@ import {
   normalizeMarkdownSummary,
   summarizeMarkdown,
 } from '../../lib/markdownSummary'
-import { generateMarkdown } from '../../lib/tauri/markdown'
+import { generateMarkdown, openMarkdownReader } from '../../lib/tauri/markdown'
 import { EMPTY_PROJECTS_FILE } from '../../lib/types'
 import { useProjectsStore } from '../../stores/projectsStore'
 import { useUiStore } from '../../stores/uiStore'
@@ -145,4 +145,15 @@ it('collapses the summary body from its header and keeps that for every summary'
   expect(screen.queryByText('the summary')).toBeNull()
   fireEvent.click(screen.getByRole('button', { name: 'Expand summary' }))
   expect(await screen.findByText('the summary')).toBeInTheDocument()
+})
+
+it('opens the full reader under the checkout of a document named by repository text', async () => {
+  vi.mocked(openMarkdownReader).mockResolvedValue()
+  vi.mocked(generateMarkdown).mockResolvedValue('summary')
+  const view = render(<MarkdownSummary path="/repo/x.md" content="source" dark scope="/repo" />)
+  fireEvent.click(screen.getByRole('button', { name: 'Read full document' }))
+  expect(openMarkdownReader).toHaveBeenLastCalledWith('/repo/x.md', '/repo')
+  view.rerender(<MarkdownSummary path="/picked.md" content="source" dark />)
+  fireEvent.click(screen.getByRole('button', { name: 'Read full document' }))
+  expect(openMarkdownReader).toHaveBeenLastCalledWith('/picked.md', undefined)
 })

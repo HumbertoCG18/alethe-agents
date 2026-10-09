@@ -7,7 +7,7 @@ import { normalizeMarkdownMaxAge } from '../../lib/markdownSummary'
 import { basename, normalizeCwd } from '../../lib/paths'
 import { resolveProjectCheckout } from '../../lib/projectCheckout'
 import { readScopedStorage, writeScopedStorage } from '../../lib/storageNamespace'
-import { findRelativePath, listProjectMarkdown } from '../../lib/tauri'
+import { findRepositoryFile, listProjectMarkdown, OUTSIDE_REPOSITORY } from '../../lib/tauri'
 import { useCampaignView } from '../../plugins/todos/campaignView'
 import { useProjectsStore } from '../../stores/projectsStore'
 
@@ -88,6 +88,13 @@ function cached(key: string): Catalog {
     return empty
   }
 }
+
+/**
+ * The innermost of `roots` holding `path`: the checkout a catalog document is read under. None
+ * when the document was listed under a checkout the project no longer has.
+ */
+export const catalogRoot = (roots: string[], path: string): string | undefined =>
+  roots.filter((r) => pathInside(path, r)).sort((a, b) => b.length - a.length)[0]
 
 /** Recover a missing prefix only when one logical project document matches, never by name alone. */
 export function recoverCatalogPath(
@@ -222,7 +229,11 @@ export function useMarkdownCatalog() {
                 if (!copies) {
                   copies = Promise.all(
                     roots.map(async (r) => {
-                      const found = await findRelativePath(r, relative)
+                      // A copy reached through a link out of the checkouts is not listed.
+                      const found = await findRepositoryFile(r, relative).catch((e: unknown) => {
+                        if (e === OUTSIDE_REPOSITORY) return null
+                        throw e
+                      })
                       return found && pathInside(found, r) ? found : null
                     }),
                   )

@@ -458,6 +458,16 @@ describe('projects file migration', () => {
     expect(terminals.find((t) => t.id === 'untouched')?.remoteShared).toBe(true)
   })
 
+  it('keeps the checkout a file pane was opened with', () => {
+    const pane = { id: 'pane', kind: 'file', filePath: 'C:/repo/x.txt', fileScope: 'C:/repo' }
+    const migrated = migrate({
+      ...EMPTY_PROJECTS_FILE,
+      projects: [{ id: 'project', terminals: [pane] }],
+    })
+
+    expect(migrated.projects[0].terminals[0].fileScope).toBe('C:/repo')
+  })
+
   it('leaves an explicit remoteShared value untouched when migrating to v8', () => {
     const migrated = migrate({
       ...EMPTY_PROJECTS_FILE,

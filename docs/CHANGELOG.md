@@ -540,13 +540,31 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 - **Orchestrator shells in a WSL folder run their command.** They opened an idle login shell in the
   distro while the board showed them running; the command now runs there, and the board sees it
   exit.
+- **A profile that fails to delete keeps its credentials.** Its folder is removed and the profile
+  list saved before its GitHub sync token and Spotify secrets are deleted, so a folder that cannot
+  be removed (for example, a file still open in it on Windows) leaves the profile listed with its
+  credentials instead of without them.
+- **ai-memory follows the active profile.** Switching to another profile, or deleting the one
+  ai-memory was started for, stops the server Alethe started for the previous profile, so the new
+  profile no longer reads and writes the old profile's memory. When ai-memory is enabled for the
+  profile switched to, its own server starts automatically.
+- **A release is no longer published before its notes job finishes.** The release workflow publishes
+  the draft only after the release-notes job succeeds, a failed run discards its draft only once that
+  job has finished, and two release runs queue instead of overlapping.
 - **Campaign and night files open only from inside the repository.** A text file named by the
   campaign registry or night evidence is read, listed in the Markdown index, summarized or opened in
   the full reader only when it really lies in one of the repository's checkouts; one reached through
   a symlink or junction that points outside is refused, and the evidence, viewer, reader or file
-  pane says why. Image and video evidence is checked only when it is opened. The Markdown viewer's
-  tab history from earlier versions is not restored, and file panes saved before this version ask to
-  be opened again before they load, since neither recorded where the file came from.
+  pane says why. The Markdown viewer's tab history from earlier versions is not restored, and file
+  panes saved before this version ask to be opened again before they load, since neither recorded
+  where the file came from.
+- **Images, videos and edits from repository evidence stay inside the repository too.** An image
+  opened from campaign or night evidence is read only from a file that really lies in one of the
+  repository's checkouts, a video is checked the same way each time its pane opens or is restored,
+  and saving an edit in a file pane opened from evidence writes only to that file inside the
+  checkouts. One reached through a symlink, junction or hard link that points outside is not shown
+  or saved, the pane says why, and an unsaved edit stays in the editor. Image and video panes saved before this
+  version ask to be opened again before they load; files you pick yourself open and save as before.
 - **The orchestrator's quota warning names its window.** It says whether the session, weekly, Opus
   or a model's weekly limit crossed the threshold, so it no longer looks like it contradicts the
   usage indicator.

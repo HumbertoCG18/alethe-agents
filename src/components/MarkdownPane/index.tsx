@@ -23,6 +23,7 @@ import {
   openInFileExplorer,
   OUTSIDE_REPOSITORY,
   writeClipboardText,
+  writeRepositoryTextFile,
   writeTextFile,
 } from '../../lib/tauri'
 import { isLightTheme } from '../../lib/themes'
@@ -53,16 +54,13 @@ export const MarkdownPane = memo(function MarkdownPane({
   // the user opens it again.
   const legacy = terminal.fileScope === undefined
   const reopenLegacyFilePane = useProjectsStore((s) => s.reopenLegacyFilePane)
-  const {
-    content,
-    error: readError,
-    reload,
-  } = useMarkdownFile(legacy ? null : filePath || null, terminal.fileScope)
+  const { content, error, reload } = useMarkdownFile(
+    legacy ? null : filePath || null,
+    terminal.fileScope,
+  )
   const [draft, setDraft] = useState('')
   const [editing, setEditing] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [saveError, setError] = useState<string | null>(null)
-  const error = saveError ?? readError
   const [copied, setCopied] = useState(false)
   const editingRef = useRef(false)
   const saveSequence = useRef(0)
@@ -102,21 +100,31 @@ export const MarkdownPane = memo(function MarkdownPane({
     setEditing(false)
   }
 
+  // Editing starts from read content; a later read error leaves the draft to save again.
   const saveEditing = async () => {
-    if (!filePath || content === null || saving) return
+    if (!filePath || saving) return
     const request = ++saveSequence.current
+    const scope = terminal.fileScope
     setSaving(true)
     try {
-      await writeTextFile(filePath, draft)
+      // Opened from repository text: saved only while the file is still inside its checkout.
+      await (typeof scope === 'string'
+        ? writeRepositoryTextFile(scope, filePath, draft)
+        : writeTextFile(filePath, draft))
       if (saveSequence.current !== request) return
       await reload()
       if (saveSequence.current !== request) return
       editingRef.current = false
       setEditing(false)
-      setError(null)
     } catch (err) {
-      if (saveSequence.current === request)
-        setError(err instanceof Error ? err.message : String(err))
+      // The editor stays open with the draft, whatever the reason.
+      if (saveSequence.current === request) {
+        const reason = err instanceof Error ? err.message : String(err)
+        pushToast({
+          title: t('markdown.saveError', { name: terminal.name }),
+          body: reason === OUTSIDE_REPOSITORY ? t('markdown.saveOutsideRepository') : reason,
+        })
+      }
     } finally {
       if (saveSequence.current === request) setSaving(false)
     }
@@ -127,7 +135,6 @@ export const MarkdownPane = memo(function MarkdownPane({
     setSaving(false)
     editingRef.current = false
     setEditing(false)
-    setError(null)
   }, [filePath])
 
   useEffect(() => {
@@ -171,6 +178,10 @@ export const MarkdownPane = memo(function MarkdownPane({
 
   const dropTarget = droppable.isOver && !isFocusMode
   const dragging = draggable.isDragging
+  const readError =
+    error === OUTSIDE_REPOSITORY
+      ? t('markdown.outsideRepository')
+      : t('ui.markdown.loadError', { path: filePath })
 
   return (
     <div
@@ -251,7 +262,7 @@ export const MarkdownPane = memo(function MarkdownPane({
                     type="button"
                     className={styles.action}
                     onClick={() => void saveEditing()}
-                    disabled={saving || content === null}
+                    disabled={saving}
                     title={saving ? t('ui.markdown.saving') : t('ui.markdown.save')}
                     aria-label={saving ? t('ui.markdown.saving') : t('ui.markdown.save')}
                   >
@@ -338,14 +349,23 @@ export const MarkdownPane = memo(function MarkdownPane({
               {t('markdown.legacyPaneOpen')}
             </button>
           </div>
+        ) : editing ? (
+          // A read error while editing shows above the draft, which stays editable and savable.
+          <div className={styles.editing}>
+            {error ? <div className={styles.readError}>{readError}</div> : null}
+            <textarea
+              className={styles.editor}
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              spellCheck={false}
+              autoFocus
+              aria-label={t('ui.markdown.edit')}
+            />
+          </div>
         ) : error ? (
           <div className={styles.empty}>
             <FileText size={20} />
-            <span>
-              {error === OUTSIDE_REPOSITORY
-                ? t('markdown.outsideRepository')
-                : t('ui.markdown.loadError', { path: filePath })}
-            </span>
+            <span>{readError}</span>
             <button type="button" className={styles.retryBtn} onClick={() => void reload()}>
               {t('ui.markdown.refresh')}
             </button>
@@ -354,15 +374,6 @@ export const MarkdownPane = memo(function MarkdownPane({
           <div className={styles.empty}>
             <span>{t('ui.markdown.loading')}</span>
           </div>
-        ) : editing ? (
-          <textarea
-            className={styles.editor}
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            spellCheck={false}
-            autoFocus
-            aria-label={t('ui.markdown.edit')}
-          />
         ) : terminal.kind === 'file' ? (
           <div
             ref={scrollRef}

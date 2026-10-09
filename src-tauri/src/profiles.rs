@@ -5,7 +5,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::{AppHandle, Manager};
 
+use crate::ai_memory::AiMemoryProcess;
 pub(crate) use crate::provider_common::now_ms;
+use crate::secure_store::{OsSecretStore, SecretKind, SecretStore};
 
 const PROFILES_DIR_NAME: &str = "profiles";
 const PROFILES_REGISTRY_FILE: &str = "profiles.json";
@@ -387,7 +389,16 @@ pub fn list_profiles_state(app: &AppHandle) -> Result<ProfilesState, String> {
 
 pub fn set_active_profile_id(app: &AppHandle, profile_id: &str) -> Result<ProfilesState, String> {
     let root = root_data_dir(app)?;
-    let mut index = ensure_profiles_index(app)?;
+    let index = ensure_profiles_index(app)?;
+    activate_profile(&root, index, profile_id, &app.state::<AiMemoryProcess>())
+}
+
+fn activate_profile(
+    root: &Path,
+    mut index: ProfilesIndex,
+    profile_id: &str,
+    ai_memory: &AiMemoryProcess,
+) -> Result<ProfilesState, String> {
     if !index
         .profiles
         .iter()
@@ -402,8 +413,9 @@ pub fn set_active_profile_id(app: &AppHandle, profile_id: &str) -> Result<Profil
         .iter_mut()
         .filter(|profile| profile.id == profile_id)
         .for_each(|profile| profile.last_used_at_ms = now);
-    ensure_profile_dirs(&root, &index)?;
-    write_profiles_index(&root, &index)?;
+    ensure_profile_dirs(root, &index)?;
+    write_profiles_index(root, &index)?;
+    crate::ai_memory::stop_unless_serving(ai_memory, &profile_dir(root, profile_id));
     Ok(profiles_state_from(&index))
 }
 
@@ -468,7 +480,18 @@ pub fn rename_profile_state(
 
 pub fn delete_profile_state(app: &AppHandle, profile_id: &str) -> Result<ProfilesState, String> {
     let root = root_data_dir(app)?;
-    let mut index = ensure_profiles_index(app)?;
+    let index = ensure_profiles_index(app)?;
+    let ai_memory = app.state::<AiMemoryProcess>();
+    remove_profile(&root, index, profile_id, &ai_memory, &OsSecretStore)
+}
+
+fn remove_profile(
+    root: &Path,
+    mut index: ProfilesIndex,
+    profile_id: &str,
+    ai_memory: &AiMemoryProcess,
+    secrets: &impl SecretStore,
+) -> Result<ProfilesState, String> {
     if index.profiles.len() <= 1 {
         return Err("cannot delete the last local profile".to_string());
     }
@@ -478,14 +501,7 @@ pub fn delete_profile_state(app: &AppHandle, profile_id: &str) -> Result<Profile
         .find(|profile| profile.id == profile_id)
         .cloned()
         .ok_or_else(|| format!("profile not found: {profile_id}"))?;
-    let target_dir = profile_dir(&root, &target.id);
-    if target_dir.join("github_sync.json").is_file() {
-        crate::secure_store::delete_github_sync_token(&target.id)?;
-    }
-    crate::spotify::delete_profile_secrets(&target.id)?;
-    if target_dir.exists() {
-        fs::remove_dir_all(&target_dir).map_err(|error| error.to_string())?;
-    }
+    let target_dir = profile_dir(root, &target.id);
 
     index.profiles.retain(|profile| profile.id != profile_id);
     if index.active_profile_id == profile_id {
@@ -503,8 +519,32 @@ pub fn delete_profile_state(app: &AppHandle, profile_id: &str) -> Result<Profile
             }
         }
     }
-    ensure_profile_dirs(&root, &index)?;
-    write_profiles_index(&root, &index)?;
+    // A running managed ai-memory server holds its binary and store open, which fails the removal
+    // on Windows.
+    crate::ai_memory::stop_unless_serving(ai_memory, &profile_dir(root, &index.active_profile_id));
+    if target_dir.exists() {
+        fs::remove_dir_all(&target_dir).map_err(|error| error.to_string())?;
+    }
+    ensure_profile_dirs(root, &index)?;
+    write_profiles_index(root, &index)?;
+    // Last, so a failure above leaves the profile listed with its credentials. The GitHub token goes
+    // whether or not `github_sync.json` is still there: a removal that failed partway may have taken
+    // that file, and deleting a missing entry succeeds. The profile is gone by now, so a secret that
+    // will not delete is logged rather than failing the command: an error would keep the deleted
+    // profile on screen, and its next save would land in the profile that is now active.
+    for kind in [
+        SecretKind::GithubSyncToken,
+        SecretKind::SpotifyClientSecret,
+        SecretKind::SpotifyAccessToken,
+        SecretKind::SpotifyRefreshToken,
+    ] {
+        if secrets.delete(profile_id, kind).is_err() {
+            let _ = crate::logging::record_app_event(
+                "profiles.delete.secret_left".to_string(),
+                format!("profile={profile_id} kind={kind:?}"),
+            );
+        }
+    }
     Ok(profiles_state_from(&index))
 }
 
@@ -563,5 +603,213 @@ fn normalize_profile_name(name: Option<&str>) -> String {
         "Untitled profile".to_string()
     } else {
         trimmed.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ai_memory::idle_child;
+    use crate::secure_store::SecureStoreError;
+    use std::cell::RefCell;
+    use std::sync::Mutex;
+
+    const EVERY_SECRET: [SecretKind; 4] = [
+        SecretKind::GithubSyncToken,
+        SecretKind::SpotifyClientSecret,
+        SecretKind::SpotifyAccessToken,
+        SecretKind::SpotifyRefreshToken,
+    ];
+
+    /// Records every secret it deletes, in order, and refuses to delete `fails_on`.
+    #[derive(Default)]
+    struct DeletedSecrets {
+        deleted: RefCell<Vec<SecretKind>>,
+        fails_on: Option<SecretKind>,
+    }
+
+    impl SecretStore for DeletedSecrets {
+        fn get(&self, _: &str, _: SecretKind) -> Result<Option<String>, SecureStoreError> {
+            Ok(None)
+        }
+
+        fn set(&self, _: &str, _: SecretKind, _: &str) -> Result<(), SecureStoreError> {
+            Ok(())
+        }
+
+        fn delete(&self, _: &str, kind: SecretKind) -> Result<(), SecureStoreError> {
+            if self.fails_on == Some(kind) {
+                return Err(SecureStoreError::Unavailable("delete"));
+            }
+            self.deleted.borrow_mut().push(kind);
+            Ok(())
+        }
+    }
+
+    /// A data root holding `default` and `doomed`, with `doomed` set up for GitHub sync.
+    fn fixture(label: &str, active: &str) -> (PathBuf, ProfilesIndex) {
+        let root =
+            std::env::temp_dir().join(format!("alethe-profiles-{label}-{}", nanoid::nanoid!(8)));
+        let meta = |id: &str| ProfileMeta {
+            id: id.to_string(),
+            name: id.to_string(),
+            created_at_ms: 1,
+            last_used_at_ms: 1,
+        };
+        let index = ProfilesIndex {
+            version: 1,
+            active_profile_id: active.to_string(),
+            profiles: vec![meta(DEFAULT_PROFILE_ID), meta("doomed")],
+        };
+        ensure_profile_dirs(&root, &index).unwrap();
+        write_profiles_index(&root, &index).unwrap();
+        fs::write(profile_dir(&root, "doomed").join("github_sync.json"), "{}").unwrap();
+        (root, index)
+    }
+
+    /// A managed ai-memory server for `profile_id`, running from the profile's `tools` folder like
+    /// the real binary — on Windows that blocks removing the profile folder until it is stopped.
+    fn serving(root: &Path, profile_id: &str) -> AiMemoryProcess {
+        let profile = profile_dir(root, profile_id);
+        let child = idle_child(&profile.join("tools").join("ai-memory"));
+        let data_dir = profile.join("ai-memory-data");
+        AiMemoryProcess(Mutex::new(Some((
+            child,
+            Some(data_dir.to_string_lossy().into_owned()),
+        ))))
+    }
+
+    fn listed(root: &Path, profile_id: &str) -> bool {
+        let index = load_index(root).unwrap();
+        index
+            .profiles
+            .iter()
+            .any(|profile| profile.id == profile_id)
+    }
+
+    #[test]
+    fn switching_profiles_stops_the_server_of_the_profile_left_behind() {
+        let (root, index) = fixture("switch", "doomed");
+        let ai_memory = serving(&root, "doomed");
+
+        activate_profile(&root, index, DEFAULT_PROFILE_ID, &ai_memory).unwrap();
+
+        assert!(ai_memory.0.lock().unwrap().is_none());
+        assert_eq!(
+            load_index(&root).unwrap().active_profile_id,
+            DEFAULT_PROFILE_ID
+        );
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn deleting_a_profile_stops_its_server_and_removes_folder_entry_and_secrets() {
+        let (root, index) = fixture("delete", "doomed");
+        let ai_memory = serving(&root, "doomed");
+        let secrets = DeletedSecrets::default();
+
+        let state = remove_profile(&root, index, "doomed", &ai_memory, &secrets).unwrap();
+
+        assert!(ai_memory.0.lock().unwrap().is_none());
+        assert!(!profile_dir(&root, "doomed").exists());
+        assert!(!listed(&root, "doomed"));
+        assert_eq!(state.active_profile_id, DEFAULT_PROFILE_ID);
+        assert_eq!(
+            load_index(&root).unwrap().active_profile_id,
+            DEFAULT_PROFILE_ID
+        );
+        assert_eq!(*secrets.deleted.borrow(), EVERY_SECRET);
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A removal that failed partway may already have taken `github_sync.json` with it; retrying
+    /// must still delete the GitHub token.
+    #[test]
+    fn a_profile_whose_github_sync_json_is_gone_still_has_its_github_token_deleted() {
+        let (root, index) = fixture("no-sync-file", DEFAULT_PROFILE_ID);
+        fs::remove_file(profile_dir(&root, "doomed").join("github_sync.json")).unwrap();
+        let secrets = DeletedSecrets::default();
+
+        remove_profile(
+            &root,
+            index,
+            "doomed",
+            &AiMemoryProcess::default(),
+            &secrets,
+        )
+        .unwrap();
+
+        assert_eq!(*secrets.deleted.borrow(), EVERY_SECRET);
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// By the time secrets are deleted the profile is gone from disk and from the index. An error
+    /// then would leave the window showing the deleted profile, and its next save would land in the
+    /// profile that is now active.
+    #[test]
+    fn a_keyring_failure_after_the_profile_is_gone_still_succeeds_and_deletes_the_rest() {
+        for failing in [SecretKind::GithubSyncToken, SecretKind::SpotifyClientSecret] {
+            let (root, index) = fixture("keyring-fails", "doomed");
+            let secrets = DeletedSecrets {
+                fails_on: Some(failing),
+                ..Default::default()
+            };
+
+            let state = remove_profile(
+                &root,
+                index,
+                "doomed",
+                &AiMemoryProcess::default(),
+                &secrets,
+            )
+            .unwrap_or_else(|error| panic!("failing on {failing:?}: {error}"));
+
+            assert_eq!(state.active_profile_id, DEFAULT_PROFILE_ID);
+            assert!(!listed(&root, "doomed"));
+            assert!(!profile_dir(&root, "doomed").exists());
+            let rest: Vec<SecretKind> = EVERY_SECRET
+                .into_iter()
+                .filter(|kind| *kind != failing)
+                .collect();
+            assert_eq!(*secrets.deleted.borrow(), rest, "failing on {failing:?}");
+            fs::remove_dir_all(&root).unwrap();
+        }
+    }
+
+    /// Windows only: a file opened without sharing is what makes `remove_dir_all` fail there, and
+    /// there is no equally deterministic way to fail it elsewhere for every user (root ignores a
+    /// read-only directory on Unix).
+    #[cfg(windows)]
+    #[test]
+    fn a_failed_removal_keeps_the_profile_listed_with_its_credentials() {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        let (root, index) = fixture("locked", "doomed");
+        let held = fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .share_mode(0)
+            .open(profile_dir(&root, "doomed").join("held.db"))
+            .unwrap();
+        let secrets = DeletedSecrets::default();
+
+        let result = remove_profile(
+            &root,
+            index,
+            "doomed",
+            &AiMemoryProcess::default(),
+            &secrets,
+        );
+
+        assert!(result.is_err());
+        assert!(
+            secrets.deleted.borrow().is_empty(),
+            "credentials must survive a failed removal"
+        );
+        assert!(listed(&root, "doomed"));
+        assert_eq!(load_index(&root).unwrap().active_profile_id, "doomed");
+        assert!(profile_dir(&root, "doomed").exists());
+        drop(held);
+        fs::remove_dir_all(&root).unwrap();
     }
 }

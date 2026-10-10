@@ -10,55 +10,65 @@
       "janela": "assistida",
       "depende_de": [],
       "worktrees": [],
-      "atualizado_em": "2026-10-09",
+      "atualizado_em": "2026-10-10",
       "tarefas": [
         {
           "id": "TODO-01",
           "titulo": "Lista principal mostra as tarefas da campanha ativa, com seletor de fonte (campanha ou Meus todos)",
           "nivel": "T2",
-          "estado": "em execução",
+          "estado": "concluída",
           "depende_de": [],
-          "origem": "USER"
+          "origem": "USER",
+          "evidencia": "codex_read 10/10: .workflow/local/codex-reads/alethe-registry-todo-1-answer.md",
+          "resultado": "Gate 2 do dono em 10/10/2026: concluída com o escopo atual; entregue por #43, depois o seletor de fonte saiu na #80; a lista virou as abas Tasks, Night e Personal (verificado em .workflow/local/codex-reads/alethe-registry-todo-1-answer.md)."
         },
         {
           "id": "TODO-02",
           "titulo": "Adicionar tarefa pela Todo List grava no registro, com ID automático, trava e escrita atômica",
           "nivel": "T2",
-          "estado": "em execução",
+          "estado": "concluída",
           "depende_de": [
             "TODO-01"
           ],
-          "origem": "USER"
+          "origem": "USER",
+          "evidencia": "codex_read 10/10: .workflow/local/codex-reads/alethe-registry-todo-1-answer.md",
+          "resultado": "Gate 2 do dono em 10/10/2026: concluída; entregue por #43 (verificado em .workflow/local/codex-reads/alethe-registry-todo-1-answer.md)."
         },
         {
           "id": "TODO-03",
           "titulo": "Caixa de seleção conclui a tarefa (Gate 2 do usuário), com desfazer",
           "nivel": "T1",
-          "estado": "em execução",
+          "estado": "concluída",
           "depende_de": [
             "TODO-01"
           ],
-          "origem": "USER"
+          "origem": "USER",
+          "evidencia": "codex_read 10/10: .workflow/local/codex-reads/alethe-registry-todo-1-answer.md",
+          "resultado": "Gate 2 do dono em 10/10/2026: concluída; entregue por #43 (verificado em .workflow/local/codex-reads/alethe-registry-todo-1-answer.md)."
         },
         {
           "id": "TODO-04",
           "titulo": "Abas Ativas e Concluídas e barra de progresso seguem a campanha ativa",
           "nivel": "T1",
-          "estado": "em execução",
+          "estado": "concluída",
           "depende_de": [
             "TODO-01"
           ],
-          "origem": "USER"
+          "origem": "USER",
+          "evidencia": "codex_read 10/10: .workflow/local/codex-reads/alethe-registry-todo-1-answer.md",
+          "resultado": "Gate 2 do dono em 10/10/2026: concluída com o escopo atual; entregue por #43, depois as abas Ativas/Concluídas saíram na #80; abertas e concluídas ficam dentro da campanha (verificado em .workflow/local/codex-reads/alethe-registry-todo-1-answer.md)."
         },
         {
           "id": "TODO-05",
           "titulo": "Configurações: fonte da lista; pasta de armazenamento só para os todos pessoais",
           "nivel": "T1",
-          "estado": "em execução",
+          "estado": "concluída",
           "depende_de": [
             "TODO-01"
           ],
-          "origem": "USER"
+          "origem": "USER",
+          "evidencia": "codex_read 10/10: .workflow/local/codex-reads/alethe-registry-todo-1-answer.md",
+          "resultado": "Gate 2 do dono em 10/10/2026: concluída com o escopo atual; entregue por #43, depois a configuração de fonte saiu na #80; a pasta dos todos pessoais continua (verificado em .workflow/local/codex-reads/alethe-registry-todo-1-answer.md)."
         },
         {
           "id": "TODO-06",
@@ -135,232 +145,241 @@
           "id": "TODO-13",
           "titulo": "Continuar não abre a aba da campanha ativa (terminal desativado conta como Ativa)",
           "nivel": "T1",
-          "estado": "em execução",
+          "estado": "concluída",
           "depende_de": [],
           "origem": "USER",
           "evidencia": "PR #61 integrado na dev; revisão Codex (1 MAJOR, 2 MINOR corrigidos); vitest 941",
-          "resultado": "aguarda o Gate 2 do usuário"
+          "resultado": "Gate 2 do dono em 10/10/2026: concluída com o escopo atual; entregue por #61, depois terminal desativado não conta mais como ativo; Continuar abre sessão nova (#100/#101) (verificado em .workflow/local/codex-reads/alethe-registry-todo-1-answer.md)."
         },
         {
           "id": "TODO-14",
           "titulo": "Subseções de Campanhas recuadas sob o cabeçalho principal",
           "nivel": "T1",
-          "estado": "em execução",
+          "estado": "concluída",
           "depende_de": [],
           "origem": "USER",
           "evidencia": "PR #61 integrado na dev; revisão Codex (1 MAJOR, 2 MINOR corrigidos); vitest 941",
-          "resultado": "aguarda o Gate 2 do usuário"
+          "resultado": "Gate 2 do dono em 10/10/2026: concluída; entregue por #61 (verificado em .workflow/local/codex-reads/alethe-registry-todo-1-answer.md)."
         },
         {
           "id": "TODO-15",
           "titulo": "Entradas aguardando você no cartão da Noite com ações para concluir",
           "nivel": "T2",
-          "estado": "em execução",
+          "estado": "concluída",
           "depende_de": [],
           "origem": "USER",
           "evidencia": "PR #61 integrado na dev; revisão Codex (1 MAJOR, 2 MINOR corrigidos); vitest 941",
-          "resultado": "aguarda o Gate 2 do usuário"
+          "resultado": "Gate 2 do dono em 10/10/2026: concluída; entregue por #61 (verificado em .workflow/local/codex-reads/alethe-registry-todo-1-answer.md)."
         },
         {
           "id": "TODO-16",
           "titulo": "Ponto da campanha rodando pisca em verde a cada 1,5 s",
           "nivel": "T1",
-          "estado": "em execução",
+          "estado": "concluída",
           "depende_de": [],
           "origem": "USER",
           "evidencia": "PR #61 integrado na dev; revisão Codex (1 MAJOR, 2 MINOR corrigidos); vitest 941",
-          "resultado": "aguarda o Gate 2 do usuário"
+          "resultado": "Gate 2 do dono em 10/10/2026: concluída; entregue por #61 (verificado em .workflow/local/codex-reads/alethe-registry-todo-1-answer.md)."
         },
         {
           "id": "TODO-17",
           "titulo": "Aba Todo em seções Pendentes, Ativa e Campanhas (Em andamento, Não iniciadas, Concluídas)",
           "nivel": "T2",
-          "estado": "em execução",
+          "estado": "concluída",
           "depende_de": [],
           "origem": "USER",
           "evidencia": "PR #63 integrado na dev (2918b46); revisão Codex (2 MINOR, 1 corrigido); vitest 945",
-          "resultado": "aguarda o Gate 2 do usuário"
+          "resultado": "Gate 2 do dono em 10/10/2026: concluída com o escopo atual; entregue por #63, depois Concluídas virou seção irmã de Campanhas na #80 (verificado em .workflow/local/codex-reads/alethe-registry-todo-1-answer.md)."
         },
         {
           "id": "TODO-18",
           "titulo": "Abrir evidência que é pasta ou que mudou de lugar",
           "nivel": "T1",
-          "estado": "em execução",
+          "estado": "concluída",
           "depende_de": [],
           "origem": "USER",
           "evidencia": "PR #65 integrado na dev; revisão Codex (2 MAJOR, 1 MINOR corrigidos); vitest 954",
-          "resultado": "aguarda o Gate 2 do usuário"
+          "resultado": "Gate 2 do dono em 10/10/2026: concluída; entregue por #65 (verificado em .workflow/local/codex-reads/alethe-registry-todo-1-answer.md)."
         },
         {
           "id": "TODO-19",
           "titulo": "Tarefas aguardando o Gate 2 clicáveis, com as ações da noite",
           "nivel": "T1",
-          "estado": "em execução",
+          "estado": "concluída",
           "depende_de": [],
           "origem": "USER",
           "evidencia": "PR #65 integrado na dev; revisão Codex (2 MAJOR, 1 MINOR corrigidos); vitest 954",
-          "resultado": "aguarda o Gate 2 do usuário"
+          "resultado": "Gate 2 do dono em 10/10/2026: concluída; entregue por #65 (verificado em .workflow/local/codex-reads/alethe-registry-todo-1-answer.md)."
         },
         {
           "id": "TODO-20",
           "titulo": "Reordenar as seções do Todo arrastando na vertical",
           "nivel": "T2",
-          "estado": "em execução",
+          "estado": "concluída",
           "depende_de": [],
           "origem": "USER",
           "evidencia": "PR #65 integrado na dev; revisão Codex (2 MAJOR, 1 MINOR corrigidos); vitest 954",
-          "resultado": "aguarda o Gate 2 do usuário"
+          "resultado": "Gate 2 do dono em 10/10/2026: concluída; entregue por #65 (verificado em .workflow/local/codex-reads/alethe-registry-todo-1-answer.md)."
         },
         {
           "id": "TODO-21",
           "titulo": "Concluir preserva o resultado anterior em vez de substituí-lo",
           "nivel": "T1",
-          "estado": "em execução",
+          "estado": "concluída",
           "depende_de": [],
           "origem": "USER",
           "evidencia": "PR #66 integrado na dev; revisão Codex sem achados; vitest 956",
-          "resultado": "aguarda o Gate 2 do usuário"
+          "resultado": "Gate 2 do dono em 10/10/2026: concluída; entregue por #66 (verificado em .workflow/local/codex-reads/alethe-registry-todo-1-answer.md)."
         },
         {
           "id": "TODO-22",
           "titulo": "Continuar no terminal sem aba abre o Claude Code com a Orquestração",
           "nivel": "T1",
-          "estado": "em execução",
+          "estado": "concluída",
           "depende_de": [],
           "origem": "USER",
           "evidencia": "PR #69 integrado na dev; revisão Codex com achados corrigidos; testes verdes",
-          "resultado": "aguarda o Gate 2 do usuário"
+          "resultado": "Gate 2 do dono em 10/10/2026: concluída com o escopo atual; entregue por #69, depois sem aba, Continuar oferece a escolha da sessão (#101) (verificado em .workflow/local/codex-reads/alethe-registry-todo-1-answer.md)."
         },
         {
           "id": "TODO-23",
           "titulo": "Controle da campanha ativa: Continuar, Pausar e Cancelar",
           "nivel": "T2",
-          "estado": "em execução",
+          "estado": "concluída",
           "depende_de": [],
           "origem": "USER",
           "evidencia": "PR #72 integrado na dev; 2 revisões Codex (5+3 MAJOR corrigidos); vitest 997",
-          "resultado": "aguarda o Gate 2 do usuário"
+          "resultado": "Gate 2 do dono em 10/10/2026: concluída; entregue por #72 (verificado em .workflow/local/codex-reads/alethe-registry-todo-1-answer.md)."
         },
         {
           "id": "TODO-24",
           "titulo": "Continuar campanha retoma pela primeira tarefa pendente quando nada está pronto",
           "nivel": "T1",
-          "estado": "em execução",
+          "estado": "concluída",
           "depende_de": [],
           "origem": "USER",
           "evidencia": "PR #73 integrado na dev; revisão Codex (2 MINOR, 1 corrigido + defeito do Ctrl+N achado pelo lint); vitest 1003",
-          "resultado": "aguarda o Gate 2 do usuário"
+          "resultado": "Gate 2 do dono em 10/10/2026: concluída; entregue por #73 (verificado em .workflow/local/codex-reads/alethe-registry-todo-1-answer.md)."
         },
         {
           "id": "TODO-25",
           "titulo": "Prompt inicial perdido na remontagem e campanha nunca aparece como rodando",
           "nivel": "T2",
-          "estado": "em execução",
+          "estado": "concluída",
           "depende_de": [],
           "origem": "USER",
           "evidencia": "PR #77 integrado na dev; revisões Codex com achados corrigidos; testes verdes",
-          "resultado": "aguarda o Gate 2 do usuário"
+          "resultado": "Gate 2 do dono em 10/10/2026: concluída; entregue por #77 (verificado em .workflow/local/codex-reads/alethe-registry-todo-1-answer.md)."
         },
         {
           "id": "TODO-26",
           "titulo": "Detalhe da tarefa ao abrir a linha: resultado, evidência, dependências, workers, noite e achados",
           "nivel": "T2",
-          "estado": "em execução",
+          "estado": "concluída",
           "depende_de": [],
           "origem": "USER",
           "evidencia": "PR #76 integrado na dev; revisões Codex com achados corrigidos; testes verdes",
-          "resultado": "aguarda o Gate 2 do usuário"
+          "resultado": "Gate 2 do dono em 10/10/2026: concluída; entregue por #76 (verificado em .workflow/local/codex-reads/alethe-registry-todo-1-answer.md)."
         },
         {
           "id": "TODO-27",
           "titulo": "Passos de aceite por tarefa: registro, CLI campanhas.py passo e progresso no Todo",
           "nivel": "T2",
-          "estado": "em execução",
+          "estado": "concluída",
           "depende_de": [
             "TODO-26"
           ],
           "origem": "USER",
-          "resultado": "aguarda o Gate 2 do usuário; PR #84 mergeado (2a1631d), laboratório 49e9d01"
+          "resultado": "Gate 2 do dono em 10/10/2026: concluída; entregue por #84 (CLI campanhas.py passo no laboratório) (verificado em .workflow/local/codex-reads/alethe-registry-todo-1-answer.md).; PR #84 mergeado (2a1631d), laboratório 49e9d01",
+          "evidencia": "codex_read 10/10: .workflow/local/codex-reads/alethe-registry-todo-1-answer.md"
         },
         {
           "id": "TODO-28",
           "titulo": "Several active campaigns when none waits on another; one subsection per campaign under Current",
           "nivel": "T2",
-          "estado": "em execução",
+          "estado": "concluída",
           "depende_de": [],
           "origem": "USER",
-          "resultado": "aguarda o Gate 2 do usuário; PR #80 mergeado (ab9f839)"
+          "resultado": "Gate 2 do dono em 10/10/2026: concluída; entregue por #80 (verificado em .workflow/local/codex-reads/alethe-registry-todo-1-answer.md).; PR #80 mergeado (ab9f839)",
+          "evidencia": "codex_read 10/10: .workflow/local/codex-reads/alethe-registry-todo-1-answer.md"
         },
         {
           "id": "TODO-29",
           "titulo": "Todo panel in three tabs (Tasks, Night, Personal) with one place per item",
           "nivel": "T2",
-          "estado": "em execução",
+          "estado": "concluída",
           "depende_de": [
             "TODO-28"
           ],
           "origem": "USER",
-          "resultado": "aguarda o Gate 2 do usuário; PR #80 mergeado (ab9f839)"
+          "resultado": "Gate 2 do dono em 10/10/2026: concluída; entregue por #80 (verificado em .workflow/local/codex-reads/alethe-registry-todo-1-answer.md).; PR #80 mergeado (ab9f839)",
+          "evidencia": "codex_read 10/10: .workflow/local/codex-reads/alethe-registry-todo-1-answer.md"
         },
         {
           "id": "TODO-30",
           "titulo": "Active campaign: controls by open tab, task result as step, leaner subsection; Night progress and dots",
           "nivel": "T2",
-          "estado": "em execução",
+          "estado": "concluída",
           "depende_de": [
             "TODO-29"
           ],
           "origem": "USER",
-          "resultado": "aguarda o Gate 2 do usuário; PR #82 mergeado (a52ec24)"
+          "resultado": "Gate 2 do dono em 10/10/2026: concluída com o escopo atual; entregue por #82, depois a barra de progresso segue a campanha selecionada rodando, não a última noite (verificado em .workflow/local/codex-reads/alethe-registry-todo-1-answer.md).; PR #82 mergeado (a52ec24)",
+          "evidencia": "codex_read 10/10: .workflow/local/codex-reads/alethe-registry-todo-1-answer.md"
         },
         {
           "id": "TODO-31",
           "titulo": "Último recado do agente em Ativas e pergunta sem resposta em Pendentes (transcript_snapshot)",
           "nivel": "T2",
-          "estado": "em execução",
+          "estado": "concluída",
           "depende_de": [
             "TODO-27"
           ],
           "origem": "USER",
-          "resultado": "aguarda o Gate 2 do usuário; PR #88 mergeado (b2bc3a4)"
+          "resultado": "Gate 2 do dono em 10/10/2026: concluída; entregue por #88, #90 (verificado em .workflow/local/codex-reads/alethe-registry-todo-1-answer.md).; PR #88 mergeado (b2bc3a4)",
+          "evidencia": "codex_read 10/10: .workflow/local/codex-reads/alethe-registry-todo-1-answer.md"
         },
         {
           "id": "TODO-32",
           "titulo": "Erro de leitura do registro visível, com motivo e Tentar de novo (não confundir com sem registro)",
           "nivel": "T1",
-          "estado": "em execução",
+          "estado": "concluída",
           "depende_de": [],
           "origem": "USER",
-          "resultado": "aguarda o Gate 2 do usuário; PR #95 mergeado (dcd537a)"
+          "resultado": "Gate 2 do dono em 10/10/2026: concluída; entregue por #95 (verificado em .workflow/local/codex-reads/alethe-registry-todo-1-answer.md).; PR #95 mergeado (dcd537a)",
+          "evidencia": "codex_read 10/10: .workflow/local/codex-reads/alethe-registry-todo-1-answer.md"
         },
         {
           "id": "TODO-33",
           "titulo": "Projeto ancorado no repositório principal, com seletor de worktree e marca de defasada; Markdown segue a escolha",
           "nivel": "T2",
-          "estado": "em execução",
+          "estado": "concluída",
           "depende_de": [],
           "origem": "USER",
-          "resultado": "aguarda o Gate 2 do usuário; PR #96 mergeado (c12bdb0), 4 revisões"
+          "resultado": "Gate 2 do dono em 10/10/2026: concluída; entregue por #96 (verificado em .workflow/local/codex-reads/alethe-registry-todo-1-answer.md).; PR #96 mergeado (c12bdb0), 4 revisões",
+          "evidencia": "codex_read 10/10: .workflow/local/codex-reads/alethe-registry-todo-1-answer.md"
         },
         {
           "id": "TODO-34",
           "titulo": "Guia Pessoal: lista única com o projeto como etiqueta, sem filtros, concluídas recolhidas",
           "nivel": "T1",
-          "estado": "em execução",
+          "estado": "concluída",
           "depende_de": [
             "TODO-32"
           ],
           "origem": "USER",
-          "resultado": "aguarda o Gate 2 do usuário; PR #95 mergeado (dcd537a)"
+          "resultado": "Gate 2 do dono em 10/10/2026: concluída; entregue por #95 (verificado em .workflow/local/codex-reads/alethe-registry-todo-1-answer.md).; PR #95 mergeado (dcd537a)",
+          "evidencia": "codex_read 10/10: .workflow/local/codex-reads/alethe-registry-todo-1-answer.md"
         },
         {
           "id": "TODO-35",
           "titulo": "Projeto ativo nulo com a aba do projeto aberta: Todo em branco (corrigir na origem e reparar ao abrir)",
           "nivel": "T2",
-          "estado": "em execução",
+          "estado": "concluída",
           "depende_de": [],
           "origem": "USER",
-          "resultado": "aguarda o Gate 2 do usuário; PR #98 mergeado (8089f29)"
+          "resultado": "Gate 2 do dono em 10/10/2026: concluída; entregue por #98 (verificado em .workflow/local/codex-reads/alethe-registry-todo-1-answer.md).; PR #98 mergeado (8089f29)",
+          "evidencia": "codex_read 10/10: .workflow/local/codex-reads/alethe-registry-todo-1-answer.md"
         },
         {
           "id": "TODO-36",

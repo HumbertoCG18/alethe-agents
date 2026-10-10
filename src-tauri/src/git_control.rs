@@ -1643,6 +1643,7 @@ mod wsl_git_argv_tests {
 
     #[test]
     fn a_wsl_cwd_gets_the_git_unc_safe_directory_value_for_its_own_repository() {
+        let _guard = TOGGLE_LOCK.lock().unwrap();
         assert_eq!(
             safe_directory_value(r"\\wsl.localhost\Ubuntu-22.04\home\dev\projects\app"),
             Some("%(prefix)///wsl.localhost/Ubuntu-22.04/home/dev/projects/app".to_string())
@@ -1655,6 +1656,7 @@ mod wsl_git_argv_tests {
 
     #[test]
     fn a_canonicalized_extended_length_cwd_still_gets_its_safe_directory_value() {
+        let _guard = TOGGLE_LOCK.lock().unwrap();
         assert_eq!(
             safe_directory_value(r"\\?\UNC\wsl.localhost\Ubuntu-22.04\home\dev\projects\app"),
             Some("%(prefix)///wsl.localhost/Ubuntu-22.04/home/dev/projects/app".to_string())
@@ -1687,6 +1689,7 @@ mod wsl_git_argv_tests {
 
     #[test]
     fn the_safe_directory_value_is_keyed_on_the_repository_root_not_the_cwd() {
+        let _guard = TOGGLE_LOCK.lock().unwrap();
         let root = r"\\wsl.localhost\Ubuntu\home\dev\projects\app";
         assert_eq!(
             safe_directory_value_in(
@@ -1716,6 +1719,7 @@ mod wsl_git_argv_tests {
 
     #[test]
     fn the_safe_directory_option_precedes_the_subcommand_and_the_caller_args_survive_intact() {
+        let _guard = TOGGLE_LOCK.lock().unwrap();
         assert_eq!(
             git_argv(
                 r"\\wsl.localhost\Ubuntu-22.04\home\dev\projects\app",

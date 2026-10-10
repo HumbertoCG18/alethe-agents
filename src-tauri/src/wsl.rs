@@ -83,6 +83,8 @@ fn clear_probe_caches() {
     LOGIN_SHELL_CACHE.clear();
 }
 
+/// Held by every test that flips the integration toggle or relies on it being on (any WSL path
+/// through `wsl_target`), since tests share the process-wide toggle.
 #[cfg(test)]
 pub(crate) static TOGGLE_LOCK: Mutex<()> = Mutex::new(());
 
@@ -1127,6 +1129,8 @@ mod tests {
 
     #[test]
     fn an_unresolved_command_falls_back_to_the_distro_shell_with_quoted_args() {
+        // The toggle tests seed the CLI cache with a resolved `claude` for Ubuntu.
+        let _guard = TOGGLE_LOCK.lock().unwrap();
         let extras = vec!["--resume".to_string(), "it's me".to_string()];
         let builder = command_builder_for_wsl(&ubuntu(), Some("claude"), &extras, None, None);
         assert_eq!(

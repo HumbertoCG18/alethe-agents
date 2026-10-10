@@ -267,7 +267,7 @@ mod tests {
     use super::*;
     use std::fs;
     use std::path::PathBuf;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::time::SystemTime;
 
     const ORIGINAL: &str = "{\n  \"campanhas\": []\n}\n";
 
@@ -339,14 +339,11 @@ mod tests {
         cleanup(&registry);
     }
 
-    /// A fresh `<temp>/<unique>/.workflow/campanhas.json` holding `ORIGINAL`.
+    /// A fresh `<temp>/<unique>/.workflow/campanhas.json` holding `ORIGINAL`. Not keyed on the
+    /// clock: macOS reads it in microseconds, so tests started together shared a folder.
     fn registry() -> PathBuf {
-        let suffix = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
         let folder = std::env::temp_dir()
-            .join(format!("alethe-campaign-registry-{suffix}"))
+            .join(format!("alethe-campaign-registry-{}", nanoid::nanoid!()))
             .join(".workflow");
         fs::create_dir_all(&folder).unwrap();
         let path = folder.join("campanhas.json");

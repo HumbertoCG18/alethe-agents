@@ -281,6 +281,7 @@ mod tests {
 
     #[test]
     fn a_wsl_cwd_runs_the_guest_binary_through_wsl_exe_with_the_guest_directory() {
+        let _guard = crate::wsl::TOGGLE_LOCK.lock().unwrap();
         let plan = opencode_command_plan(
             r"\\wsl.localhost\Ubuntu\home\dev\projects\app",
             "/home/dev/.opencode/bin/opencode",
@@ -334,6 +335,7 @@ mod tests {
 
     #[test]
     fn a_wsl_cwd_is_matched_against_the_guest_directory_the_cli_reports() {
+        let _guard = crate::wsl::TOGGLE_LOCK.lock().unwrap();
         assert_eq!(
             session_directory_target(r"\\wsl.localhost\Ubuntu\home\dev\projects\app\"),
             "/home/dev/projects/app"
@@ -347,6 +349,7 @@ mod tests {
 
     #[test]
     fn a_wsl_session_matches_only_the_guest_directory_it_was_started_in() {
+        let _guard = crate::wsl::TOGGLE_LOCK.lock().unwrap();
         let cwd = r"\\wsl.localhost\Ubuntu\home\dev\projects\app";
         assert!(session_directory_matches(cwd, "/home/dev/projects/app"));
         assert!(session_directory_matches(cwd, "/home/dev/projects/app/"));

@@ -546,6 +546,11 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ### Fixed
 
+- **CI no longer fails at random on unrelated changes.** Tests that read the WSL integration setting
+  now hold the lock the tests that switch it off hold; registry and worktree tests no longer share
+  a temporary folder when macOS's microsecond clock gives two of them the same name; the file
+  watcher test no longer counts a write made before its watch started; and the Codex MCP bridge
+  and summary process tests only time out on a hang, not on a slow runner.
 - **Claude usage says why it could not be read, and asks less often.** The usage card names the
   cause of a failed read: rate limited (with the time to try again), sign-in expired, offline, or
   unavailable. Every reader, including the orchestrator's quota warnings, shares one read per

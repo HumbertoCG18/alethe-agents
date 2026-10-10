@@ -960,11 +960,9 @@ mod tests {
     use super::worktree_unlock_inner as worktree_unlock;
 
     fn temp_repo() -> PathBuf {
-        let suffix = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!("alethe-worktrees-{suffix}"));
+        // Not keyed on the clock: macOS reads it in microseconds, so tests started together
+        // would share a repository.
+        let root = std::env::temp_dir().join(format!("alethe-worktrees-{}", nanoid::nanoid!()));
         fs::create_dir_all(&root).unwrap();
         let run = |args: &[&str]| checked_output(&root, args).unwrap();
         run(&["init"]);

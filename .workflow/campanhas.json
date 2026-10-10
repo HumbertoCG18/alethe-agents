@@ -604,35 +604,38 @@
       "worktrees": [
         "alethe-agents-agy"
       ],
-      "atualizado_em": "2026-10-04",
+      "atualizado_em": "2026-10-10",
       "tarefas": [
         {
           "id": "AGY-01",
           "titulo": "Retomar a implementação parada na worktree (upstream #218)",
-          "nivel": "T2",
-          "estado": "proposta",
+          "nivel": "T3",
+          "estado": "em execução",
           "depende_de": [],
-          "origem": "USER"
+          "origem": "USER",
+          "resultado": "Gate 1 do dono em 10/10/2026: port seletivo do WIP para a dev (codex_read agy-01-reintegracao-1, conferido), T3 por permissões; começa medindo o contrato do agy 1.3.3 (stream-json, accept-edits, sandbox)."
         },
         {
           "id": "AGY-02",
           "titulo": "Orquestrador AGY: planejador e revisor Opus 5.5, por último na ordem Claude Code, Codex, AGY",
           "nivel": "T2",
-          "estado": "proposta",
+          "estado": "bloqueada",
           "depende_de": [
             "AGY-01"
           ],
-          "origem": "USER"
+          "origem": "USER",
+          "resultado": "Fora do escopo da upstream #218 (planejador AGY: a config MCP do agy é global); decisão do dono em 10/10/2026. Reavaliar depois dos workers AGY."
         },
         {
           "id": "AGY-03",
-          "titulo": "Workers AGY de pesquisa e auditoria (só leitura) com Sonnet 5.5 e Opus 5.5, esforço pelo id do modelo",
+          "titulo": "Workers AGY por papel: implementação T1/T2 (Sonnet/Opus 5.5) e escrita/auditoria (Gemini 3.8 Flash), modelo e esforço por papel",
           "nivel": "T2",
           "estado": "proposta",
           "depende_de": [
             "AGY-01"
           ],
-          "origem": "USER"
+          "origem": "USER",
+          "resultado": "Reescrita em 10/10/2026 pela divisão aprovada (references/routing.md, laboratório ea1499a): Claude do AGY implementa T1/T2, Gemini 3.8 Flash escreve e audita; T3 não usa o AGY."
         }
       ]
     },

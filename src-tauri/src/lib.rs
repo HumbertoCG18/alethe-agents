@@ -874,22 +874,18 @@ mod tests {
 
     #[test]
     fn the_quit_watchdog_forces_the_exit_only_once_its_wait_runs_out() {
-        let (fired, exits) = std::sync::mpsc::channel();
-        spawn_quit_watchdog(std::time::Duration::from_millis(300), move || {
-            let _ = fired.send(());
+        let wait = Duration::from_millis(300);
+        let (fired, exits) = channel();
+        // Timed from before the spawn, not by a window opened after it: a test thread descheduled
+        // past the wait saw an on-time exit as an early one.
+        let started = Instant::now();
+        spawn_quit_watchdog(wait, move || {
+            let _ = fired.send(Instant::now());
         });
-        assert!(
-            exits
-                .recv_timeout(std::time::Duration::from_millis(50))
-                .is_err(),
-            "not before its wait"
-        );
-        assert!(
-            exits
-                .recv_timeout(std::time::Duration::from_secs(5))
-                .is_ok(),
-            "once its wait runs out"
-        );
+        let exited = exits
+            .recv_timeout(Duration::from_secs(5))
+            .expect("once its wait runs out");
+        assert!(exited - started >= wait, "not before its wait");
     }
 
     /// A quit that hung left nothing in app-events.log: every step is logged as it happens, and the

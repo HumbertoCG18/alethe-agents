@@ -162,6 +162,10 @@ async fn collect_models(
 mod catalog_tests {
     use super::*;
 
+    /// Bounds a hang only: `collect_models` returns on a fake server's reply. A cold Python start
+    /// alone overran 5 s on a loaded CI runner, so a server that answers read as a silent one.
+    const HANG: std::time::Duration = std::time::Duration::from_secs(60);
+
     fn fake_server(script: &str) -> tokio::process::Command {
         let binary = which::which("python3")
             .or_else(|_| which::which("python"))
@@ -197,9 +201,7 @@ for line in sys.stdin:
     else: raise AssertionError('Unexpected inference request')
     print(json.dumps({'id': r['id'], 'result': result}), flush=True)
 "#;
-        let models = collect_models(fake_server(script), std::time::Duration::from_secs(5))
-            .await
-            .unwrap();
+        let models = collect_models(fake_server(script), HANG).await.unwrap();
         assert_eq!(
             models
                 .iter()
@@ -213,21 +215,23 @@ for line in sys.stdin:
     #[tokio::test]
     async fn catalog_reports_errors_and_bounds_a_silent_server() {
         let failure = "import sys,json; r=json.loads(sys.stdin.readline()); print(json.dumps({'id':r['id'],'error':{'code':-1}}),flush=True)";
-        assert!(
-            collect_models(fake_server(failure), std::time::Duration::from_secs(5))
-                .await
-                .unwrap_err()
-                .contains("unavailable")
-        );
+        assert!(collect_models(fake_server(failure), HANG)
+            .await
+            .unwrap_err()
+            .contains("unavailable"));
+        // The bound under test is the 100 ms one. The server stays silent for twice `HANG`, so
+        // returning within `HANG` shows it was cut off instead of waited out (reaping is not
+        // asserted here). The total also includes its spawn and the taskkill cleanup; it overran
+        // 5 s under load.
         let started = std::time::Instant::now();
         assert!(collect_models(
-            fake_server("import time; time.sleep(30)"),
+            fake_server("import time; time.sleep(120)"),
             std::time::Duration::from_millis(100)
         )
         .await
         .unwrap_err()
         .contains("timed out"));
-        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+        assert!(started.elapsed() < HANG);
     }
 
     #[tokio::test]

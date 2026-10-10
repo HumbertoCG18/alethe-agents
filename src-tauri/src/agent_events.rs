@@ -2,6 +2,7 @@
 //
 // O Claude Code dispara hooks `SubagentStart`/`SubagentStop` como POST HTTP
 
+use crate::cli_resolver::powershell_single_quoted;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU16, Ordering};
@@ -284,10 +285,6 @@ fn install_tag() -> &'static str {
     })
 }
 
-fn ps_escape(value: &str) -> String {
-    value.replace('\'', "''")
-}
-
 fn toml_string(value: &str) -> String {
     toml_edit::Value::from(value).to_string()
 }
@@ -310,7 +307,7 @@ fn write_codex_hook_forwarder(port: u16) -> Result<PathBuf, String> {
          \x20\x20Invoke-RestMethod -Uri '{endpoint}/hook' -Method Post -Body ($utf8.GetBytes($body)) -ContentType 'application/json; charset=utf-8' -Headers $headers | Out-Null\r\n\
          }} catch {{}}\r\n",
         endpoint = endpoint,
-        token = ps_escape(token),
+        token = powershell_single_quoted(token),
     );
     let path = std::env::temp_dir().join(format!("alethe-codex-hook-forward-{}.ps1", install_tag()));
     std::fs::write(&path, script).map_err(|e| format!("write_failed:{e}"))?;
@@ -361,7 +358,7 @@ fn codex_mcp_bridge_script(endpoint: &str, token: &str) -> String {
          \x20\x20}}\r\n\
          }}\r\n",
         endpoint = endpoint,
-        token = ps_escape(token),
+        token = powershell_single_quoted(token),
     )
 }
 
@@ -781,6 +778,41 @@ mod tests {
             .expect("block should list env_vars");
         let names: Vec<_> = env_vars.iter().filter_map(|v| v.as_str()).collect();
         assert_eq!(names, ["ALETHE_PLANNER"]);
+    }
+
+    // PowerShell ends a single-quoted string on the typographic single quotes too.
+    #[test]
+    fn codex_scripts_quote_the_token_for_powershell() {
+        let token = "a'b\u{2018}c\u{2019}d\u{201A}e\u{201B}f";
+        let script = super::codex_mcp_bridge_script("http://127.0.0.1:1", token);
+        let headers = script
+            .lines()
+            .find(|line| line.starts_with("$headers = "))
+            .expect("bridge script should build its headers");
+        assert!(
+            headers.contains(
+                "'a''b\u{2018}\u{2018}c\u{2019}\u{2019}d\u{201A}\u{201A}e\u{201B}\u{201B}f'"
+            ),
+            "{headers}"
+        );
+
+        #[cfg(windows)]
+        {
+            let output = std::process::Command::new("powershell.exe")
+                .args(["-NoProfile", "-NonInteractive", "-Command"])
+                .arg(format!(
+                    "[Console]::OutputEncoding = [Text.Encoding]::UTF8; {headers}; \
+                     [Console]::Out.Write($headers['X-Alethe-Token'])"
+                ))
+                .output()
+                .expect("powershell should run");
+            assert_eq!(
+                String::from_utf8_lossy(&output.stdout),
+                token,
+                "stderr: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
     }
 
     /// Bounds a hang only: the helpers below return as soon as the bridge answers. Cold

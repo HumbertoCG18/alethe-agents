@@ -76,14 +76,11 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
   Campaigns section, highlighted, with a **Continue** button that goes back to the tab opened for
   it or opens one. When no campaign terminal is focused, the last one active in that project stays on
   top.
-- **The Todo list shows the active campaign's tasks.** In a project with a campaign registry, the
-  list opens on the active campaign: Active (in progress, ready, reserved, proposed, blocked),
-  Completed and All follow it, and so does the progress bar. The heading picks another campaign or
-  **My todos**, and choosing a campaign in the Campaigns section shows it too. Adding a task there
-  adds it to the campaign with the next id, as a proposal from you; checking a task marks it done
-  ("marcada no Alethe"), with an undo. Writes take the same lock as `campanhas.py` and are refused,
-  with a reload, when the registry changed since it was read. **List source** in the Todo settings
-  makes the list open on your personal todos instead. Projects without a registry are unchanged.
+- **The Todo list shows campaign tasks.** In a project with a campaign registry, each active
+  campaign lists its tasks in the Todo tab. Adding a task to a campaign gives it the next id, as a
+  proposal from you; checking a task marks it done ("marcada no Alethe"), with an undo. Writes take
+  the same lock as `campanhas.py` and are refused, with a reload, when the registry changed since
+  it was read. Projects without a registry are unchanged.
 - **Runs linked to campaign tasks.** `alethe_delegate` takes an optional `task`, the registry task
   id the work is for (such as `MOTOR-01`); every worker of the call keeps it, also after a restart
   of the app. The orchestration board shows it as a small chip on the run and on each worker card,
@@ -336,8 +333,8 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
   still opens and closes it. Each project keeps its own order, and **Reset section order** in the
   Todo settings puts the default back. In My todos, your own list stays in place and the other
   sections move around it.
-- **Campaign controls in the Active section.** A collapsed **Current** group under the add field
-  continues, pauses or cancels the campaign. **Continue campaign**, while nothing runs for it,
+- **Campaign controls in the Active section.** Each active campaign can be continued, paused or
+  cancelled from its own subsection. **Continue campaign**, while nothing runs for it,
   picks the task in progress, else the first ready one with its prerequisites done, else the first
   task not done, and asks the campaign's agent tab to resume from it, by its registry and handoff;
   for a task that is not ready, the prompt says why it waits (its state, the prerequisites it waits
@@ -349,9 +346,6 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
   Cancel does nothing when the workers cannot be listed, and a task whose worker is still live
   stays in progress, named in the summary. A prompt is never submitted into an agent that started
   working meanwhile: it is left in the input, and a toast says so.
-- **Hide the add field of a campaign list.** A button on the Active section's header hides or
-  shows the "Add a task to …" field, remembered per project. While it is hidden, Ctrl+N still shows
-  it, focused, for one task.
 - **Task details in the Todo tab.** A chevron beside the box of a campaign task, in the Active list
   and among the tasks waiting for your Gate 2, expands it in place, read-only: its level and
   window, then its result, evidence (with **Open** when it names a path), the prerequisites it
@@ -401,14 +395,13 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
   **Started** and **Not started**) and **Completed** (finished campaigns, even with a tab open).
   Night holds the running night and the "Night of" card; Personal holds your own list, whose
   **Active** filter is now **Open**. The header bar shows one segment per active campaign (the
-  whole registry while none is), or your own list's progress in Personal. The heading's list
-  picker, the **List source** setting, the **Current** group and the campaign filter tabs are gone.
+  whole registry while none is), or your own list's progress in Personal.
 - **Active campaigns read leaner.** A campaign with its tab open offers **Go to tab** and
   **Cancel**, and **Pause** while its agent works; **Continue** is left to a campaign live through
   its workers alone, without a tab. The controls fit one row with short labels. Each open task
   shows its step, the registry's result for it, under its title. The campaign's window, worktree,
   last update and situation moved to its header's tooltip, and its add field opens from the
-  header's **+** (or Ctrl+N) for one task; the setting that hid or showed the add field is gone.
+  header's **+** (or Ctrl+N) for one task.
 - **The Night tab's bar follows the latest night**: its tasks done in the registry now, over their
   count.
 - **A night entry you already decided no longer reads as waiting on you**: it shows its task's
@@ -546,6 +539,10 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ### Fixed
 
+- **Agent CLIs installed with both a `.cmd` and an `.exe` launch the `.exe`**, so the arguments you
+  configure reach the agent unchanged instead of going through cmd.exe, which expanded `%VAR%` and
+  split them on quotes. The PowerShell scripts that connect Codex to Alethe also quote typographic
+  apostrophes (‘ ’ ‚ ‛) correctly.
 - **CI no longer fails at random on unrelated changes.** Tests that read the WSL integration setting
   now hold the lock the tests that switch it off hold; registry and worktree tests no longer share
   a temporary folder when macOS's microsecond clock gives two of them the same name; the file

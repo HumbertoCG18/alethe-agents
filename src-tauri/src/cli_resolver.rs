@@ -32,8 +32,7 @@ pub fn default_shell() -> String {
 /// `value` as the body of a PowerShell single-quoted string. PowerShell ends such a string on any
 /// single quote, the typographic ones (U+2018 to U+201B) included, and reads each one doubled as
 /// that quote itself.
-#[cfg(windows)]
-fn powershell_single_quoted(value: &str) -> String {
+pub(crate) fn powershell_single_quoted(value: &str) -> String {
     let mut quoted = String::with_capacity(value.len());
     for ch in value.chars() {
         if matches!(ch, '\'' | '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}') {
@@ -249,17 +248,21 @@ fn resolve_cli_launcher(command: &str) -> Option<PathBuf> {
         let mut dirs = Vec::<PathBuf>::new();
         dirs.extend(split_windows_path_expanded(&rebuilt_path()));
         dirs.extend(agent_search_dirs());
-
-        for dir in &dirs {
-            for extension in ["cmd", "exe", "bat", "ps1"] {
-                let candidate = dir.join(format!("{command}.{extension}"));
-                if candidate.is_file() {
-                    return Some(candidate);
-                }
-            }
-        }
-        None
+        launcher_in(&dirs, command)
     }
+}
+
+/// The first `command` launcher in `dirs`, in directory order. Within a directory an `.exe` wins
+/// over the script shims npm drops next to it: a `.cmd` or `.bat` runs under cmd.exe, which
+/// expands `%VAR%` and splits quotes in the arguments handed to it.
+#[cfg(windows)]
+fn launcher_in(dirs: &[PathBuf], command: &str) -> Option<PathBuf> {
+    dirs.iter().find_map(|dir| {
+        ["exe", "cmd", "bat", "ps1"]
+            .iter()
+            .map(|extension| dir.join(format!("{command}.{extension}")))
+            .find(|candidate| candidate.is_file())
+    })
 }
 
 #[derive(serde::Serialize, Debug, Clone, Default)]
@@ -1322,6 +1325,30 @@ mod tests {
             split_windows_path_expanded(r"a;; b ;"),
             vec![PathBuf::from("a"), PathBuf::from("b")]
         );
+    }
+
+    // npm drops `codex.cmd` next to a `codex.exe` some installers also put there, and a `.cmd`
+    // runs under cmd.exe, which expands `%VAR%` and splits quotes in the arguments.
+    #[cfg(windows)]
+    #[test]
+    fn a_launcher_directory_prefers_the_exe_over_its_script_shims() {
+        let root = env::temp_dir().join(format!("alethe-launcher-{}", std::process::id()));
+        let both = root.join("both");
+        let shim_only = root.join("shim-only");
+        fs::create_dir_all(&both).unwrap();
+        fs::create_dir_all(&shim_only).unwrap();
+        for name in ["codex.cmd", "codex.exe", "codex.bat", "codex.ps1"] {
+            fs::write(both.join(name), "").unwrap();
+        }
+        fs::write(shim_only.join("codex.cmd"), "").unwrap();
+
+        let from_both = launcher_in(&[both.clone()], "codex");
+        // Directory order still wins: an earlier `.cmd` beats a later `.exe`.
+        let from_shim_only = launcher_in(&[shim_only.clone(), both.clone()], "codex");
+        let _ = fs::remove_dir_all(&root);
+
+        assert_eq!(from_both, Some(both.join("codex.exe")));
+        assert_eq!(from_shim_only, Some(shim_only.join("codex.cmd")));
     }
 
     #[cfg(not(windows))]

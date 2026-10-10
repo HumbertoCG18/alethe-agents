@@ -467,7 +467,8 @@ mod tests {
             &directory,
             source.into(),
             "claude",
-            Duration::from_secs(5),
+            // Bounds a hang only: `run` returns once node exits, which took over 5 s on loaded CI.
+            Duration::from_secs(30),
         )
         .await;
         let _ = std::fs::remove_dir_all(&directory);

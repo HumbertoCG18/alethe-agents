@@ -783,8 +783,13 @@ mod tests {
         assert_eq!(names, ["ALETHE_PLANNER"]);
     }
 
+    /// Bounds a hang only: the helpers below return as soon as the bridge answers. Cold
+    /// PowerShell 5.1 starts on a loaded CI runner overran 15 s.
+    #[cfg(windows)]
+    const BRIDGE_HANG: std::time::Duration = std::time::Duration::from_secs(60);
+
     /// Runs the rendered bridge with `input` (one or more request lines) and returns up to `count`
-    /// non-empty stdout lines that arrive within 15 s. stdin stays open, as it does under Codex.
+    /// non-empty stdout lines that arrive within `BRIDGE_HANG`. stdin stays open, as under Codex.
     #[cfg(windows)]
     fn bridge_replies(
         endpoint: &str,
@@ -796,7 +801,7 @@ mod tests {
         use std::io::{BufRead, Write};
         use std::os::windows::process::CommandExt;
         use std::process::{Command, Stdio};
-        use std::time::{Duration, Instant};
+        use std::time::Instant;
 
         let script = super::codex_mcp_bridge_script(endpoint, "test-token");
         let path = std::env::temp_dir().join(format!(
@@ -842,7 +847,7 @@ mod tests {
                 }
             }
         });
-        let deadline = Instant::now() + Duration::from_secs(15);
+        let deadline = Instant::now() + BRIDGE_HANG;
         let mut replies = Vec::new();
         while replies.len() < count {
             match rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
@@ -870,7 +875,7 @@ mod tests {
     }
 
     /// Serves one request on a free port, answering `reply` as charset-less JSON like the real
-    /// listener. The handle yields the planner header and raw body, or None after 15 s.
+    /// listener. The handle yields the planner header and raw body, or None after `BRIDGE_HANG`.
     #[cfg(windows)]
     fn stub_once(
         reply: &'static str,
@@ -882,10 +887,7 @@ mod tests {
             .expect("stub listens on TCP")
             .port();
         let handle = std::thread::spawn(move || {
-            let mut request = server
-                .recv_timeout(std::time::Duration::from_secs(15))
-                .ok()
-                .flatten()?;
+            let mut request = server.recv_timeout(BRIDGE_HANG).ok().flatten()?;
             let planner = request
                 .headers()
                 .iter()

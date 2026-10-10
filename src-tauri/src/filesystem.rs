@@ -1179,8 +1179,9 @@ mod tests {
     fn a_watched_file_reports_only_itself() {
         let dir = scratch("file");
         let file = dir.join("campanhas.json");
-        fs::write(&file, "{}").unwrap();
         let (sender, changes) = mpsc::channel();
+        // The file is written only after the watch starts: FSEvents (macOS) can deliver a write
+        // made just before its stream began, which then lands in the sibling's window below.
         let _watcher = path_watcher(file.clone(), move || {
             let _ = sender.send(());
         })

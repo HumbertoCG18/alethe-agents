@@ -1097,18 +1097,25 @@ mod tests {
         );
     }
 
+    /// Bounds a hang only, for probes that exit: `background_output` returns once they do. A cold
+    /// Python start overran 5 s on a loaded CI runner, so it read as a timeout.
+    const PROBE_HANG: std::time::Duration = std::time::Duration::from_secs(60);
+
     #[tokio::test]
     async fn metadata_probes_reject_failed_output_and_time_out() {
         let python = which::which("python3")
             .or_else(|_| which::which("python"))
             .unwrap();
-        assert!(background_output(
-            &python,
-            &["-c", "import sys; print('v1.2.3'); sys.exit(2)"],
-            std::time::Duration::from_secs(5)
-        )
-        .await
-        .is_err());
+        assert_eq!(
+            background_output(
+                &python,
+                &["-c", "import sys; print('v1.2.3'); sys.exit(2)"],
+                PROBE_HANG
+            )
+            .await
+            .unwrap_err(),
+            "Metadata probe exited unsuccessfully"
+        );
         assert!(background_output(
             &python,
             &["-c", "import time; time.sleep(30)"],
@@ -1131,7 +1138,7 @@ mod tests {
                 "-c",
                 "import ctypes; print(ctypes.windll.kernel32.GetConsoleWindow())",
             ],
-            std::time::Duration::from_secs(5),
+            PROBE_HANG,
         )
         .await
         .unwrap();

@@ -161,7 +161,8 @@
       "titulo": "Card da noite fica no topo com 0 pendentes depois que todas as entradas concluem",
       "origem": "",
       "detalhe": "Visto em 11/10 no GPT Tutor: o único diário, .workflow/local/noites/2026-10-02.json, tem PILOTO-01..03, todas concluídas no registro; o NightCard (NightCard.tsx:114) move as entradas para a sublista Concluídas (3) mas mantém o cabeçalho 'Noite de 02/10' com 0, que o dono lê como seção órfã. Esperado pelo dono: a noite inteira ir para Concluídas quando nada mais pende.",
-      "estado": "novo"
+      "estado": "descartado",
+      "motivo": "resolvido pela #154 (e96e916)"
     },
     {
       "id": "ACH-0018",

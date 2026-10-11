@@ -10,9 +10,11 @@ import {
 import { type MessageKey, useT } from '../../lib/i18n'
 import { nightDate, type StopReason } from '../../lib/nightScheduler'
 import { useProjectsStore } from '../../stores/projectsStore'
+import { CampaignRow } from './CampaignsSection'
 import styles from './CampaignsSection.module.css'
 import {
   type CampaignEdits,
+  nightCampaign,
   nightUndecided,
   type Registry,
   splitNight,
@@ -92,8 +94,8 @@ export function NightStatus({ projectId }: { projectId: string | null }) {
 }
 
 /**
- * A fully concluded night, one item of the Night tab's Completed section: collapsed, it expands
- * to its entries. Fresh each time the night completes, so it always arrives collapsed.
+ * A fully concluded night, one item of the Night tab's Completed section: a campaign row built
+ * from the diary and the registry, collapsed. Fresh each time the night completes.
  */
 export function NightCompleted({
   registry,
@@ -106,33 +108,24 @@ export function NightCompleted({
 }) {
   const t = useT()
   const locale = useProjectsStore((state) => state.preferences.language)
-  const [open, setOpen] = useState(false)
-  const toggle = useRef<HTMLButtonElement>(null)
-  const { done } = splitNight(diary, registry.campaigns)
+  const date = nightDay(diary.date, locale)
   return (
-    <div className={sidebarStyles.list}>
-      <SectionToggle
-        name={t('todo.night.title', { date: nightDay(diary.date, locale) })}
-        count={done.length}
-        open={open}
-        onToggle={() => setOpen((current) => !current)}
-        toggleRef={toggle}
-        variant="sub"
-      />
-      {open ? (
-        <ul className={styles.tasks}>
-          {done.map((entry, index) => (
-            <NightEntryRow
-              key={`${entry.task}-${index}`}
-              entry={entry}
-              registry={registry}
-              edits={edits}
-              fallback={() => toggle.current}
-            />
-          ))}
-        </ul>
-      ) : null}
-    </div>
+    <CampaignRow
+      campaign={nightCampaign(
+        diary,
+        registry.campaigns,
+        t('todo.night.code'),
+        t('todo.night.title', { date }),
+      )}
+      nightOnly={false}
+      checkouts={registry.checkouts}
+      active={false}
+      workers={null}
+      campaigns={registry.campaigns}
+      edits={edits}
+      source={registry.text}
+      night={date}
+    />
   )
 }
 

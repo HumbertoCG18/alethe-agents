@@ -1280,6 +1280,41 @@ export function splitNight(diary: NightDiary, campaigns: Registry['campaigns']) 
   }
 }
 
+/**
+ * A concluded night as a campaign, so the campaign row renders it: its entries are the registry's
+ * tasks, in diary order, and it is done by construction.
+ */
+export function nightCampaign(
+  diary: NightDiary,
+  campaigns: Registry['campaigns'],
+  id: string,
+  title: string,
+): Campaign {
+  const known = new Map(
+    campaigns.flatMap((campaign) => campaign.tasks).map((task) => [task.id, task]),
+  )
+  const tasks = [...new Set(splitNight(diary, campaigns).done.map((entry) => entry.task))].flatMap(
+    (task) => known.get(task) ?? [],
+  )
+  return {
+    id,
+    title,
+    priority: 0,
+    window: 'noite',
+    dependsOn: [],
+    worktrees: [],
+    handoff: null,
+    updatedOn: null,
+    decomposed: true,
+    done: tasks.length,
+    total: tasks.length,
+    percent: 100,
+    situation: { kind: 'done', ready: 0, waits: [] },
+    night: true,
+    tasks,
+  }
+}
+
 /** Every entry of the night is concluded; the night then lives under Completed, not in the card. */
 export function nightIsCompleted(diary: NightDiary, campaigns: Registry['campaigns']) {
   const { done, rest } = splitNight(diary, campaigns)

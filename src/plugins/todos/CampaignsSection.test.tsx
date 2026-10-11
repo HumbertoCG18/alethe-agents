@@ -1644,18 +1644,53 @@ describe('Night card', () => {
     expect(section).toHaveAttribute('aria-expanded', 'false')
     // No standalone completed toggle, no night header with a zero count.
     expect(screen.queryByRole('button', { name: /^Night of/ })).toBeNull()
-    expect(screen.queryByText(/· completed/)).toBeNull()
-    expect(screen.queryByText('BASE-01 resumo')).toBeNull()
+    expect(screen.queryByRole('button', { name: /^NIGHT/ })).toBeNull()
 
     fireEvent.click(section)
     expect(section).toHaveAttribute('aria-expanded', 'true')
-    const night = screen.getByRole('button', { name: /^Night of 10\/03/ })
-    expect(night).toHaveTextContent('2')
+    // The night is a campaign row: code, title, progress and status, collapsed.
+    const night = screen.getByRole('button', { name: /^NIGHT/ })
+    expect(night).toHaveTextContent('Night of 10/03')
+    expect(night).toHaveTextContent('2/2 · 100%')
+    // The status label a done campaign shows.
+    expect(night).toHaveTextContent('Done')
     expect(night).toHaveAttribute('aria-expanded', 'false')
-    expect(screen.queryByText('BASE-01 resumo')).toBeNull()
-    fireEvent.click(night)
-    expect(screen.getByText('BASE-01 resumo')).toBeInTheDocument()
-    expect(screen.getByText('BASE-02 resumo')).toBeInTheDocument()
+    expect(screen.queryByText('BASE-01')).toBeNull()
+  })
+
+  it('renders the concluded night with the same row markup as a done campaign', async () => {
+    const data = structuredClone(exemplo)
+    for (const item of data.campanhas.find((campaign) => campaign.id === 'OITO')!.tarefas)
+      item.estado = 'concluída'
+    data.campanhas.find((campaign) => campaign.id === 'OITO')!.janela = 'noite'
+    fs.files.set(REGISTRY, JSON.stringify(data))
+    fs.files.set(
+      `${NIGHTS}\\2026-10-03.json`,
+      diary('2026-10-03', [entry('BASE-02', 'ok'), entry('BASE-01', 'ok')]),
+    )
+    render(<TodoSidebar />)
+    fireEvent.click(await screen.findByRole('button', { name: /^Completed/ }))
+    const campaignRow = screen.getByRole('button', { name: /^OITO/ }).parentElement!
+    const nightRow = screen.getByRole('button', { name: /^NIGHT/ }).parentElement!
+    expect(nightRow.className).toBe(campaignRow.className)
+    expect(nightRow.getAttribute('data-lane')).toBe(campaignRow.getAttribute('data-lane'))
+    expect(nightRow.querySelector('[role="img"], span[aria-hidden]')?.className).toBe(
+      campaignRow.querySelector('[role="img"], span[aria-hidden]')?.className,
+    )
+
+    fireEvent.click(within(nightRow).getByRole('button', { name: /^NIGHT/ }))
+    // A night has no dependencies and no session to open; its facts are only the diary date.
+    expect(within(nightRow).queryByRole('button', { name: /Depends on/ })).toBeNull()
+    expect(within(nightRow).queryByRole('button', { name: /Open|Continue/ })).toBeNull()
+    expect(within(nightRow).getByText('10/03')).toBeInTheDocument()
+    expect(within(nightRow).queryByText(/Updated/)).toBeNull()
+    // Entries are the campaign's task rows, in diary order: pill, id and title, level.
+    const tasks = [...nightRow.querySelectorAll('ul > li')]
+    expect(tasks).toHaveLength(2)
+    expect(tasks[0]).toHaveTextContent('Done')
+    expect(tasks[0]).toHaveTextContent('BASE-02 feita')
+    expect(tasks[0]).toHaveTextContent('T1')
+    expect(tasks[1]).toHaveTextContent('BASE-01 feita')
   })
 
   it('lists the done night campaigns in the Completed section, with the concluded night', async () => {
@@ -1674,7 +1709,7 @@ describe('Night card', () => {
     expect(screen.queryByRole('button', { name: /^OITO/ })).toBeNull()
     fireEvent.click(section)
     expect(screen.getByRole('button', { name: /^OITO/ })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /^Night of 10\/03/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^NIGHT/ })).toBeInTheDocument()
   })
 
   it('keeps a not concluded entry in the night and lists the concluded one under Completed', async () => {
@@ -1703,6 +1738,7 @@ describe('Night card', () => {
     render(<TodoSidebar />)
     fireEvent.click(await screen.findByRole('button', { name: /^Completed/ }))
     expect(screen.getByText('BASE-01 resumo')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^NIGHT/ })).toBeNull()
 
     await editRegistry((data) => {
       for (const campaign of data.campanhas)
@@ -1711,11 +1747,11 @@ describe('Night card', () => {
     // The night leaves the card for the Completed section, collapsed, and so is the night in it.
     const section = await screen.findByRole('button', { name: /^Completed/ })
     expect(section).toHaveAttribute('aria-expanded', 'false')
-    expect(screen.queryByText('BASE-01 resumo')).toBeNull()
+    expect(screen.queryByText('BASE-01')).toBeNull()
     fireEvent.click(section)
-    const night = screen.getByRole('button', { name: /^Night of 10\/03/ })
+    const night = screen.getByRole('button', { name: /^NIGHT/ })
     expect(night).toHaveAttribute('aria-expanded', 'false')
-    expect(screen.queryByText('BASE-01 resumo')).toBeNull()
+    expect(screen.queryByText('BASE-01')).toBeNull()
   })
 
   it('watches the folder and every diary, so fixing a malformed newest one shows it', async () => {

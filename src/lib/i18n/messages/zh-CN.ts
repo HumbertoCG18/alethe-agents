@@ -3264,7 +3264,7 @@ export const zhCN: Record<MessageKey, string> = {
   'markdown.styleDesc': '极简：简短要点。中等：最多 250 词。详细：最多 700 词。',
   'markdown.maxAge': '较旧的文档',
   'markdown.maxAgeDesc':
-    '隐藏路径日期早于此值的侧边栏文档，以及归档文件夹（_archive、archive、Feitos）中的文档。无日期的文档和开放活动的文档始终显示。',
+    '隐藏路径日期早于此值的侧边栏文档、归档或内部文件夹（archive、Feitos、任何以 _ 开头的文件夹）中的文档，以及嵌套在顶层以下的项目副本（.mex、.workflow、.agents、.github、AGENTS.md、CLAUDE.md、GEMINI.md）。其他无日期的文档和开放活动的文档始终显示。',
   'markdown.maxAgeDays': '早于 {count} 天',
   'markdown.maxAgeNever': '从不隐藏',
   'markdown.generated': 'AI 生成的摘要 — 请对照完整文档核实。',

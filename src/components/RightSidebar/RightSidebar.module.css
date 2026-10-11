@@ -608,7 +608,7 @@
 
 .markdownCatalog {
   flex: 0 1 auto;
-  max-height: 40%;
+  max-height: max(160px, 40%);
   overflow: auto;
   padding: var(--space-2);
   border-bottom: 1px solid var(--border);
@@ -617,6 +617,17 @@
 }
 .markdownCatalog:empty {
   display: none;
+}
+/* With no open summary, the catalog grows into the free height and the content keeps its own. */
+.markdownPanel[data-catalog-layout='fill'] .markdownCatalog {
+  flex: 1 1 auto;
+  max-height: none;
+}
+.markdownPanel[data-catalog-layout='fill'] .contentLayout {
+  flex: 0 0 auto;
+}
+.markdownPanel[data-catalog-layout='fill'] .empty {
+  min-height: 0;
 }
 .markdownCatalog summary {
   cursor: pointer;

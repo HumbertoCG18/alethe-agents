@@ -1357,12 +1357,19 @@ fn a_claude_worker_reports_its_result_and_tokens() {
     assert_eq!(job["tokens"]["last"]["outputTokens"], 5);
     assert_eq!(job["costUsd"], 0.0123);
 
-    let restored = Core::default();
-    restored.set_store(store);
-    restored.restore();
-    let restored_snapshot = restored.snapshot();
-    let restored_job = &restored_snapshot["jobs"][0];
-    assert_eq!(restored_job["tokens"]["total"]["totalTokens"], 15);
+    // The store is written just after the job turns done.
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    let restored_job = loop {
+        let restored = Core::default();
+        restored.set_store(store.clone());
+        restored.restore();
+        let job = restored.snapshot()["jobs"][0].clone();
+        if job["tokens"]["total"]["totalTokens"] == 15 || std::time::Instant::now() > deadline {
+            break job;
+        }
+        thread::sleep(Duration::from_millis(100));
+    };
+    assert_eq!(restored_job["tokens"]["total"]["totalTokens"], 15, "{restored_job}");
     assert_eq!(restored_job["costUsd"], 0.0123);
 
     let _ = std::fs::remove_dir_all(&dir);

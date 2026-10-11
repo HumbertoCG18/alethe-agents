@@ -798,6 +798,10 @@ export function useXtermSession(params: {
       })
       .catch(() => {})
 
+    // An Enter that closes an IME composition can arrive with isComposing false and
+    // keyCode 229; leave it to xterm's own composition guard.
+    const isImeEnter = (event: KeyboardEvent) => event.isComposing || event.keyCode === 229
+
     terminal.attachCustomKeyEventHandler((event) => {
       if (event.type !== 'keydown') return true
       // xterm.js sends a bare \r for Shift+Enter, so it submitted instead of
@@ -809,7 +813,7 @@ export function useXtermSession(params: {
         !event.ctrlKey &&
         !event.metaKey &&
         !event.altKey &&
-        !event.isComposing
+        !isImeEnter(event)
       ) {
         event.preventDefault()
         const id = ptyIdRef.current
@@ -825,13 +829,14 @@ export function useXtermSession(params: {
         event.key === 'Enter' &&
         !event.shiftKey &&
         !event.altKey &&
-        !event.isComposing &&
+        !isImeEnter(event) &&
         command === 'claude'
       ) {
         event.preventDefault()
         const id = ptyIdRef.current
         if (!readOnly && id) {
-          queueInput(id, '\x18')
+          // Tracked as the Enter it stands for: prompt history, /new, monitors.
+          processInput(id, '\r', '\x18')
           window.setTimeout(() => queueInput(id, '\x13'), 60)
         }
         return false
@@ -1234,10 +1239,8 @@ export function useXtermSession(params: {
       }
     }
 
-    terminal.onData((data) => {
-      if (readOnly) return
-      const id = ptyIdRef.current
-      if (!id) return
+    /** Tracks `data` as typed input and sends `wire` (default: the same) to the pty. */
+    const processInput = (id: string, data: string, wire = data) => {
       useTerminalsStore.getState().recordIo(id)
       const startsNewSession = recordPromptInput(data)
       completionMonitor?.handleInput(data)
@@ -1245,7 +1248,7 @@ export function useXtermSession(params: {
       if (trackedPtyId) recordAgentActivityInput(trackedPtyId, data)
       if (container.scrollWidth > container.clientWidth + 2) scheduleResize(true)
       clampHorizontalScroll()
-      queueInput(id, data)
+      queueInput(id, wire)
       if (startsNewSession && command && !isShellAgentType(command)) {
         cancelScheduledFlush()
         pendingWrites = []
@@ -1260,6 +1263,13 @@ export function useXtermSession(params: {
             .catch((error) => console.warn('[pty-scrollback] failed to clear after /new:', error))
         })
       }
+    }
+
+    terminal.onData((data) => {
+      if (readOnly) return
+      const id = ptyIdRef.current
+      if (!id) return
+      processInput(id, data)
     })
 
     const RESUMABLE_AGENTS = ['claude', 'codex', 'cursor', 'opencode', 'antigravity']

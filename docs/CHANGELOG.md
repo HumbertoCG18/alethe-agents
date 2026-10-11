@@ -10,6 +10,7 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ## [Unreleased]
 
+- Terminal: Shift+Enter now adds a new line in Claude Code and Codex instead of submitting the prompt, and Ctrl+Enter (Cmd+Enter on macOS) in Claude Code panes sends the typed text right away, even while the agent is working. Ported from upstream #328.
 - Antigravity roles in Preferences → Orchestration can run on `gpt-oss-120b-medium` (fixed effort), and the Antigravity model list follows the vendor order Anthropic, OpenAI, Google.
 - Night tab: gains the same collapsible "Completed" section as the Tasks tab. It lists the finished night campaigns and, once every entry of the night is concluded, the night itself as one "Night of {date}" item that expands to its entries, instead of leaving a header with a zero count on top.
 - The Markdown sidebar index also hides, under the same age window and toggle as archives, documents in any folder starting with `_` and project copies nested inside the project (`.mex`, `.workflow`, `.agents` or `.github` folders below the top level, and `AGENTS.md`, `CLAUDE.md` or `GEMINI.md` outside the root). The project's own top-level files and documents of open campaigns stay visible. With the summary collapsed or no document open, the document list fills the panel height; with a summary open it takes up to 40% of it.

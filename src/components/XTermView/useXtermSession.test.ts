@@ -59,6 +59,7 @@ vi.mock('@xterm/xterm', () => ({
     scrollLines = vi.fn()
     scrollToLine = vi.fn()
     scrollToBottom() {}
+    clear() {}
     constructor() {
       terminals.push(this)
     }
@@ -76,7 +77,10 @@ vi.mock('@xterm/xterm', () => ({
       scrolls.push(handler)
       return { dispose() {} }
     }
-    attachCustomKeyEventHandler() {}
+    keyHandler?: (event: KeyboardEvent) => boolean
+    attachCustomKeyEventHandler(handler: (event: KeyboardEvent) => boolean) {
+      this.keyHandler = handler
+    }
     onData() {}
     dispose() {}
     refresh() {}
@@ -136,6 +140,7 @@ vi.mock('../../lib/tauri', async (importOriginal) => ({
   agentHooksSettingsPath: vi.fn(async () => 'hooks.json'),
   spawnPty: vi.fn(async () => ({ id: 'pty-0' })),
   writePty: vi.fn(async () => {}),
+  clearPtyScrollback: vi.fn(async () => {}),
 }))
 
 function emit(sessionId: string, plannerId = 'pty-0') {
@@ -191,6 +196,7 @@ type MockTerminal = {
   buffer: { active: { type: 'normal' | 'alternate' } }
   modes: { mouseTrackingMode: string; bracketedPasteMode: boolean; sendFocusMode: boolean }
   scrollLines: Mock
+  keyHandler: (event: KeyboardEvent) => boolean
 }
 
 /** The terminal the hook built, with the pieces these tests read and drive. */
@@ -520,6 +526,97 @@ describe('Claude terminal session lifecycle', () => {
 
     expect(terminal.scrollLines).not.toHaveBeenCalled()
     expect(terminal.writes.join('')).not.toContain('\x1b[?1049l')
+  })
+})
+
+describe('Enter shortcuts', () => {
+  const written = () => vi.mocked(tauri.writePty).mock.calls.map(([, data]) => data)
+  /** Presses a key in the pane; returns whether xterm should still handle it. */
+  async function press(
+    over: Partial<Parameters<typeof params>[0]>,
+    init: KeyboardEventInit,
+  ): Promise<boolean> {
+    vi.useRealTimers() // waitFor needs real ones; a second press follows a faked first
+    const input = { ...params(), ...over }
+    renderHook(() => useXtermSession(input))
+    await waitFor(() => expect(input.setBootPhase).toHaveBeenCalledWith('ready'))
+    vi.mocked(tauri.writePty).mockClear()
+    vi.useFakeTimers({ toFake: ['setTimeout'] })
+    let handled = true
+    act(() => {
+      handled = paneTerminal(input).keyHandler(
+        new KeyboardEvent('keydown', { key: 'Enter', cancelable: true, ...init }),
+      )
+    })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100)
+    })
+    return handled
+  }
+  afterEach(() => vi.useRealTimers())
+
+  it('adds a line on Shift+Enter instead of submitting', async () => {
+    expect(await press({}, { shiftKey: true })).toBe(false)
+    expect(written()).toEqual(['\x1b\r'])
+  })
+
+  it('adds a line on Shift+Enter in a Codex pane too', async () => {
+    await press({ command: 'codex' }, { shiftKey: true })
+    expect(written()).toEqual(['\x1b\r'])
+  })
+
+  it('sends now on Ctrl+Enter in a Claude pane: ctrl+x, then ctrl+s', async () => {
+    expect(await press({}, { ctrlKey: true })).toBe(false)
+    expect(written()).toEqual(['\x18', '\x13'])
+  })
+
+  it('sends now on Cmd+Enter in a Claude pane', async () => {
+    await press({}, { metaKey: true })
+    expect(written()).toEqual(['\x18', '\x13'])
+  })
+
+  it('leaves Ctrl+Enter alone outside Claude Code panes', async () => {
+    expect(await press({ command: 'codex' }, { ctrlKey: true })).toBe(true)
+    expect(await press({ command: 'powershell' }, { ctrlKey: true })).toBe(true)
+    expect(written()).toEqual([])
+  })
+
+  it('tracks Ctrl+Enter as the Enter it stands for, like onData does', async () => {
+    const recordPromptInput = vi.fn(() => false)
+    await press({ recordPromptInput }, { ctrlKey: true })
+    expect(recordPromptInput).toHaveBeenCalledWith('\r')
+    expect(written()).toEqual(['\x18', '\x13'])
+  })
+
+  it('clears the screen and scrollback when /new is sent with Ctrl+Enter', async () => {
+    await press({ recordPromptInput: () => true }, { ctrlKey: true })
+    expect(tauri.clearPtyScrollback).toHaveBeenCalledWith('pty-0')
+  })
+
+  it('does not count Shift+Enter as a submission', async () => {
+    const recordPromptInput = vi.fn(() => false)
+    await press({ recordPromptInput }, { shiftKey: true })
+    expect(recordPromptInput).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['isComposing', { isComposing: true }],
+    ['keyCode 229', { keyCode: 229 }],
+  ])('leaves an IME Enter (%s) to xterm', async (_name, ime) => {
+    expect(await press({}, { shiftKey: true, ...ime })).toBe(true)
+    expect(await press({}, { ctrlKey: true, ...ime })).toBe(true)
+    expect(written()).toEqual([])
+  })
+
+  it('leaves plain Enter to xterm', async () => {
+    expect(await press({}, {})).toBe(true)
+    expect(written()).toEqual([])
+  })
+
+  it('writes nothing in a read-only pane', async () => {
+    await press({ readOnly: true }, { shiftKey: true })
+    await press({ readOnly: true }, { ctrlKey: true })
+    expect(written()).toEqual([])
   })
 })
 

@@ -653,12 +653,23 @@
           "id": "AGY-04",
           "titulo": "Endurecer o worker AGY: hook por worktree, perfil isolado e escrita fora da worktree",
           "nivel": "T3",
-          "estado": "em execução",
+          "estado": "concluída",
           "depende_de": [
             "AGY-01"
           ],
           "origem": "USER",
-          "resultado": "Gate 1b do dono em 11/10/2026 (\"Aprovo\"): agente alethe-worker em ~/.gemini/config/agents/alethe-worker/ gerenciado pelo Alethe (inheritCustomizations/inheritMcp false, tools explícitas, hooks próprios, sem excludeDefaultComponents), worker com --agent alethe-worker; gate em Rust no alethe-orchestrator-mcp copiado para a pasta do agente; hash conferido antes de cada turno. Medição em .workflow/local/agy-04-medicao.md. Irmã ELO-09 (#151) para depois."
+          "resultado": "Gate 2 do dono em 11/10/2026 (\"Mergear agora + diff sem config separado\"): worker AGY como agente gerenciado alethe-worker (inherit* false, só ferramentas de arquivo, sem comandos), gate PreToolUse que nega comandos, pino SHA-256 conferido antes de cada turno; jobs AGY sempre isolados, ponteiro .git fixado e diff com GIT_DIR fixo, fsmonitor/ext-diff/textconv off e filtros anulados. Limites declarados (nome de filtro não-UTF-8, includeIf onbranch na criação, pasta de hooks em TEMP) seguem na AGY-05 (#159).",
+          "evidencia": "PR #158 (merge f5cd198); medição em .workflow/local/agy-04-medicao.md; revisões alethe-agy-04 r1–r7 adjudicadas 17/0"
+        },
+        {
+          "id": "AGY-05",
+          "titulo": "Diff do worker AGY sem nenhuma configuração do git (limites declarados da AGY-04)",
+          "nivel": "T3",
+          "estado": "proposta",
+          "depende_de": [
+            "AGY-04"
+          ],
+          "origem": "USER"
         }
       ]
     },

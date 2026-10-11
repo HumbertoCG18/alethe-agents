@@ -208,7 +208,8 @@
       "titulo": "Teste a_denial_logged_just_after_the_result_still_blocks_its_turn flutua sob carga",
       "origem": "",
       "detalhe": "Visto 11/10 na AGY-04: falha 1 em 5 quando roda junto com binários de teste da lib (a linha tardia do fake chega depois da espera de 200 ms do AgyLog); passa isolado e nas suítes do orquestrador. Pode travar a CI. Opções: espera do teste maior ou sincronizar o fake.",
-      "estado": "novo"
+      "estado": "descartado",
+      "motivo": "corrigido pela #162 (PR #167, 4de0d2a)"
     },
     {
       "id": "ACH-0023",
@@ -217,7 +218,8 @@
       "titulo": "Revive de job AGY pode falhar com 'worker connection closed' logo após o release (macOS)",
       "origem": "",
       "detalhe": "CI do macOS na #158 (11/10): a_resumed_antigravity_worker_sees_a_denial_early_in_its_restarted_log falhou em 0,145 s com status failed / 'worker connection closed' no turno revivido; passou na reexecução e no Linux/Windows. Suspeita: o EOF do processo liberado chega depois do revive e é atribuído ao mesmo job (corrida release→revive), o que afetaria revives reais, não só o teste. Investigar a ordem de teardown/reader do job no revive.",
-      "estado": "novo"
+      "estado": "descartado",
+      "motivo": "corrigido pela #162 (PR #167, 4de0d2a)"
     }
   ]
 }

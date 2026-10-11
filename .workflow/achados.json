@@ -198,7 +198,8 @@
       "titulo": "Portar upstream #328: Shift+Enter quebra linha e Ctrl/Cmd+Enter envia no Claude Code",
       "origem": "",
       "detalhe": "https://github.com/Kc1t/alethe-agents/pull/328 — fix(terminal), @afthex, aberta, +35/-0 em 1 arquivo; conferir convivência com a #322 já portada (#149). Pedido do dono em 11/10.",
-      "estado": "novo"
+      "estado": "descartado",
+      "motivo": "portado pela #163 (PR #166, 0a7ab2a)"
     },
     {
       "id": "ACH-0022",

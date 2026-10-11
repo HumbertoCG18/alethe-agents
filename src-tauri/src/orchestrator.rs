@@ -11,7 +11,7 @@ use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::cli_resolver;
-use crate::orchestrator_core::{Core, Launcher, OrchestrationSettings, Planner};
+use crate::orchestrator_core::{AgyAgent, Core, Launcher, OrchestrationSettings, Planner};
 
 const JOBS_EVENT: &str = "orchestrator://jobs";
 
@@ -62,6 +62,18 @@ fn prepare(app: &AppHandle, state: &OrchestratorState) {
     }
     if let Some(program) = cli_resolver::find_windows_cli_launcher("agy") {
         core.set_launcher(Launcher::antigravity_headless(PathBuf::from(program)));
+        // The gate is the standalone orchestrator binary, which ships next to the app. Without
+        // either path the worker's agent stays unset, and an Antigravity worker refuses to start.
+        let config_dir = crate::provider_common::provider_home_dir(&[".gemini", "config"]);
+        if let (Some(config_dir), Ok(app)) = (config_dir, std::env::current_exe()) {
+            core.set_agy_agent(AgyAgent {
+                config_dir,
+                gate_source: app.with_file_name(format!(
+                    "alethe-orchestrator-mcp{}",
+                    std::env::consts::EXE_SUFFIX
+                )),
+            });
+        }
     }
     core.set_shell_host(Arc::new(crate::orchestrator_shell_host::PtyShellHost::new(
         app.clone(),

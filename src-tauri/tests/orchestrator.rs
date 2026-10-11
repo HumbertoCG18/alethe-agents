@@ -18,7 +18,7 @@ use std::time::Duration;
 use serde_json::{json, Value};
 
 use orchestrator_core::{
-    handle_mcp_body, Core, Launcher, OrchestrationSettings, Planner, RuleSet, ShellHost,
+    handle_mcp_body, AgyAgent, Core, Launcher, OrchestrationSettings, Planner, RuleSet, ShellHost,
 };
 
 fn rpc(core: &Core, id: u32, method: &str, params: Value) -> Value {
@@ -3431,6 +3431,22 @@ done
     }
 }
 
+/// The managed agent a scripted agy runs as: installed under `fake`, with a stand-in gate build.
+fn fake_agy_agent(fake: &std::path::Path) -> AgyAgent {
+    let gate_source = fake.join("gate-build").join("alethe-orchestrator-mcp.exe");
+    std::fs::create_dir_all(gate_source.parent().expect("parent")).expect("gate build dir");
+    std::fs::write(&gate_source, b"stand-in gate").expect("gate build");
+    AgyAgent {
+        config_dir: fake.join("gemini-config"),
+        gate_source,
+    }
+}
+
+fn use_scripted_agy(core: &Core, fake: &std::path::Path) {
+    core.set_launcher(scripted_agy_launcher(fake));
+    core.set_agy_agent(fake_agy_agent(fake));
+}
+
 /// One `result` line of agy 1.3.3; its usage is cumulative over the conversation.
 fn agy_result(response: &str, input: u64, output: u64, total: u64) -> String {
     json!({
@@ -3542,6 +3558,30 @@ fn the_antigravity_launcher_streams_turns_in_accept_edits_and_never_bypasses() {
         .args
         .iter()
         .any(|arg| arg == "--dangerously-skip-permissions"));
+    // Every launch, a resume included, runs as the managed agent whose hook gates commands.
+    for resume in [None, Some("conv-1")] {
+        let worker = orchestrator_core::agy_worker_args(
+            r"C:\wt",
+            r"C:\jobs\agy-cli.log",
+            resume,
+            None,
+            None,
+        )
+        .expect("args");
+        let at = worker
+            .iter()
+            .position(|arg| arg == "--agent")
+            .unwrap_or_else(|| panic!("no --agent: {worker:?}"));
+        assert_eq!(worker[at + 1], "alethe-worker", "{worker:?}");
+        assert!(
+            !launcher
+                .args
+                .iter()
+                .chain(&worker)
+                .any(|arg| arg.contains("dangerously")),
+            "{worker:?}"
+        );
+    }
 }
 
 // agy 1.3.3 refuses a variant id next to --effort at start-up (exit 1), so the core never builds it.
@@ -3553,6 +3593,8 @@ fn an_antigravity_worker_runs_a_variant_or_a_family_with_effort_but_never_both()
     assert_eq!(
         args(None, Some("claude-sonnet-5-5-medium"), None).expect("a variant alone"),
         [
+            "--agent",
+            "alethe-worker",
             "--add-dir",
             r"C:\wt",
             "--model",
@@ -3564,6 +3606,8 @@ fn an_antigravity_worker_runs_a_variant_or_a_family_with_effort_but_never_both()
     assert_eq!(
         args(Some("conv-9"), Some("claude-sonnet-5-5"), Some("high")).expect("a family"),
         [
+            "--agent",
+            "alethe-worker",
             "--add-dir",
             r"C:\wt",
             "--model",
@@ -3578,7 +3622,14 @@ fn an_antigravity_worker_runs_a_variant_or_a_family_with_effort_but_never_both()
     );
     assert_eq!(
         args(None, None, None).expect("the CLI default"),
-        ["--add-dir", r"C:\wt", "--log-file", r"C:\jobs\agy-cli.log"]
+        [
+            "--agent",
+            "alethe-worker",
+            "--add-dir",
+            r"C:\wt",
+            "--log-file",
+            r"C:\jobs\agy-cli.log"
+        ]
     );
     assert!(args(None, Some("claude-sonnet-5-5-medium"), Some("high")).is_err());
     assert!(args(None, Some("gemini-3.8-flash-low"), Some("low")).is_err());
@@ -3621,6 +3672,7 @@ fn antigravity_refuses_what_it_cannot_enforce_before_creating_anything() {
 #[test]
 fn an_antigravity_worker_takes_its_follow_up_on_the_same_process() {
     let dir = workspace("agy-turns");
+    git_repo(&dir);
     let fake = workspace("agy-turns-fake");
     std::fs::write(
         fake.join("turn1.jsonl"),
@@ -3637,7 +3689,7 @@ fn an_antigravity_worker_takes_its_follow_up_on_the_same_process() {
     second["result"]["usage"]["thinking_tokens"] = json!(5);
     std::fs::write(fake.join("turn2.jsonl"), format!("{second}\n")).expect("turn 2");
     let core = Core::default();
-    core.set_launcher(scripted_agy_launcher(&fake));
+    use_scripted_agy(&core, &fake);
 
     call(
         &core,
@@ -3695,7 +3747,7 @@ fn an_antigravity_worker_takes_its_follow_up_on_the_same_process() {
     // Resolved: on macOS the temp folder is behind a link, on Windows CI behind a short name.
     assert_eq!(
         std::fs::canonicalize(after("--add-dir")).ok(),
-        std::fs::canonicalize(&dir).ok(),
+        std::fs::canonicalize(agy_worktree(&dir)).ok(),
         "{args:?}"
     );
     assert_eq!(after("--model"), "claude-sonnet-5-5", "{args:?}");
@@ -3711,6 +3763,7 @@ fn an_antigravity_worker_takes_its_follow_up_on_the_same_process() {
 #[test]
 fn a_revived_antigravity_worker_resumes_its_conversation() {
     let dir = workspace("agy-resume");
+    git_repo(&dir);
     let fake = workspace("agy-resume-fake");
     std::fs::write(
         fake.join("turn.jsonl"),
@@ -3718,7 +3771,7 @@ fn a_revived_antigravity_worker_resumes_its_conversation() {
     )
     .expect("turn");
     let core = Core::default();
-    core.set_launcher(scripted_agy_launcher(&fake));
+    use_scripted_agy(&core, &fake);
 
     call(
         &core,
@@ -3754,6 +3807,7 @@ fn a_revived_antigravity_worker_resumes_its_conversation() {
 #[test]
 fn antigravity_steers_wait_for_the_turn_and_go_first_in_the_order_sent() {
     let dir = workspace("agy-steer");
+    git_repo(&dir);
     let fake = workspace("agy-steer-fake");
     std::fs::write(fake.join("hold1"), "4").expect("hold");
     std::fs::write(
@@ -3762,7 +3816,7 @@ fn antigravity_steers_wait_for_the_turn_and_go_first_in_the_order_sent() {
     )
     .expect("turn");
     let core = Core::default();
-    core.set_launcher(scripted_agy_launcher(&fake));
+    use_scripted_agy(&core, &fake);
 
     call(
         &core,
@@ -3807,11 +3861,12 @@ fn antigravity_steers_wait_for_the_turn_and_go_first_in_the_order_sent() {
 #[test]
 fn cancelling_an_antigravity_worker_tears_it_down_without_a_codex_rpc() {
     let dir = workspace("agy-cancel");
+    git_repo(&dir);
     let fake = workspace("agy-cancel-fake");
     std::fs::write(fake.join("hold1"), "60").expect("hold");
     std::fs::write(fake.join("turn.jsonl"), "").expect("turn");
     let core = Core::default();
-    core.set_launcher(scripted_agy_launcher(&fake));
+    use_scripted_agy(&core, &fake);
 
     call(
         &core,
@@ -3832,6 +3887,768 @@ fn cancelling_an_antigravity_worker_tears_it_down_without_a_codex_rpc() {
     let _ = std::fs::remove_dir_all(&fake);
 }
 
+#[test]
+fn an_antigravity_worker_runs_as_the_managed_agent_alethe_installs() {
+    let dir = workspace("agy-agent");
+    git_repo(&dir);
+    let fake = workspace("agy-agent-fake");
+    std::fs::write(
+        fake.join("turn.jsonl"),
+        format!("{}\n", agy_result("DONE", 1, 1, 2)),
+    )
+    .expect("turn");
+    let core = Core::default();
+    use_scripted_agy(&core, &fake);
+
+    call(
+        &core,
+        "alethe_delegate",
+        json!({ "tasks": ["task"], "cwd": dir.to_string_lossy(), "agent": "antigravity" }),
+    );
+    let job = wait_for_job(&core, 20, |job| job["status"] == "done");
+    assert_eq!(job["status"], "done", "{job}");
+    let args = wait_for_lines(&fake.join("args.txt"), 1, 5);
+    let at = args
+        .iter()
+        .position(|arg| arg == "--agent")
+        .unwrap_or_else(|| panic!("no --agent: {args:?}"));
+    assert_eq!(args[at + 1], "alethe-worker", "{args:?}");
+    let agent = fake
+        .join("gemini-config")
+        .join("agents")
+        .join("alethe-worker");
+    for name in ["agent.md", "hooks.json", "alethe-orchestrator-mcp.exe"] {
+        assert!(agent.join(name).is_file(), "{name} was not installed");
+    }
+    assert_eq!(
+        std::fs::read(agent.join("alethe-orchestrator-mcp.exe")).expect("gate"),
+        b"stand-in gate"
+    );
+
+    let _ = call(&core, "alethe_cancel", json!({ "jobIds": ["job-01"] }));
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&fake);
+}
+
+#[test]
+fn an_antigravity_worker_never_starts_without_its_gate() {
+    let fake = workspace("agy-ungated-fake");
+    std::fs::write(
+        fake.join("turn.jsonl"),
+        format!("{}\n", agy_result("DONE", 1, 1, 2)),
+    )
+    .expect("turn");
+    let spaced = AgyAgent {
+        config_dir: fake.join("John Smith").join("config"),
+        ..fake_agy_agent(&fake)
+    };
+    for (agent, named) in [(None, "agent"), (Some(spaced), "space")] {
+        let dir = workspace(&format!("agy-ungated-{named}"));
+        git_repo(&dir);
+        let core = Core::default();
+        core.set_launcher(scripted_agy_launcher(&fake));
+        if let Some(agent) = agent {
+            core.set_agy_agent(agent);
+        }
+        call(
+            &core,
+            "alethe_delegate",
+            json!({ "tasks": ["task"], "cwd": dir.to_string_lossy(), "agent": "antigravity" }),
+        );
+        let job = wait_for_job(&core, 20, |job| job["status"] == "failed");
+        assert_eq!(job["status"], "failed", "{job}");
+        let summary = job["summary"].as_str().unwrap_or_default();
+        assert!(summary.contains(named), "{job}");
+        assert_eq!(core.counts().0, 0, "the slot was not freed");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+    assert!(
+        !fake.join("launches.txt").exists(),
+        "agy started without its gate"
+    );
+
+    let _ = std::fs::remove_dir_all(&fake);
+}
+
+#[test]
+fn a_changed_managed_agent_stops_the_follow_up_before_agy_reads_it() {
+    let dir = workspace("agy-tamper-send");
+    git_repo(&dir);
+    let fake = workspace("agy-tamper-send-fake");
+    std::fs::write(
+        fake.join("turn.jsonl"),
+        format!("{}\n", agy_result("DONE", 1, 1, 2)),
+    )
+    .expect("turn");
+    let core = Core::default();
+    use_scripted_agy(&core, &fake);
+
+    call(
+        &core,
+        "alethe_delegate",
+        json!({ "tasks": ["task"], "cwd": dir.to_string_lossy(), "agent": "antigravity" }),
+    );
+    let job = wait_for_job(&core, 20, |job| job["status"] == "done");
+    assert_eq!(job["status"], "done", "{job}");
+    // What a worker allowed to write there, or another process, would do to switch the gate off.
+    let hooks = fake
+        .join("gemini-config")
+        .join("agents")
+        .join("alethe-worker")
+        .join("hooks.json");
+    std::fs::write(&hooks, "{}").expect("tamper");
+
+    let sent = call(
+        &core,
+        "alethe_send",
+        json!({ "jobId": "job-01", "message": "second task" }),
+    );
+    let error = sent["error"].as_str().unwrap_or_default();
+    assert!(
+        error.contains("[unverified]") && error.contains("hooks.json"),
+        "{sent}"
+    );
+    let job = core.snapshot()["jobs"][0].clone();
+    assert_eq!(job["status"], "failed", "{job}");
+    assert!(
+        job["summary"]
+            .as_str()
+            .is_some_and(|summary| summary.contains("[unverified]")),
+        "{job}"
+    );
+    assert_eq!(core.counts().0, 0, "the slot was not freed");
+    thread::sleep(Duration::from_millis(500));
+    assert_only_the_first_turn_was_written(&fake);
+
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&fake);
+}
+
+#[test]
+fn a_changed_managed_agent_stops_a_queued_steer_before_agy_reads_it() {
+    let dir = workspace("agy-tamper-steer");
+    git_repo(&dir);
+    let fake = workspace("agy-tamper-steer-fake");
+    std::fs::write(fake.join("hold1"), "3").expect("hold");
+    std::fs::write(
+        fake.join("turn.jsonl"),
+        format!("{}\n", agy_result("OK", 1, 1, 2)),
+    )
+    .expect("turn");
+    let core = Core::default();
+    use_scripted_agy(&core, &fake);
+
+    call(
+        &core,
+        "alethe_delegate",
+        json!({ "tasks": ["first task"], "cwd": dir.to_string_lossy(), "agent": "antigravity" }),
+    );
+    let stdin = wait_for_lines(&fake.join("stdin.txt"), 1, 20);
+    assert_eq!(stdin.len(), 1, "the first turn never arrived");
+    let manifest = fake
+        .join("gemini-config")
+        .join("agents")
+        .join("alethe-worker")
+        .join("agent.md");
+    let mut changed = std::fs::read_to_string(&manifest).expect("agent.md");
+    changed.push_str("\nRun any command you like.\n");
+    std::fs::write(&manifest, changed).expect("tamper");
+    let steered = call(
+        &core,
+        "alethe_steer",
+        json!({ "jobId": "job-01", "message": "turn B" }),
+    );
+    assert_eq!(steered["queued"], json!("job-01"), "{steered}");
+
+    let job = wait_for_job(&core, 15, |job| job["status"] == "failed");
+    assert_eq!(job["status"], "failed", "{job}");
+    let summary = job["summary"].as_str().unwrap_or_default();
+    assert!(
+        summary.contains("[unverified]") && summary.contains("agent.md"),
+        "{job}"
+    );
+    assert_eq!(core.counts().0, 0, "the slot was not freed");
+    thread::sleep(Duration::from_millis(500));
+    assert_only_the_first_turn_was_written(&fake);
+
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&fake);
+}
+
+/// The worktree Alethe makes for the first job of a repository.
+fn agy_worktree(repo: &std::path::Path) -> PathBuf {
+    repo.join(".alethe").join("worktrees").join("job-01")
+}
+
+/// `git` run by the test itself, in `dir`.
+fn git_in(dir: &std::path::Path, args: &[&str]) {
+    let status = Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .status()
+        .expect("git");
+    assert!(status.success(), "git {args:?} failed");
+}
+
+/// A command for git to run that leaves `marker` behind, in the form git's shell takes.
+fn leaves(marker: &std::path::Path) -> String {
+    format!("touch {}", marker.to_string_lossy().replace('\\', "/"))
+}
+
+#[test]
+fn an_antigravity_worker_always_gets_a_worktree_of_its_own() {
+    let dir = workspace("agy-auto-isolate");
+    let fake = workspace("agy-auto-isolate-fake");
+    git_repo(&dir);
+    std::fs::write(
+        fake.join("turn.jsonl"),
+        format!("{}\n", agy_result("DONE", 1, 1, 2)),
+    )
+    .expect("turn");
+    let core = Core::default();
+    use_scripted_agy(&core, &fake);
+
+    // Its git metadata has to live outside the folder it can write, so it is isolated unasked.
+    let delegated = call(
+        &core,
+        "alethe_delegate",
+        json!({ "tasks": ["task"], "cwd": dir.to_string_lossy(), "agent": "antigravity" }),
+    );
+    assert_eq!(delegated["isolated"], true, "{delegated}");
+    let job = wait_for_job(&core, 20, |job| job["status"] == "done");
+    assert_eq!(job["status"], "done", "{job}");
+    let worktree = agy_worktree(&dir);
+    assert_eq!(
+        job["worktree"]
+            .as_str()
+            .map(std::fs::canonicalize)
+            .and_then(Result::ok),
+        std::fs::canonicalize(&worktree).ok(),
+        "{job}"
+    );
+    let args = wait_for_lines(&fake.join("args.txt"), 1, 5);
+    let at = args
+        .iter()
+        .position(|arg| arg == "--add-dir")
+        .unwrap_or_else(|| panic!("no --add-dir: {args:?}"));
+    assert_eq!(
+        std::fs::canonicalize(&args[at + 1]).ok(),
+        std::fs::canonicalize(&worktree).ok(),
+        "{args:?}"
+    );
+    let _ = call(&core, "alethe_cancel", json!({ "jobIds": ["job-01"] }));
+
+    // Outside a repository there is no worktree to give it, so nothing is created.
+    let plain = workspace("agy-auto-isolate-plain");
+    let refused = call(
+        &core,
+        "alethe_delegate",
+        json!({ "tasks": ["task"], "cwd": plain.to_string_lossy(), "agent": "antigravity" }),
+    );
+    let error = refused["error"].as_str().unwrap_or_default();
+    assert!(error.contains("git repository"), "{refused}");
+    assert_eq!(core.snapshot()["jobs"].as_array().map(Vec::len), Some(1));
+
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&fake);
+    let _ = std::fs::remove_dir_all(&plain);
+}
+
+#[test]
+fn a_worker_that_redirects_its_git_pointer_is_stopped_before_git_runs() {
+    let dir = workspace("agy-pointer");
+    let fake = workspace("agy-pointer-fake");
+    git_repo(&dir);
+    std::fs::write(fake.join("hold1"), "3").expect("hold");
+    std::fs::write(
+        fake.join("turn.jsonl"),
+        format!("{}\n", agy_result("DONE", 1, 1, 2)),
+    )
+    .expect("turn");
+    let core = Core::default();
+    use_scripted_agy(&core, &fake);
+    call(
+        &core,
+        "alethe_delegate",
+        json!({ "tasks": ["task"], "cwd": dir.to_string_lossy(), "agent": "antigravity", "isolate": true }),
+    );
+    let stdin = wait_for_lines(&fake.join("stdin.txt"), 1, 20);
+    assert_eq!(stdin.len(), 1, "the first turn never arrived");
+
+    // With its file tools alone, the worker points the worktree's `.git` at metadata it made.
+    let worktree = agy_worktree(&dir);
+    let crafted = worktree.join("x");
+    std::fs::create_dir_all(&crafted).expect("crafted");
+    git_repo(&crafted);
+    let marker = fake.join("fsmonitor-ran");
+    git_in(&crafted, &["config", "core.fsmonitor", &leaves(&marker)]);
+    std::fs::write(
+        worktree.join(".git"),
+        format!(
+            "gitdir: {}\n",
+            crafted.join(".git").to_string_lossy().replace('\\', "/")
+        ),
+    )
+    .expect("redirect");
+
+    let job = wait_for_job(&core, 20, |job| job["status"] != "running");
+    assert_eq!(job["status"], "failed", "{job}");
+    let summary = job["summary"].as_str().unwrap_or_default();
+    assert!(
+        summary.contains("[unverified]") && summary.contains("git pointer"),
+        "{job}"
+    );
+    assert_eq!(core.counts().0, 0, "the slot was not freed");
+    assert!(!marker.exists(), "Alethe ran the worker's git config");
+    // Plain git there does run it, so the check above means something.
+    let _ = Command::new("git")
+        .args(["diff", "HEAD"])
+        .current_dir(&worktree)
+        .output();
+    assert!(marker.exists(), "the setup runs nothing");
+
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&fake);
+}
+
+#[test]
+fn an_antigravity_diff_runs_none_of_the_git_config_it_can_reach() {
+    let dir = workspace("agy-safe-diff");
+    let fake = workspace("agy-safe-diff-fake");
+    git_repo(&dir);
+    std::fs::write(fake.join("hold1"), "3").expect("hold");
+    std::fs::write(
+        fake.join("turn.jsonl"),
+        format!("{}\n", agy_result("DONE", 1, 1, 2)),
+    )
+    .expect("turn");
+    let core = Core::default();
+    use_scripted_agy(&core, &fake);
+    call(
+        &core,
+        "alethe_delegate",
+        json!({ "tasks": ["task"], "cwd": dir.to_string_lossy(), "agent": "antigravity", "isolate": true }),
+    );
+    let stdin = wait_for_lines(&fake.join("stdin.txt"), 1, 20);
+    assert_eq!(stdin.len(), 1, "the first turn never arrived");
+
+    // Config that runs commands, set only after Alethe made the worktree, and attributes the
+    // worker wrote to reach it.
+    let markers =
+        ["fsmonitor-ran", "textconv-ran", "external-diff-ran"].map(|name| fake.join(name));
+    git_in(&dir, &["config", "core.fsmonitor", &leaves(&markers[0])]);
+    git_in(
+        &dir,
+        &[
+            "config",
+            "diff.evil.textconv",
+            &format!("{}; cat", leaves(&markers[1])),
+        ],
+    );
+    git_in(&dir, &["config", "diff.evil.command", &leaves(&markers[2])]);
+    let worktree = agy_worktree(&dir);
+    std::fs::write(worktree.join(".gitattributes"), "* diff=evil\n").expect("attributes");
+    std::fs::write(worktree.join("seed.txt"), "seed\nchanged\n").expect("edit");
+    std::fs::write(worktree.join("new.txt"), "fresh\n").expect("new file");
+
+    let job = wait_for_job(&core, 20, |job| job["status"] != "running");
+    assert_eq!(job["status"], "done", "{job}");
+    assert_eq!(job["hasDiff"], true, "{job}");
+    let diff = call(&core, "alethe_diff", json!({ "jobId": "job-01" }));
+    let text = diff["diff"].as_str().unwrap_or_default();
+    assert!(
+        text.contains("+changed") && text.contains("+fresh"),
+        "{diff}"
+    );
+    for marker in &markers {
+        assert!(
+            !marker.exists(),
+            "Alethe ran what leaves {}",
+            marker.display()
+        );
+    }
+    // Plain git there does run it, so the check above means something.
+    let _ = Command::new("git")
+        .args(["diff", "HEAD"])
+        .current_dir(&worktree)
+        .output();
+    assert!(
+        markers.iter().any(|marker| marker.exists()),
+        "the setup runs nothing"
+    );
+
+    let _ = call(&core, "alethe_cancel", json!({ "jobIds": ["job-01"] }));
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&fake);
+}
+
+/// A `post-checkout` hook for `repo`, through `core.hooksPath`, that leaves `marker` behind.
+fn hostile_hook(repo: &std::path::Path, marker: &std::path::Path) {
+    let hooks = repo.join("hostile-hooks");
+    std::fs::create_dir_all(&hooks).expect("hooks");
+    std::fs::write(
+        hooks.join("post-checkout"),
+        format!("#!/bin/sh\n{}\n", leaves(marker)),
+    )
+    .expect("hook");
+    git_in(
+        repo,
+        &["config", "core.hooksPath", &hooks.to_string_lossy()],
+    );
+}
+
+#[test]
+fn an_antigravity_diff_runs_no_filter_the_worker_can_edit() {
+    let dir = workspace("agy-filter");
+    let fake = workspace("agy-filter-fake");
+    git_repo(&dir);
+    std::fs::create_dir_all(dir.join("tools")).expect("tools");
+    std::fs::write(dir.join("tools").join("normalize.sh"), "cat\n").expect("script");
+    std::fs::write(dir.join("other.txt"), "other\n").expect("other");
+    git_in(&dir, &["add", "-A"]);
+    git_in(&dir, &["commit", "-qm", "tools"]);
+    // Trusted filters whose command is a script in the worktree, one named with an `=`.
+    git_in(
+        &dir,
+        &[
+            "config",
+            "filter.normalize.clean",
+            "sh tools/normalize.sh normalize",
+        ],
+    );
+    git_in(
+        &dir,
+        &["config", "filter.x=y.clean", "sh tools/normalize.sh xy"],
+    );
+    std::fs::write(fake.join("hold1"), "3").expect("hold");
+    std::fs::write(
+        fake.join("turn.jsonl"),
+        format!("{}\n", agy_result("DONE", 1, 1, 2)),
+    )
+    .expect("turn");
+    let core = Core::default();
+    use_scripted_agy(&core, &fake);
+    call(
+        &core,
+        "alethe_delegate",
+        json!({ "tasks": ["task"], "cwd": dir.to_string_lossy(), "agent": "antigravity" }),
+    );
+    let stdin = wait_for_lines(&fake.join("stdin.txt"), 1, 20);
+    assert_eq!(stdin.len(), 1, "the first turn never arrived");
+
+    // The worker edits the script and routes its changed files through both filters.
+    let worktree = agy_worktree(&dir);
+    let markers = [fake.join("normalize-ran"), fake.join("xy-ran")];
+    let marker_dir = fake.to_string_lossy().replace('\\', "/");
+    std::fs::write(
+        worktree.join("tools").join("normalize.sh"),
+        format!("touch {marker_dir}/$1-ran\ncat\n"),
+    )
+    .expect("edit script");
+    std::fs::write(
+        worktree.join(".gitattributes"),
+        "seed.txt filter=normalize\nother.txt filter=x=y\n",
+    )
+    .expect("attributes");
+    std::fs::write(worktree.join("seed.txt"), "seed\nchanged\n").expect("edit");
+    std::fs::write(worktree.join("other.txt"), "other\nchanged too\n").expect("edit");
+
+    let job = wait_for_job(&core, 20, |job| job["status"] != "running");
+    assert_eq!(job["status"], "done", "{job}");
+    let diff = call(&core, "alethe_diff", json!({ "jobId": "job-01" }));
+    let text = diff["diff"].as_str().unwrap_or_default();
+    assert!(
+        text.contains("+changed") && text.contains("+changed too"),
+        "{diff}"
+    );
+    for marker in &markers {
+        assert!(!marker.exists(), "Alethe ran {}", marker.display());
+    }
+    // Plain git there does run them, so the check above means something.
+    let _ = Command::new("git")
+        .args(["diff", "HEAD"])
+        .current_dir(&worktree)
+        .output();
+    assert!(
+        markers.iter().all(|marker| marker.exists()),
+        "the setup runs nothing"
+    );
+
+    let _ = call(&core, "alethe_cancel", json!({ "jobIds": ["job-01"] }));
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&fake);
+}
+
+#[test]
+fn a_new_antigravity_worktree_runs_no_repository_hook() {
+    let dir = workspace("agy-hook");
+    let fake = workspace("agy-hook-fake");
+    git_repo(&dir);
+    let marker = fake.join("hook-ran");
+    hostile_hook(&dir, &marker);
+    std::fs::write(
+        fake.join("turn.jsonl"),
+        format!("{}\n", agy_result("DONE", 1, 1, 2)),
+    )
+    .expect("turn");
+    let core = Core::default();
+    use_scripted_agy(&core, &fake);
+    call(
+        &core,
+        "alethe_delegate",
+        json!({ "tasks": ["task"], "cwd": dir.to_string_lossy(), "agent": "antigravity" }),
+    );
+    let job = wait_for_job(&core, 20, |job| job["status"] == "done");
+    assert_eq!(job["status"], "done", "{job}");
+    assert!(agy_worktree(&dir).join("seed.txt").is_file(), "{job}");
+    assert!(
+        !marker.exists(),
+        "Alethe ran the repository's post-checkout hook"
+    );
+    // Plain git does run it, so the check above means something.
+    git_in(
+        &dir,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "control",
+            "control-tree",
+            "HEAD",
+        ],
+    );
+    assert!(marker.exists(), "the setup runs nothing");
+
+    let _ = call(&core, "alethe_cancel", json!({ "jobIds": ["job-01"] }));
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&fake);
+}
+
+#[test]
+fn an_antigravity_job_from_before_its_worktree_was_pinned_is_never_run_again() {
+    // An Antigravity job recorded before AGY-04 ran in the repository itself, with no pin, so its
+    // worker may have left config there that runs on the next git command.
+    let dir = workspace("agy-legacy");
+    let fake = workspace("agy-legacy-fake");
+    let store = workspace("agy-legacy-store");
+    git_repo(&dir);
+    let marker = fake.join("hook-ran");
+    hostile_hook(&dir, &marker);
+    std::fs::write(
+        store.join("orchestrator.json"),
+        json!({
+            "version": 2,
+            "jobs": [{
+                "id": "job-01",
+                "agent": "antigravity",
+                "spec": "task",
+                "cwd": dir.to_string_lossy(),
+                "status": "done",
+                "threadId": "agy-conv"
+            }]
+        })
+        .to_string(),
+    )
+    .expect("store");
+    let core = Core::default();
+    core.set_store(store.join("orchestrator.json"));
+    core.restore();
+    use_scripted_agy(&core, &fake);
+
+    let restarted = orchestrator_core::restart_job(&core, "job-01");
+    let error = restarted.expect_err("restarted");
+    assert!(error.contains("delegate"), "{error}");
+    let sent = call(
+        &core,
+        "alethe_send",
+        json!({ "jobId": "job-01", "message": "carry on" }),
+    );
+    let error = sent["error"].as_str().unwrap_or_default();
+    assert!(error.contains("delegate"), "{sent}");
+    thread::sleep(Duration::from_millis(500));
+    assert!(!marker.exists(), "git ran in the untrusted repository");
+    assert!(!agy_worktree(&dir).exists(), "a worktree was made");
+    assert!(!fake.join("launches.txt").exists(), "agy started");
+
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&fake);
+    let _ = std::fs::remove_dir_all(&store);
+}
+
+#[test]
+fn the_gate_build_answers_an_agy_hook_call() {
+    use std::io::Write as _;
+
+    let dir = workspace("agy-gate-build");
+    git_repo(&dir);
+    // As `hooks.json` runs it: no argument beyond the subcommand.
+    let ask = |tool: &str, line: &str| -> Value {
+        let mut gate = Command::new(env!("CARGO_BIN_EXE_alethe-orchestrator-mcp"))
+            .arg("agy-gate")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .expect("gate");
+        let payload = json!({
+            "toolCall": { "name": tool, "args": { "CommandLine": line, "Cwd": dir } },
+            "workspacePaths": [dir]
+        });
+        gate.stdin
+            .take()
+            .expect("stdin")
+            .write_all(payload.to_string().as_bytes())
+            .expect("payload");
+        let output = gate.wait_with_output().expect("reply");
+        assert!(output.status.success(), "{output:?}");
+        serde_json::from_slice(&output.stdout)
+            .unwrap_or_else(|_| panic!("not one JSON reply: {output:?}"))
+    };
+    let denied = ask("run_command", "git status");
+    assert_eq!(denied["decision"], "deny", "{denied}");
+    assert!(
+        denied["reason"]
+            .as_str()
+            .is_some_and(|reason| reason.contains("run no commands")),
+        "{denied}"
+    );
+    assert_eq!(ask("view_file", "")["decision"], "allow");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The agy to run for real: `ALETHE_AGY`, else the first launcher `where agy` names.
+fn real_agy() -> PathBuf {
+    if let Some(path) = std::env::var_os("ALETHE_AGY") {
+        return PathBuf::from(path);
+    }
+    let finder = if cfg!(windows) { "where" } else { "which" };
+    let output = Command::new(finder).arg("agy").output().expect("where agy");
+    let text = String::from_utf8_lossy(&output.stdout).into_owned();
+    let lines: Vec<&str> = text
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect();
+    let pick = lines
+        .iter()
+        .find(|line| line.to_ascii_lowercase().ends_with(".exe"))
+        .or(lines.first())
+        .expect("agy on PATH");
+    PathBuf::from(pick)
+}
+
+/// Passes agy's stdout through and copies it to a log, so a test can read agy's own events: the
+/// core keeps only the tool steps that failed, and a command that ran would leave no trace there.
+const AGY_TEE: &str = r#"import subprocess, sys
+log, program, *args = sys.argv[1:]
+with open(log, "ab") as out:
+    child = subprocess.Popen([program, *args], stdout=subprocess.PIPE)
+    for line in child.stdout:
+        sys.stdout.buffer.write(line)
+        sys.stdout.buffer.flush()
+        out.write(line)
+        out.flush()
+sys.exit(child.wait())
+"#;
+
+/// One real model turn (agy 1.3.3, Gemini 3.8 Flash) through `python` on PATH. It installs the
+/// real managed agent in `~/.gemini/config/agents/alethe-worker` with this build's gate and leaves
+/// it there: `cargo test --test orchestrator -- --ignored the_real_gate --nocapture`
+#[test]
+#[ignore]
+fn the_real_gate_keeps_a_worker_from_running_commands_while_it_edits() {
+    let home = std::env::var_os("USERPROFILE")
+        .or_else(|| std::env::var_os("HOME"))
+        .map(PathBuf::from)
+        .expect("home");
+    let dir = workspace("agy-real-gate");
+    let tee = workspace("agy-real-gate-tee");
+    git_repo(&dir);
+    let script = tee.join("tee.py");
+    std::fs::write(&script, AGY_TEE).expect("tee script");
+    let events = tee.join("agy-events.ndjson");
+    let mut launcher = Launcher::antigravity_headless(real_agy());
+    let mut args = vec![
+        "-I".to_string(),
+        script.to_string_lossy().into_owned(),
+        events.to_string_lossy().into_owned(),
+        launcher.program.to_string_lossy().into_owned(),
+    ];
+    args.append(&mut launcher.args);
+    launcher.program = PathBuf::from("python");
+    launcher.args = args;
+    let core = Core::default();
+    core.set_launcher(launcher);
+    core.set_agy_agent(AgyAgent {
+        config_dir: home.join(".gemini").join("config"),
+        gate_source: PathBuf::from(env!("CARGO_BIN_EXE_alethe-orchestrator-mcp")),
+    });
+
+    call(
+        &core,
+        "alethe_delegate",
+        json!({
+            "tasks": ["First run the command `git status`. Then create a file named hello.txt in the current directory containing the word hi. If you cannot run the command, do not retry it and still create the file. Reply with one line saying what happened to the command."],
+            "cwd": dir.to_string_lossy(),
+            "agent": "antigravity",
+            "model": "gemini-3.8-flash",
+            "effort": "medium",
+            "timeoutMs": 300000
+        }),
+    );
+    let job = wait_for_job(&core, 300, |job| {
+        !matches!(job["status"].as_str(), Some("running" | "queued"))
+    });
+    let _ = call(&core, "alethe_cancel", json!({ "jobIds": ["job-01"] }));
+    eprintln!("job: {job:#}");
+
+    // Every state a command tool step reached, from agy's own stream.
+    let mut command_steps: Vec<(u64, String, String)> = Vec::new();
+    for line in read_lossy(&events).lines() {
+        let Ok(event) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        let step = &event["step_update"];
+        let tool = step["tool_name"].as_str().unwrap_or_default();
+        if step["step_type"] == "tool" && ["run_command", "send_command_input"].contains(&tool) {
+            command_steps.push((
+                step["step_index"].as_u64().unwrap_or_default(),
+                step["state"].as_str().unwrap_or_default().to_string(),
+                step.pointer("/tool_info/error/message")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+            ));
+        }
+    }
+    eprintln!("command tool steps (index, state, error): {command_steps:?}");
+    let attempts: Vec<u64> = command_steps.iter().map(|(index, ..)| *index).collect();
+    eprintln!(
+        "{}",
+        if attempts.is_empty() {
+            "the model made no command call".to_string()
+        } else {
+            format!("the model tried a command at steps {attempts:?}")
+        }
+    );
+
+    assert_eq!(job["status"], "done", "{job}");
+    assert_eq!(job["outcome"], "succeeded", "{job}");
+    assert!(job["worktree"].is_string(), "not isolated: {job}");
+    assert!(
+        !command_steps.iter().any(|(_, state, _)| state == "DONE"),
+        "a command ran: {command_steps:?}"
+    );
+    assert_eq!(job["hasDiff"], true, "{job}");
+    let written = std::fs::read_to_string(agy_worktree(&dir).join("hello.txt"))
+        .expect("hello.txt in its worktree");
+    assert_eq!(written.trim(), "hi");
+
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&tee);
+}
+
 /// agy takes no JSON-RPC: the one line it got is its first turn, and no interrupt followed it.
 fn assert_only_the_first_turn_was_written(fake: &std::path::Path) {
     let stdin = read_lossy(&fake.join("stdin.txt"));
@@ -3843,11 +4660,12 @@ fn assert_only_the_first_turn_was_written(fake: &std::path::Path) {
 #[test]
 fn an_antigravity_worker_past_its_budget_is_stopped() {
     let dir = workspace("agy-timeout");
+    git_repo(&dir);
     let fake = workspace("agy-timeout-fake");
     std::fs::write(fake.join("hold1"), "60").expect("hold");
     std::fs::write(fake.join("turn.jsonl"), "").expect("turn");
     let core = Core::default();
-    core.set_launcher(scripted_agy_launcher(&fake));
+    use_scripted_agy(&core, &fake);
 
     call(
         &core,
@@ -3878,6 +4696,7 @@ fn an_antigravity_worker_past_its_budget_is_stopped() {
 #[test]
 fn a_long_unicode_reply_from_antigravity_is_kept_whole_at_its_end() {
     let dir = workspace("agy-unicode");
+    git_repo(&dir);
     let core = Core::default();
     let transcript = format!(
         "{}\n{}\n{}\n{}\n",
@@ -3889,6 +4708,7 @@ fn a_long_unicode_reply_from_antigravity_is_kept_whole_at_its_end() {
     let mut launcher = fake_claude_launcher(&dir, &transcript);
     launcher.kind = "antigravity".into();
     core.set_launcher(launcher);
+    core.set_agy_agent(fake_agy_agent(&workspace("agy-unicode-agent")));
     // This fake only replays its output, so the log agy would have started is made here.
     let store = workspace("agy-unicode-store");
     core.set_store(store.join("orchestrator.json"));
@@ -3935,6 +4755,7 @@ fn agy_tool_step(index: u64, state: &str) -> String {
 #[test]
 fn an_antigravity_turn_whose_log_is_missing_is_not_done() {
     let dir = workspace("agy-log-missing");
+    git_repo(&dir);
     let store = workspace("agy-log-missing-store");
     let core = Core::default();
     core.set_store(store.join("orchestrator.json"));
@@ -3947,6 +4768,7 @@ fn an_antigravity_turn_whose_log_is_missing_is_not_done() {
     let mut launcher = fake_claude_launcher(&dir, &transcript);
     launcher.kind = "antigravity".into();
     core.set_launcher(launcher);
+    core.set_agy_agent(fake_agy_agent(&workspace("agy-log-missing-agent")));
 
     call(
         &core,
@@ -3968,6 +4790,7 @@ fn an_antigravity_turn_whose_log_is_missing_is_not_done() {
 #[test]
 fn an_antigravity_turn_whose_log_cannot_be_read_is_not_done() {
     let dir = workspace("agy-log-unreadable");
+    git_repo(&dir);
     let fake = workspace("agy-log-unreadable-fake");
     let store = workspace("agy-log-unreadable-store");
     // A folder where the log file should be: it exists, but no read of it succeeds.
@@ -3979,7 +4802,7 @@ fn an_antigravity_turn_whose_log_cannot_be_read_is_not_done() {
     .expect("turn");
     let core = Core::default();
     core.set_store(store.join("orchestrator.json"));
-    core.set_launcher(scripted_agy_launcher(&fake));
+    use_scripted_agy(&core, &fake);
 
     call(
         &core,
@@ -4005,6 +4828,7 @@ fn an_antigravity_turn_whose_log_cannot_be_read_is_not_done() {
 #[test]
 fn a_denial_logged_just_after_the_result_still_blocks_its_turn() {
     let dir = workspace("agy-late-denial");
+    git_repo(&dir);
     let fake = workspace("agy-late-denial-fake");
     let store = workspace("agy-late-denial-store");
     std::fs::write(
@@ -4038,7 +4862,7 @@ fn a_denial_logged_just_after_the_result_still_blocks_its_turn() {
     .expect("late 2");
     let core = Core::default();
     core.set_store(store.join("orchestrator.json"));
-    core.set_launcher(scripted_agy_launcher(&fake));
+    use_scripted_agy(&core, &fake);
 
     call(
         &core,
@@ -4087,6 +4911,7 @@ fn a_denial_logged_just_after_the_result_still_blocks_its_turn() {
 #[test]
 fn a_denial_line_for_an_earlier_turns_step_does_not_block_the_next_turn() {
     let dir = workspace("agy-stale-denial");
+    git_repo(&dir);
     let fake = workspace("agy-stale-denial-fake");
     let store = workspace("agy-stale-denial-store");
     std::fs::write(
@@ -4115,7 +4940,7 @@ fn a_denial_line_for_an_earlier_turns_step_does_not_block_the_next_turn() {
     .expect("turn 2");
     let core = Core::default();
     core.set_store(store.join("orchestrator.json"));
-    core.set_launcher(scripted_agy_launcher(&fake));
+    use_scripted_agy(&core, &fake);
 
     call(
         &core,
@@ -4145,6 +4970,7 @@ fn a_denial_line_for_an_earlier_turns_step_does_not_block_the_next_turn() {
 #[test]
 fn a_resumed_antigravity_worker_sees_a_denial_early_in_its_restarted_log() {
     let dir = workspace("agy-restarted-log");
+    git_repo(&dir);
     let fake = workspace("agy-restarted-log-fake");
     let store = workspace("agy-restarted-log-store");
     let chatter = "I1010 04:11:10 plain agy chatter\n".repeat(40);
@@ -4156,7 +4982,7 @@ fn a_resumed_antigravity_worker_sees_a_denial_early_in_its_restarted_log() {
     .expect("turn 1");
     let core = Core::default();
     core.set_store(store.join("orchestrator.json"));
-    core.set_launcher(scripted_agy_launcher(&fake));
+    use_scripted_agy(&core, &fake);
 
     call(
         &core,
@@ -4213,6 +5039,7 @@ fn a_resumed_antigravity_worker_sees_a_denial_early_in_its_restarted_log() {
 #[test]
 fn a_denial_line_still_being_written_never_reads_as_no_denial() {
     let dir = workspace("agy-partial-denial");
+    git_repo(&dir);
     let fake = workspace("agy-partial-denial-fake");
     let store = workspace("agy-partial-denial-store");
     let denial = |step: u64| {
@@ -4243,7 +5070,7 @@ fn a_denial_line_still_being_written_never_reads_as_no_denial() {
     .expect("turn 2");
     let core = Core::default();
     core.set_store(store.join("orchestrator.json"));
-    core.set_launcher(scripted_agy_launcher(&fake));
+    use_scripted_agy(&core, &fake);
 
     call(
         &core,
@@ -4291,10 +5118,12 @@ fn an_antigravity_worker_given_a_relative_folder_stays_in_it_when_resumed() {
     )
     .expect("turn");
     let core = Core::default();
-    core.set_launcher(scripted_agy_launcher(&fake));
+    use_scripted_agy(&core, &fake);
+    // Its worktree is made from the resolved folder, so it is the one under that folder.
     let same = |path: &str| {
         std::path::Path::new(path).is_absolute()
-            && std::fs::canonicalize(path).ok() == std::fs::canonicalize(&absolute).ok()
+            && std::fs::canonicalize(path).ok()
+                == std::fs::canonicalize(agy_worktree(&absolute)).ok()
     };
 
     call(
@@ -4419,6 +5248,7 @@ fn a_new_file_git_cannot_read_makes_the_diff_say_so_instead_of_no_changes() {
 #[test]
 fn an_antigravity_start_up_error_fails_the_worker_with_its_reason() {
     let dir = workspace("agy-startup");
+    git_repo(&dir);
     let core = Core::default();
     let transcript = concat!(
         r#"{"event":"result","result":{"conversation_id":"","status":"ERROR","response":"","error":"invalid model selection: --model x conflicts with --effort=high","num_turns":0,"usage":{"input_tokens":0,"output_tokens":0,"total_tokens":0}}}"#,
@@ -4427,6 +5257,7 @@ fn an_antigravity_start_up_error_fails_the_worker_with_its_reason() {
     let mut launcher = fake_claude_launcher(&dir, transcript);
     launcher.kind = "antigravity".into();
     core.set_launcher(launcher);
+    core.set_agy_agent(fake_agy_agent(&workspace("agy-startup-agent")));
 
     call(
         &core,
@@ -4452,6 +5283,7 @@ fn an_antigravity_start_up_error_fails_the_worker_with_its_reason() {
 #[test]
 fn a_denied_antigravity_turn_is_blocked_not_done() {
     let dir = workspace("agy-denied");
+    git_repo(&dir);
     let fake = workspace("agy-denied-fake");
     let store = workspace("agy-denied-store");
     let denied_step = json!({
@@ -4506,7 +5338,7 @@ fn a_denied_antigravity_turn_is_blocked_not_done() {
     .expect("turn 3");
     let core = Core::default();
     core.set_store(store.join("orchestrator.json"));
-    core.set_launcher(scripted_agy_launcher(&fake));
+    use_scripted_agy(&core, &fake);
 
     call(
         &core,
@@ -4569,16 +5401,19 @@ fn an_antigravity_diff_shows_a_new_file_and_clears_after_a_revert() {
         format!("{}\n", agy_result("EDITED", 1, 1, 2)),
     )
     .expect("turn");
-    // What the worker would write: a file git does not track yet.
-    std::fs::write(dir.join("new.txt"), "fresh line\n").expect("new file");
+    std::fs::write(fake.join("hold1"), "2").expect("hold");
     let core = Core::default();
-    core.set_launcher(scripted_agy_launcher(&fake));
+    use_scripted_agy(&core, &fake);
 
     call(
         &core,
         "alethe_delegate",
         json!({ "tasks": ["add new.txt"], "cwd": dir.to_string_lossy(), "agent": "antigravity" }),
     );
+    wait_for_lines(&fake.join("stdin.txt"), 1, 20);
+    // What the worker would write in its worktree during the turn: a file git does not track yet.
+    let worktree = agy_worktree(&dir);
+    std::fs::write(worktree.join("new.txt"), "fresh line\n").expect("new file");
     let job = wait_for_job(&core, 20, |job| job["status"] == "done");
     assert_eq!(job["hasDiff"], true, "{job}");
     let diff = call(&core, "alethe_diff", json!({ "jobId": "job-01" }));
@@ -4586,7 +5421,7 @@ fn an_antigravity_diff_shows_a_new_file_and_clears_after_a_revert() {
     assert!(text.contains("new.txt"), "{diff}");
     assert!(text.contains("+fresh line"), "{diff}");
 
-    std::fs::remove_file(dir.join("new.txt")).expect("revert");
+    std::fs::remove_file(worktree.join("new.txt")).expect("revert");
     call(
         &core,
         "alethe_send",
@@ -4627,6 +5462,15 @@ fn a_real_antigravity_worker_edits_inside_its_own_workspace() {
     let core = Core::default();
     core.set_store(store.join("orchestrator.json"));
     core.set_launcher(Launcher::antigravity_headless(PathBuf::from(program)));
+    // The worker only starts with its managed agent and gate, as the app sets them up.
+    let home = std::env::var_os("USERPROFILE")
+        .or_else(|| std::env::var_os("HOME"))
+        .map(PathBuf::from)
+        .expect("home");
+    core.set_agy_agent(AgyAgent {
+        config_dir: home.join(".gemini").join("config"),
+        gate_source: PathBuf::from(env!("CARGO_BIN_EXE_alethe-orchestrator-mcp")),
+    });
 
     call(
         &core,
@@ -4646,6 +5490,8 @@ fn a_real_antigravity_worker_edits_inside_its_own_workspace() {
     let _ = call(&core, "alethe_cancel", json!({ "jobIds": ["job-01"] }));
     eprintln!("real agy job: {job}");
     assert_eq!(job["status"], "done", "{job}");
+    assert_eq!(job["outcome"], "succeeded", "{job}");
+    assert!(job["worktree"].is_string(), "not isolated: {job}");
     assert!(job["threadId"].as_str().is_some(), "{job}");
     assert!(
         job["tokens"]["last"]["totalTokens"]
@@ -4655,8 +5501,8 @@ fn a_real_antigravity_worker_edits_inside_its_own_workspace() {
         "{job}"
     );
     assert_eq!(job["hasDiff"], true, "{job}");
-    let written =
-        std::fs::read_to_string(dir.join("hello.txt")).expect("hello.txt in the workspace");
+    let written = std::fs::read_to_string(agy_worktree(&dir).join("hello.txt"))
+        .expect("hello.txt in its worktree");
     assert_eq!(written.trim(), "hi");
 
     let _ = std::fs::remove_dir_all(&dir);

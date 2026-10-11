@@ -389,6 +389,23 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ### Changed
 
+- **Antigravity workers edit files but run no commands.** Each worker now runs as the
+  `alethe-worker` agy agent, which Alethe installs and keeps up to date in
+  `~/.gemini/config/agents/alethe-worker/`, without your own agy hooks, rules, GEMINI.md or MCP
+  servers. The agent can read, search and edit files in its workspace but has no command tool, and
+  its hook denies any command call with a reason the worker reads while its turn goes on: git,
+  tests, builds and package scripts no longer run inside the worker. It says in its reply what
+  should run, and the coordinator runs it after the turn. Before every turn Alethe checks that the
+  agent's files are unchanged; if one changed, the worker stops with an `[unverified]` reason
+  instead of receiving the turn. A worker never starts when its gate cannot be installed, for
+  example when the user folder path contains a space.
+- **Antigravity workers always get their own git worktree.** Delegating to Antigravity now isolates
+  the worker even without `isolate`, so its folder must be in a git repository. Alethe reads the
+  worker's changes through the git metadata it recorded when it made the worktree, and neither that
+  nor making the worktree runs the repository's hooks, filters, fsmonitor or external diff tools.
+  A worker that changed its worktree's `.git` file is stopped with an `[unverified]` reason. An
+  Antigravity worker from an earlier version, which ran without such a worktree, is not restarted
+  or resumed: delegate its task again.
 - **Pick the shell per terminal.** New terminal and New tab offer a Shell picker for Shell tabs,
   listing the shells found on this machine, so Windows PowerShell can run next to PowerShell 7
   without changing the default shell in Preferences. Each tab keeps its shell across restarts; if

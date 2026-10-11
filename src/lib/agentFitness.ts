@@ -1,5 +1,5 @@
 import type { MessageKey } from './i18n/messages/en'
-import type { ClaudeUsage, CodexUsage } from './tauri/usage'
+import type { AntigravityUsage, ClaudeUsage, CodexUsage } from './tauri/usage'
 
 export type AgentFitness = {
   worst: string
@@ -19,11 +19,16 @@ function isoFromMs(ms: number): string | null {
   return ms > 0 ? new Date(ms).toISOString() : null
 }
 
-/** Human name of the window a fitness `worst` label stands for; any other label is a model limit. */
+/**
+ * Human name of the window a fitness `worst` label stands for; any other label is a model limit.
+ * Antigravity labels name its quota buckets, which are not weekly windows.
+ */
 export function quotaWindowLabel(
   worst: string,
   t: (key: MessageKey, params?: Record<string, string | number>) => string,
+  agent?: string,
 ): string {
+  if (agent === 'antigravity') return t('orchestrator.quotaWindowBucket', { bucket: worst })
   if (worst === '5h') return t('orchestrator.quotaWindow5h')
   if (worst === 'week') return t('orchestrator.quotaWindowWeek')
   if (worst === 'opus') return t('orchestrator.quotaWindowOpus')
@@ -75,6 +80,29 @@ export function codexFitness(usage: CodexUsage): AgentFitness {
     used: Math.round(worst.used),
     resetsAt: worst.resetsAt,
     plan: usage.plan || undefined,
+    rateLimited: usage.rate_limited,
+  }
+}
+
+/**
+ * Antigravity meters model groups apart, but the core keeps one reading per vendor, so the tightest
+ * bucket stands for all of them. A role on a model with room left can still read as running out.
+ */
+export function antigravityFitness(usage: AntigravityUsage): AgentFitness {
+  const worst =
+    usage.buckets.length > 0
+      ? worstOf(
+          usage.buckets.map((bucket) => ({
+            label: bucket.label,
+            used: bucket.used_percent,
+            resetsAt: bucket.resets_at || null,
+          })),
+        )
+      : { label: 'quota', used: usage.used_percent, resetsAt: null }
+  return {
+    worst: worst.label,
+    used: Math.round(worst.used),
+    resetsAt: worst.resetsAt,
     rateLimited: usage.rate_limited,
   }
 }

@@ -44,6 +44,17 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ### Added
 
+- **Antigravity workers in orchestration.** The lead can delegate to Antigravity (`agy`) next to
+  Claude Code and Codex, and a role in Preferences > Orchestration can run on it with the approved
+  models: Claude Sonnet 5.5 (medium or high), Claude Opus 5.5 High, and Gemini 3.8 Flash (medium or
+  high). The worker runs headless in its workspace without the permission bypass: it edits files on
+  its own, runs only the exact commands allowed in the `alethe-worker` agy project, and a turn where
+  agy denied a command ends as blocked instead of done. Follow-ups reuse the same process, a steer
+  waits for the current turn, and each turn reports its own tokens and a diff that includes new
+  files. Read-only and approval requests are refused for it, and the orchestrator itself stays
+  Claude Code or Codex. With Antigravity usage reading on, its quota feeds the same headroom hints
+  and warnings, as one reading for the whole vendor
+  ([#218](https://github.com/Kc1t/alethe-agents/issues/218)).
 - **Window freezes are logged.** When the app's main thread stops answering for two seconds, one
   `app.stall` line goes to `app-events.log` with how long it had been blocked and the last command
   it ran, and an `app.stall.end` line gives the whole length once it answers again, so a frozen
@@ -539,6 +550,8 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ### Fixed
 
+- **A Claude worker's diff shows the files it created**, and it clears once the worker reverts its
+  changes instead of keeping the last one.
 - **Agent CLIs installed with both a `.cmd` and an `.exe` launch the `.exe`**, so the arguments you
   configure reach the agent unchanged instead of going through cmd.exe, which expanded `%VAR%` and
   split them on quotes. The PowerShell scripts that connect Codex to Alethe also quote typographic

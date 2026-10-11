@@ -4,6 +4,7 @@ import { useEffect, useId, useState } from 'react'
 import { agentLabel } from '../../../lib/agentProviders'
 import { useT } from '../../../lib/i18n'
 import {
+  ANTIGRAVITY_MODELS,
   canFallBackToName,
   CLAUDE_EFFORTS,
   CODEX_EFFORTS,
@@ -20,7 +21,7 @@ import controls from '../controls.module.css'
 import styles from './OrchestrationPage.module.css'
 import { SettingsSection } from './primitives'
 
-const AGENTS: OrchestrationRole['agent'][] = ['codex', 'claude']
+const AGENTS: OrchestrationRole['agent'][] = ['codex', 'claude', 'antigravity']
 const ORCHESTRATORS: NonNullable<OrchestrationRole['orchestrator']>[] = ['claude', 'codex']
 // One per column of the roles table, but the last one, which holds the remove button.
 const ROLE_HEADERS = [
@@ -102,6 +103,18 @@ export function OrchestrationPage() {
     return [...new Set(listed.flatMap((option) => option.efforts))]
   }
 
+  // An Antigravity model this list does not know, or agy's default, gets no effort: agy refuses
+  // one next to a variant id.
+  const effortsFor = (
+    role: Pick<OrchestrationRole, 'agent'>,
+    model: string | null,
+  ): readonly string[] =>
+    role.agent === 'codex'
+      ? effortsOf(model)
+      : role.agent === 'antigravity'
+        ? (ANTIGRAVITY_MODELS[model ?? ''] ?? [])
+        : CLAUDE_EFFORTS
+
   // A rename is saved only once the orchestrator accepts the name and no other row for the same
   // orchestrator has it, so it can never hand one role's name, and what that role allows, to another.
   const renameRole = (index: number, role: OrchestrationRole, text: string) => {
@@ -135,7 +148,7 @@ export function OrchestrationPage() {
   const setModel = (index: number, role: OrchestrationRole, value: string) => {
     if (value !== '' && !isOrchestrationName(value)) return
     const model = value || null
-    const efforts: readonly string[] = role.agent === 'codex' ? effortsOf(model) : CLAUDE_EFFORTS
+    const efforts = effortsFor(role, model)
     const effort = role.effort && efforts.includes(role.effort) ? role.effort : null
     saveRole(index, { model, effort })
   }
@@ -144,7 +157,9 @@ export function OrchestrationPage() {
     const listed =
       role.agent === 'codex'
         ? (models ?? []).map((option) => ({ value: option.model, label: option.name }))
-        : []
+        : role.agent === 'antigravity'
+          ? Object.keys(ANTIGRAVITY_MODELS).map((model) => ({ value: model, label: model }))
+          : []
     const current =
       role.model && !listed.some((option) => option.value === role.model)
         ? [{ value: role.model, label: role.model }]
@@ -344,7 +359,7 @@ export function OrchestrationPage() {
                       ariaLabel={t('prefs.orchestrationEffortFor', { name: label })}
                       options={[
                         { value: '', label: t('prefs.orchestrationModelDefault') },
-                        ...(codex ? effortsOf(role.model) : CLAUDE_EFFORTS).map((effort) => ({
+                        ...effortsFor(role, role.model).map((effort) => ({
                           value: effort,
                           label: effort,
                         })),

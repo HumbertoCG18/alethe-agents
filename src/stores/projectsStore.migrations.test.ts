@@ -295,6 +295,35 @@ describe('preference normalization', () => {
     })
   })
 
+  // Antigravity worker roles (#218).
+  it('keeps an Antigravity worker role and drops what agy cannot enforce', () => {
+    const implementer = {
+      name: 'implementer',
+      agent: 'antigravity' as const,
+      model: 'claude-sonnet-5-5',
+      effort: 'high',
+      readOnly: false,
+      timeoutSeconds: null,
+      orchestrator: 'claude' as const,
+    }
+    const saved = normalizePreferences({
+      ...DEFAULT_PREFERENCES,
+      orchestration: {
+        ...DEFAULT_PREFERENCES.orchestration,
+        roles: [
+          implementer,
+          // agy has no read-only mode, so this would run writable.
+          { ...implementer, name: 'auditor', readOnly: true },
+          // The orchestrator stays Claude or Codex.
+          { ...implementer, name: 'lead', orchestrator: 'antigravity' as 'claude' },
+        ],
+      },
+    })
+
+    expect(saved.orchestration.roles).toEqual([implementer])
+    expect(normalizePreferences(saved).orchestration.roles).toEqual([implementer])
+  })
+
   it('hands off the full conversation by default and narrows an unknown scope', () => {
     expect(normalizePreferences(undefined).handoffScope).toBe('full')
     expect(normalizePreferences({}).handoffScope).toBe('full')

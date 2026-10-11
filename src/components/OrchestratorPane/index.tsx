@@ -1429,13 +1429,13 @@ export const OrchestratorPane = memo(function OrchestratorPane({
                 title={t('orchestrator.quotaWarningTitle', {
                   agent: warning.agent,
                   pct: warning.pct,
-                  window: quotaWindowLabel(warning.window, t),
+                  window: quotaWindowLabel(warning.window, t, warning.agent),
                 })}
               >
                 {t('orchestrator.quotaWarning', {
                   agent: warning.agent,
                   pct: warning.pct,
-                  window: quotaWindowLabel(warning.window, t),
+                  window: quotaWindowLabel(warning.window, t, warning.agent),
                   resets: warning.resetsAt
                     ? formatReset(warning.resetsAt, t('orchestrator.quotaResetsNow'))
                     : '—',

@@ -1,14 +1,22 @@
 import { useEffect, useState } from 'react'
 
-import { type AgentFitness, claudeFitness, codexFitness } from '../lib/agentFitness'
 import { USAGE_FALLBACK_THRESHOLD, USAGE_POLL_MS } from '../lib/agentCanvasConfig'
+import {
+  type AgentFitness,
+  antigravityFitness,
+  claudeFitness,
+  codexFitness,
+} from '../lib/agentFitness'
+import { getCachedAntigravityUsage } from '../lib/antigravityUsageCache'
 import { getCachedClaudeUsage } from '../lib/claudeUsageCache'
 import { getCachedCodexUsage } from '../lib/codexUsageCache'
 import { setAgentFitness } from '../lib/tauri'
 import { useProjectsStore } from '../stores/projectsStore'
 
+type QuotaAgent = 'claude' | 'codex' | 'antigravity'
+
 export type QuotaWarning = {
-  agent: 'claude' | 'codex'
+  agent: QuotaAgent
   pct: number
   /** Fitness label of the window that triggered the warning (see `quotaWindowLabel`). */
   window: string
@@ -19,6 +27,7 @@ export function useOrchestratorQuotaWarnings(): QuotaWarning[] {
   const [warnings, setWarnings] = useState<QuotaWarning[]>([])
   const claudeAccess = useProjectsStore((s) => s.preferences.usageAccess.claude)
   const codexAccess = useProjectsStore((s) => s.preferences.usageAccess.codex)
+  const antigravityAccess = useProjectsStore((s) => s.preferences.usageAccess.antigravity)
 
   // A provider that is off must not leave its last reading behind in the orchestrator core.
   useEffect(() => {
@@ -27,14 +36,19 @@ export function useOrchestratorQuotaWarnings(): QuotaWarning[] {
   useEffect(() => {
     if (!codexAccess) void setAgentFitness('codex', null).catch(() => undefined)
   }, [codexAccess])
+  useEffect(() => {
+    if (!antigravityAccess) void setAgentFitness('antigravity', null).catch(() => undefined)
+  }, [antigravityAccess])
 
   useEffect(() => {
     // Quota is only known for a provider whose usage reading is on. Without it the orchestrator
     // gets no fitness for that agent and no warning is raised: it runs as if quota were unknown.
-    if (!claudeAccess && !codexAccess) return
+    if (!claudeAccess && !codexAccess && !antigravityAccess) return
     let cancelled = false
 
-    const report = async (agent: 'claude' | 'codex', fitness: AgentFitness) => {
+    const report = async (agent: QuotaAgent, fitness: AgentFitness) => {
+      // A reading that arrives after its provider was turned off must not reach the core again.
+      if (cancelled) return null
       await setAgentFitness(agent, fitness).catch(() => undefined)
       return fitness.rateLimited || fitness.used >= USAGE_FALLBACK_THRESHOLD
         ? { agent, pct: fitness.used, window: fitness.worst, resetsAt: fitness.resetsAt }
@@ -59,6 +73,20 @@ export function useOrchestratorQuotaWarnings(): QuotaWarning[] {
           // ignore
         }
       }
+      if (antigravityAccess) {
+        try {
+          const usage = await getCachedAntigravityUsage()
+          // Without the CLI or its sign-in there is no reading, which is not an empty quota.
+          if (usage.status === 'ready') {
+            const warning = await report('antigravity', antigravityFitness(usage))
+            if (warning) next.push(warning)
+          } else if (!cancelled) {
+            await setAgentFitness('antigravity', null).catch(() => undefined)
+          }
+        } catch {
+          // ignore
+        }
+      }
       if (!cancelled) setWarnings(next)
     }
 
@@ -68,8 +96,9 @@ export function useOrchestratorQuotaWarnings(): QuotaWarning[] {
       cancelled = true
       window.clearInterval(timer)
     }
-  }, [claudeAccess, codexAccess])
+  }, [claudeAccess, codexAccess, antigravityAccess])
 
   // A warning raised before the provider was turned off does not outlive it.
-  return warnings.filter((warning) => (warning.agent === 'claude' ? claudeAccess : codexAccess))
+  const access = { claude: claudeAccess, codex: codexAccess, antigravity: antigravityAccess }
+  return warnings.filter((warning) => access[warning.agent])
 }

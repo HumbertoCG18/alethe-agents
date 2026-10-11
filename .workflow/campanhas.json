@@ -638,6 +638,17 @@
           "origem": "USER",
           "resultado": "Gate 1 do dono em 11/10/2026, só configuração: executor-t1 ↔ executor-t1-agy (Sonnet 5.5 medium) e executor-t2 ↔ executor-t2-agy (Opus 5.5 high) com fallback nos dois sentidos; executor-t3 Opus 5.5 sem fallback (T3 não usa o AGY); escritor-agy Gemini 3.8 Flash medium; revisores, planejadores e validador gpt-6-astra somente leitura; executor-codex removido. Camadas no routing.md: 1 Claude Code, 2 Codex só leitura, 3 AGY.",
           "evidencia": "perfil default do Alethe Dev: 12 papéis regravados pelo próprio app ao abrir (11/10 01:37); routing.md seção Camadas (agent-workflow-lab#10, dd15804)"
+        },
+        {
+          "id": "AGY-04",
+          "titulo": "Endurecer o worker AGY: hook por worktree, perfil isolado e escrita fora da worktree",
+          "nivel": "T3",
+          "estado": "em execução",
+          "depende_de": [
+            "AGY-01"
+          ],
+          "origem": "USER",
+          "resultado": "Gate 1 do dono em 11/10/2026 (\"Aprovo, com medição\"): issue #150; medir no agy 1.3.3 antes do desenho (escrita fora da worktree com --sandbox; agente do usuário com --agent: carrega, hooks próprios fora da worktree, isola GEMINI.md e hooks globais, o que o excludeDefaultComponents deixa; recarga do .agents/hooks.json no meio da sessão)."
         }
       ]
     },

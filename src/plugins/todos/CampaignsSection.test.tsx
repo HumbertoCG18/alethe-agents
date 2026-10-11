@@ -1632,24 +1632,49 @@ describe('Night card', () => {
     expect(findRepositoryFile).toHaveBeenCalledWith('C:\\repo', 'docs/motor.md')
   })
 
-  it('moves concluded entries to Completed, leaving the night with a zero count when all are done', async () => {
+  it('lists a fully concluded night in the Completed section, collapsed, with no zero count on top', async () => {
     fs.files.set(REGISTRY, JSON.stringify(exemplo))
     fs.files.set(
       `${NIGHTS}\\2026-10-03.json`,
       diary('2026-10-03', [entry('BASE-01', 'ok'), entry('BASE-02', 'ok')]),
     )
     render(<TodoSidebar />)
-    const toggle = await screen.findByRole('button', { name: /^Night of 10\/03/ })
-    expect(toggle).toHaveTextContent('0')
-    fireEvent.click(toggle)
+    const section = await screen.findByRole('button', { name: /^Completed/ })
+    expect(section).toHaveTextContent('1')
+    expect(section).toHaveAttribute('aria-expanded', 'false')
+    // No standalone completed toggle, no night header with a zero count.
+    expect(screen.queryByRole('button', { name: /^Night of/ })).toBeNull()
+    expect(screen.queryByText(/· completed/)).toBeNull()
     expect(screen.queryByText('BASE-01 resumo')).toBeNull()
 
-    const completed = screen.getByRole('button', { name: /^Completed/ })
-    expect(completed).toHaveTextContent('2')
-    expect(completed).toHaveAttribute('aria-expanded', 'false')
-    fireEvent.click(completed)
+    fireEvent.click(section)
+    expect(section).toHaveAttribute('aria-expanded', 'true')
+    const night = screen.getByRole('button', { name: /^Night of 10\/03/ })
+    expect(night).toHaveTextContent('2')
+    expect(night).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByText('BASE-01 resumo')).toBeNull()
+    fireEvent.click(night)
     expect(screen.getByText('BASE-01 resumo')).toBeInTheDocument()
     expect(screen.getByText('BASE-02 resumo')).toBeInTheDocument()
+  })
+
+  it('lists the done night campaigns in the Completed section, with the concluded night', async () => {
+    const data = structuredClone(exemplo)
+    for (const item of data.campanhas.find((campaign) => campaign.id === 'OITO')!.tarefas)
+      item.estado = 'concluída'
+    fs.files.set(REGISTRY, JSON.stringify(data))
+    fs.files.set(
+      `${NIGHTS}\\2026-10-03.json`,
+      diary('2026-10-03', [entry('BASE-01', 'ok'), entry('BASE-02', 'ok')]),
+    )
+    render(<TodoSidebar />)
+    const section = await screen.findByRole('button', { name: /^Completed/ })
+    // The done campaign and the concluded night.
+    expect(section).toHaveTextContent('2')
+    expect(screen.queryByRole('button', { name: /^OITO/ })).toBeNull()
+    fireEvent.click(section)
+    expect(screen.getByRole('button', { name: /^OITO/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^Night of 10\/03/ })).toBeInTheDocument()
   })
 
   it('keeps a not concluded entry in the night and lists the concluded one under Completed', async () => {
@@ -1667,6 +1692,30 @@ describe('Night card', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /^Completed/ }))
     expect(screen.getByText('BASE-01 resumo')).toBeInTheDocument()
+  })
+
+  it('collapses the night again once its last pending entry is concluded', async () => {
+    fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    fs.files.set(
+      `${NIGHTS}\\2026-10-03.json`,
+      diary('2026-10-03', [entry('OITO-03', 'ok'), entry('BASE-01', 'ok')]),
+    )
+    render(<TodoSidebar />)
+    fireEvent.click(await screen.findByRole('button', { name: /^Completed/ }))
+    expect(screen.getByText('BASE-01 resumo')).toBeInTheDocument()
+
+    await editRegistry((data) => {
+      for (const campaign of data.campanhas)
+        for (const item of campaign.tarefas) if (item.id === 'OITO-03') item.estado = 'concluída'
+    })
+    // The night leaves the card for the Completed section, collapsed, and so is the night in it.
+    const section = await screen.findByRole('button', { name: /^Completed/ })
+    expect(section).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByText('BASE-01 resumo')).toBeNull()
+    fireEvent.click(section)
+    const night = screen.getByRole('button', { name: /^Night of 10\/03/ })
+    expect(night).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByText('BASE-01 resumo')).toBeNull()
   })
 
   it('watches the folder and every diary, so fixing a malformed newest one shows it', async () => {
@@ -2004,6 +2053,30 @@ describe('Night card', () => {
       fireEvent.click(await focusItem('Conclude (Gate 2)'))
       await waitFor(() => expect(actions('OITO-07')).toBeNull())
       await waitFor(() => expect(card).toHaveFocus())
+    })
+
+    it('gives the focus to the completed night once its last pending entry is concluded', async () => {
+      fs.files.set(REGISTRY, JSON.stringify(exemplo))
+      fs.files.set(
+        `${NIGHTS}\\2026-10-03.json`,
+        diary('2026-10-03', [
+          entry('OITO-07', 'aguarda-voce', 'docs/oito.md'),
+          entry('BASE-01', 'ok'),
+        ]),
+      )
+      useTodosStore.setState({ tab: 'night' })
+      render(<TodoSidebar />)
+      fireEvent.click(await screen.findByRole('button', { name: /^Night of 10\/03/ }))
+      await waitFor(() => expect(actions('OITO-07')).not.toBeNull())
+      fireEvent.click(actions('OITO-07')!)
+      const item = await screen.findByRole('menuitem', { name: 'Conclude (Gate 2)' })
+      await waitFor(() => expect(item).toBeEnabled())
+      item.focus()
+      fireEvent.click(item)
+
+      // The night header the entry fell back to is gone: the Completed section takes the focus.
+      await waitFor(() => expect(screen.getByRole('button', { name: /^Completed/ })).toHaveFocus())
+      expect(document.body).not.toHaveFocus()
     })
 
     it('leaves Pending once you decide, and the focus goes to Pending', async () => {

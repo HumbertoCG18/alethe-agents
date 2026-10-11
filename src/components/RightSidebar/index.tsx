@@ -347,6 +347,10 @@ function MarkdownSidebarViewer() {
   }, [scope])
 
   const { content, error, reload: load } = useMarkdownFile(selected?.path ?? null, selected?.scope)
+  const summaryCollapsed = useUiStore((state) => state.markdownSummaryCollapsed)
+  // Without an open summary to read, the catalog takes the free height instead of its share.
+  const catalogLayout =
+    summaryCollapsed || !selected || error || content === null ? 'fill' : 'split'
 
   useEffect(() => {
     if (!selected?.path || content === null) return
@@ -481,6 +485,7 @@ function MarkdownSidebarViewer() {
     <section
       ref={panelRef}
       className={`${styles.markdownPanel} ${dropActive ? styles.markdownDropActive : ''}`}
+      data-catalog-layout={catalogLayout}
       aria-label={t('rightSidebar.markdownViewer')}
       onDragEnter={onInternalDragOver}
       onDragOver={onInternalDragOver}

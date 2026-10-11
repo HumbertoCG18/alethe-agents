@@ -1,5 +1,5 @@
 import { Play } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { type ReactNode, type Ref, useEffect, useState } from 'react'
 
 import controls from '../../components/modals/controls.module.css'
 import {
@@ -79,6 +79,8 @@ export function CampaignsSection({
   pending = NO_TASKS,
   finished = false,
   nightOnly = false,
+  nightCompleted = null,
+  toggleRef,
 }: {
   view: CampaignView
   /** Live orchestrator workers per task; the active campaign shows its own. */
@@ -87,11 +89,15 @@ export function CampaignsSection({
   pending?: ReadonlySet<string>
   nightOnly?: boolean
   finished?: boolean
+  /** With `finished` and `nightOnly`: the fully concluded night, one more item of the section. */
+  nightCompleted?: ReactNode
+  /** The section header's toggle, where the focus lands when a night entry's actions go away. */
+  toggleRef?: Ref<HTMLButtonElement>
 }) {
   const { projectId, registry, activeId } = view
   const edits = useCampaignEdits(view)
   const t = useT()
-  const [collapsed, setCollapsed] = useState(!nightOnly)
+  const [collapsed, setCollapsed] = useState(!nightOnly || finished)
   const [closed, setClosed] = useState<ReadonlySet<Group>>(() => new Set())
   const live = useCampaignLive(projectId, registry?.campaigns ?? [], workers)
 
@@ -105,7 +111,7 @@ export function CampaignsSection({
         (!nightOnly || campaign.night),
     )
     .sort((a, b) => Number(b.id === activeId) - Number(a.id === activeId))
-  if (finished && campaigns.length === 0) return null
+  if (finished && campaigns.length === 0 && !nightCompleted) return null
   const invalid = !finished && registry.errors.length > 0
   const groupOf = (campaign: Campaign): Group =>
     campaign.tasks.some((task) => STARTED.has(task.state)) ? 'started' : 'notStarted'
@@ -147,13 +153,14 @@ export function CampaignsSection({
     <section className={sidebarStyles.section}>
       <SectionToggle
         name={t(
-          nightOnly
-            ? 'todo.campaigns.nightTitle'
-            : finished
-              ? 'todo.campaigns.completed'
+          finished
+            ? 'todo.campaigns.completed'
+            : nightOnly
+              ? 'todo.campaigns.nightTitle'
               : 'todo.campaigns.title',
         )}
-        count={invalid ? '!' : campaigns.length}
+        count={invalid ? '!' : campaigns.length + (nightCompleted ? 1 : 0)}
+        toggleRef={toggleRef}
         open={!collapsed}
         onToggle={() => setCollapsed((current) => !current)}
       />
@@ -171,6 +178,7 @@ export function CampaignsSection({
       ) : finished || nightOnly ? (
         <div className={sidebarStyles.list}>
           {campaigns.map((campaign) => row(campaign, live.get(campaign.id)))}
+          {nightCompleted}
         </div>
       ) : (
         <div className={styles.groups}>

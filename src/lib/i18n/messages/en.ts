@@ -63,7 +63,7 @@ export const en = {
     'Caveman: terse bullets. Medium: up to 250 words. Detailed: up to 700 words.',
   'markdown.maxAge': 'Older documents',
   'markdown.maxAgeDesc':
-    'Hides sidebar documents whose path date is older than this, and those in archive folders (_archive, archive, Feitos). Undated documents and those of open campaigns always appear.',
+    'Hides sidebar documents whose path date is older than this, those in archive or internal folders (archive, Feitos, any folder starting with _), and project copies nested below the top level (.mex, .workflow, .agents, .github, AGENTS.md, CLAUDE.md, GEMINI.md). Other undated documents and those of open campaigns always appear.',
   'markdown.maxAgeDays': 'Older than {count} days',
   'markdown.maxAgeNever': 'Never hide',
   'markdown.generated': 'AI-generated summary — verify against the full document.',

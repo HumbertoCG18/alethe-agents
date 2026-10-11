@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { type RefObject, useEffect, useRef, useState } from 'react'
 
 import {
   evidenceIsPath,
@@ -15,6 +15,7 @@ import {
   type CampaignEdits,
   nightUndecided,
   type Registry,
+  splitNight,
   STATE_KEYS,
   TASK_LANES,
 } from './campaignView'
@@ -91,10 +92,10 @@ export function NightStatus({ projectId }: { projectId: string | null }) {
 }
 
 /**
- * What the night agent did, from its latest diary. An entry waiting on the user opens its actions;
- * only the user's choice there changes the registry.
+ * A fully concluded night, one item of the Night tab's Completed section: collapsed, it expands
+ * to its entries. Fresh each time the night completes, so it always arrives collapsed.
  */
-export function NightCard({
+export function NightCompleted({
   registry,
   diary,
   edits,
@@ -105,18 +106,62 @@ export function NightCard({
 }) {
   const t = useT()
   const locale = useProjectsStore((state) => state.preferences.language)
+  const [open, setOpen] = useState(false)
+  const toggle = useRef<HTMLButtonElement>(null)
+  const { done } = splitNight(diary, registry.campaigns)
+  return (
+    <div className={sidebarStyles.list}>
+      <SectionToggle
+        name={t('todo.night.title', { date: nightDay(diary.date, locale) })}
+        count={done.length}
+        open={open}
+        onToggle={() => setOpen((current) => !current)}
+        toggleRef={toggle}
+        variant="sub"
+      />
+      {open ? (
+        <ul className={styles.tasks}>
+          {done.map((entry, index) => (
+            <NightEntryRow
+              key={`${entry.task}-${index}`}
+              entry={entry}
+              registry={registry}
+              edits={edits}
+              fallback={() => toggle.current}
+            />
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  )
+}
+
+/**
+ * What the night agent did, from its latest diary. An entry waiting on the user opens its actions;
+ * only the user's choice there changes the registry. A night with nothing pending is not shown
+ * here: it is listed under Completed.
+ */
+export function NightCard({
+  registry,
+  diary,
+  edits,
+  completedRef,
+}: {
+  registry: Registry
+  diary: NightDiary
+  edits: CampaignEdits
+  /** The Completed section's toggle, where the focus goes once the night completes. */
+  completedRef: RefObject<HTMLButtonElement | null>
+}) {
+  const t = useT()
+  const locale = useProjectsStore((state) => state.preferences.language)
   const { campaigns } = registry
   const [open, setOpen] = useState(false)
   const [doneOpen, setDoneOpen] = useState(false)
   const toggle = useRef<HTMLButtonElement>(null)
   const doneToggle = useRef<HTMLButtonElement>(null)
-  // As the progress bar counts them: an entry is concluded once its task is, in the registry.
-  const concluded = (entry: NightEntry) =>
-    campaigns.some((campaign) =>
-      campaign.tasks.some((task) => task.id === entry.task && task.state === 'concluída'),
-    )
-  const done = diary.entries.filter(concluded)
-  const rest = diary.entries.filter((entry) => !concluded(entry))
+  const { done, rest } = splitNight(diary, campaigns)
+  if (rest.length === 0 && done.length > 0) return null
 
   return (
     <section className={`${sidebarStyles.section} ${styles.card}`}>
@@ -148,7 +193,8 @@ export function NightCard({
               entry={entry}
               registry={registry}
               edits={edits}
-              fallback={() => toggle.current}
+              // Concluding the last pending entry replaces this header with the Completed section.
+              fallback={() => toggle.current ?? completedRef.current}
             />
           ))}
         </ul>

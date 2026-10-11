@@ -210,11 +210,11 @@ export function CampaignsSection({
   )
 }
 
-function CampaignRow({
+export function CampaignRow({
   campaign,
   nightOnly,
   checkouts,
-  pending,
+  pending = NO_TASKS,
   active,
   live,
   workers,
@@ -222,20 +222,24 @@ function CampaignRow({
   campaigns,
   edits,
   source,
+  night,
 }: {
   campaign: Campaign
   nightOnly: boolean
   checkouts: GitCheckouts
-  pending: ReadonlySet<string>
+  pending?: ReadonlySet<string>
   active: boolean
   /** Its live state, when a tab or worker is live for it; the dot then follows it. */
   live?: CampaignLive
   /** Its live workers, as "2 running · 1 queued"; null when none or not the active campaign. */
   workers: string | null
-  onOpen: () => unknown
+  /** Without it the row opens nothing: a concluded night has no session to continue. */
+  onOpen?: () => unknown
   campaigns: Campaign[]
   edits: CampaignEdits
   source: string
+  /** A concluded night shown as a campaign: the date of its diary, its only fact. */
+  night?: string
 }) {
   const t = useT()
   const [expanded, setExpanded] = useState(false)
@@ -287,26 +291,37 @@ function CampaignRow({
         </span>
       </button>
       {/* Campaign launch choices always use the shared dialog. */}
-      <button
-        type="button"
-        className={styles.openButton}
-        onClick={onOpen}
-        aria-label={t(active ? 'todo.campaigns.continueLabel' : 'todo.campaigns.openLabel', {
-          id: campaign.id,
-        })}
-      >
-        <Play size={11} />
-        <span>{t(active ? 'todo.campaigns.continue' : 'todo.campaigns.open')}</span>
-      </button>
+      {onOpen ? (
+        <button
+          type="button"
+          className={styles.openButton}
+          onClick={onOpen}
+          aria-label={t(active ? 'todo.campaigns.continueLabel' : 'todo.campaigns.openLabel', {
+            id: campaign.id,
+          })}
+        >
+          <Play size={11} />
+          <span>{t(active ? 'todo.campaigns.continue' : 'todo.campaigns.open')}</span>
+        </button>
+      ) : null}
       {expanded ? (
         <div className={styles.details}>
-          <CampaignFacts campaign={campaign} checkouts={checkouts} />
-          <CampaignDependencies
-            campaign={campaign}
-            campaigns={campaigns}
-            edits={edits}
-            source={source}
-          />
+          {night ? (
+            <span className={styles.meta}>
+              <span>{t('todo.campaigns.windowNight')}</span>
+              <span>{night}</span>
+            </span>
+          ) : (
+            <>
+              <CampaignFacts campaign={campaign} checkouts={checkouts} />
+              <CampaignDependencies
+                campaign={campaign}
+                campaigns={campaigns}
+                edits={edits}
+                source={source}
+              />
+            </>
+          )}
           <ul className={styles.tasks}>
             {campaign.tasks
               .filter((task) => !pending.has(task.id) && (!nightOnly || task.window === 'noite'))

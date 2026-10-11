@@ -1349,6 +1349,10 @@ export const en = {
     'Alethe picks the shell on its own (PowerShell 7 when available, then Windows PowerShell; $SHELL elsewhere). Point it at another binary to override that — it applies to Shell tabs, not to agent tabs.',
   'prefs.shellPathPick': 'Select the shell executable',
   'prefs.terminalFontFamily': 'Font family',
+  'prefs.claudeFullscreen': 'Claude Code fullscreen rendering',
+  'prefs.claudeFullscreenDesc':
+    "Claude Code's fullscreen renderer draws the conversation on the alternate screen and takes the mouse, like vim. Alethe launches the classic renderer instead, so the wheel, the scrollback and the search stay with the pane — the same ground Codex gets.",
+  'prefs.claudeFullscreenEnable': "Let Claude Code's fullscreen renderer take over (vim-style)",
   'prefs.cliPaths': 'Agent CLI paths',
   'prefs.cliPathsDesc':
     'Alethe finds each agent CLI on its own. Override it only when the CLI lives somewhere unusual — and point it at the command-line tool, not at a desktop app. These are Windows paths: terminals whose folder is inside WSL ignore them and resolve the CLI inside the distro.',

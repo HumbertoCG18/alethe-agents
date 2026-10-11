@@ -1377,6 +1377,11 @@ export const ptBR: Record<MessageKey, string> = {
     'O Alethe escolhe o shell sozinho (PowerShell 7 quando disponível, senão o Windows PowerShell; $SHELL nos demais sistemas). Aponte outro binário para sobrescrever — vale para abas Shell, não para abas de agente.',
   'prefs.shellPathPick': 'Selecione o executável do shell',
   'prefs.terminalFontFamily': 'Família da fonte',
+  'prefs.claudeFullscreen': 'Renderização em tela cheia do Claude Code',
+  'prefs.claudeFullscreenDesc':
+    'O renderer de tela cheia do Claude Code desenha a conversa na tela alternativa e toma o mouse, como o vim. O Alethe usa o renderer clássico, então o wheel, o scrollback e a busca ficam com a pane — o mesmo terreno que o Codex recebe.',
+  'prefs.claudeFullscreenEnable':
+    'Deixar o renderer de tela cheia do Claude Code assumir (estilo vim)',
   'prefs.cliPaths': 'Caminhos dos CLIs',
   'prefs.cliPathsDesc':
     'O Alethe encontra o CLI de cada agente sozinho. Só defina um caminho se o CLI estiver num lugar fora do comum — e aponte para a ferramenta de linha de comando, não para o aplicativo gráfico. Esses caminhos são do Windows: terminais cuja pasta está dentro do WSL os ignoram e resolvem o CLI dentro da distro.',

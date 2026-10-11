@@ -87,3 +87,19 @@ it('shows fallback warnings for removed local choices', async () => {
     await screen.findByText('Saved font is unavailable. The default font is used instead.'),
   ).toBeTruthy()
 })
+
+// Upstream #322: the switch is off by default, and the pane reads it when it spawns.
+it('starts unchecked, so Claude runs in the classic renderer', () => {
+  render(<TerminalPage enabledCount={1} />)
+
+  const toggle = screen.getByRole('checkbox', { name: /fullscreen renderer/i })
+  expect((toggle as HTMLInputElement).checked).toBe(false)
+})
+
+it('stores the fullscreen choice the pane reads at spawn', () => {
+  render(<TerminalPage enabledCount={1} />)
+
+  fireEvent.click(screen.getByRole('checkbox', { name: /fullscreen renderer/i }))
+
+  expect(mocks.state.setPreferences).toHaveBeenCalledWith({ claudeFullscreen: true })
+})

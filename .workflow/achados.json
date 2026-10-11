@@ -144,6 +144,24 @@
       "detalhe": "CI da dev em 16c193f (merge da #118, 08/10 22:22): Rust check (Windows) falhou em agent_events::tests::codex_mcp_bridge_answers_null_id_but_not_notifications (src/agent_events.rs:946, 622 ok/1 falha); passou em 6c74518 e nas execuções da #104 sem mudança no código do teste.",
       "estado": "descartado",
       "motivo": "corrigido pela PR #141 (BRIDGE_HANG de 60 s no agent_events.rs); CI da dev verde em seguida (triagem 10/10)"
+    },
+    {
+      "id": "ACH-0016",
+      "data": "2026-10-11",
+      "tipo": "bug",
+      "titulo": "Aba Noturno lista campanha assistida inteira por causa de uma tarefa noturna",
+      "origem": "",
+      "detalhe": "Visto em 11/10 no GPT Tutor: MOTOR (7/11) e VOCAB (2/5) são campanhas de janela assistida com 1 tarefa de janela noite cada; a aba Noturno lista a campanha inteira, com todas as tarefas no progresso. Dono: só deveriam aparecer se tiverem checkpoints/passos ou algo que o agente noturno possa rodar; e então só com as tarefas noturnas. REPLAY-NOTURNO e AUDITORIA (janela noite) estão certas.",
+      "estado": "novo"
+    },
+    {
+      "id": "ACH-0017",
+      "data": "2026-10-11",
+      "tipo": "bug",
+      "titulo": "Card da noite fica no topo com 0 pendentes depois que todas as entradas concluem",
+      "origem": "",
+      "detalhe": "Visto em 11/10 no GPT Tutor: o único diário, .workflow/local/noites/2026-10-02.json, tem PILOTO-01..03, todas concluídas no registro; o NightCard (NightCard.tsx:114) move as entradas para a sublista Concluídas (3) mas mantém o cabeçalho 'Noite de 02/10' com 0, que o dono lê como seção órfã. Esperado pelo dono: a noite inteira ir para Concluídas quando nada mais pende.",
+      "estado": "novo"
     }
   ]
 }

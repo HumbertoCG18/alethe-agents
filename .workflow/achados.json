@@ -223,6 +223,15 @@
       "detalhe": "CI do macOS na #158 (11/10): a_resumed_antigravity_worker_sees_a_denial_early_in_its_restarted_log falhou em 0,145 s com status failed / 'worker connection closed' no turno revivido; passou na reexecução e no Linux/Windows. Suspeita: o EOF do processo liberado chega depois do revive e é atribuído ao mesmo job (corrida release→revive), o que afetaria revives reais, não só o teste. Investigar a ordem de teardown/reader do job no revive.",
       "estado": "descartado",
       "motivo": "corrigido pela #162 (PR #167, 4de0d2a)"
+    },
+    {
+      "id": "ACH-0024",
+      "data": "2026-10-11",
+      "tipo": "bug",
+      "titulo": "Teardown do worker no Windows mata só o wrapper codex.cmd e deixa o Codex vivo",
+      "origem": "ELO-09",
+      "detalhe": "Issue #173. Job::teardown só chama child.kill(); no Windows o filho é o cmd.exe do codex.cmd e o Codex real segue vivo após cancel/release/timeout. kill_tree existe, mas #202 (lsass) exige medir antes de trocar. Achado da revisão r3 da #151, pré-existente na dev.",
+      "estado": "novo"
     }
   ]
 }

@@ -952,10 +952,12 @@
           "id": "REMOTO-05",
           "titulo": "Portar upstream #325: celular envia mensagem que o Claude Code enfileirou ocupado (#168)",
           "nivel": "T1",
-          "estado": "proposta",
+          "estado": "concluída",
           "depende_de": [],
           "origem": "CODE",
-          "achado": "ACH-0018"
+          "achado": "ACH-0018",
+          "resultado": "Gate 2 por lote do dono em 11/10/2026 (\"Aprovo, Gate 2 por lote (Recomendado)\"): upstream #325 portada sem conflito (commits do afthex mantidos), enviar agora da mensagem enfileirada do Claude Code pelo celular. Nota menor da revisão (modo Terminal sem aviso \"toque de novo\") rechecada depois da #169/#170.",
+          "evidencia": "PR #172 (merge 0ca7e8d); revisão Astra 168 r1 APPROVED (1 menor adiada)"
         },
         {
           "id": "REMOTO-06",

@@ -4286,11 +4286,14 @@ fn an_antigravity_diff_runs_none_of_the_git_config_it_can_reach() {
 fn hostile_hook(repo: &std::path::Path, marker: &std::path::Path) {
     let hooks = repo.join("hostile-hooks");
     std::fs::create_dir_all(&hooks).expect("hooks");
-    std::fs::write(
-        hooks.join("post-checkout"),
-        format!("#!/bin/sh\n{}\n", leaves(marker)),
-    )
-    .expect("hook");
+    let hook = hooks.join("post-checkout");
+    std::fs::write(&hook, format!("#!/bin/sh\n{}\n", leaves(marker))).expect("hook");
+    // Git on Linux and macOS skips a hook that is not executable.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    }
     git_in(
         repo,
         &["config", "core.hooksPath", &hooks.to_string_lossy()],

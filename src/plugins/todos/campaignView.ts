@@ -1267,3 +1267,21 @@ export function useAgentTails(
     return byCampaign
   }, [tabs, sessions])
 }
+
+/** As the progress bar counts them: an entry is concluded once its task is, in the registry. */
+export function splitNight(diary: NightDiary, campaigns: Registry['campaigns']) {
+  const concluded = (entry: NightEntry) =>
+    campaigns.some((campaign) =>
+      campaign.tasks.some((task) => task.id === entry.task && task.state === 'concluída'),
+    )
+  return {
+    done: diary.entries.filter(concluded),
+    rest: diary.entries.filter((entry) => !concluded(entry)),
+  }
+}
+
+/** Every entry of the night is concluded; the night then lives under Completed, not in the card. */
+export function nightIsCompleted(diary: NightDiary, campaigns: Registry['campaigns']) {
+  const { done, rest } = splitNight(diary, campaigns)
+  return rest.length === 0 && done.length > 0
+}

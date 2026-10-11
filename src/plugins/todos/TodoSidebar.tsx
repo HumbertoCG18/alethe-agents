@@ -54,6 +54,7 @@ import {
   type CampaignLive,
   cancelCampaign,
   continueCampaign,
+  nightIsCompleted,
   nightUndecided,
   pauseCampaign,
   type Registry,
@@ -74,7 +75,7 @@ import {
 import { FindingsCard } from './FindingsCard'
 import { nightDay, situationLabel } from './labels'
 import { TODO_SETTINGS_MODAL_ID } from './manifest'
-import { NightCard, NightEntryRow, NightStatus } from './NightCard'
+import { NightCard, NightCompleted, NightEntryRow, NightStatus } from './NightCard'
 import { SectionToggle, SortableSections } from './SectionToggle'
 import { orderedSections, TODO_TABS, type TodoTab, useTodosStore } from './store'
 import { type TaskActions, useTaskActions } from './taskActions'
@@ -748,17 +749,36 @@ export function TodoSidebar() {
     </>
   )
 
+  // The Night tab's Completed section holds the done night campaigns and the concluded night.
+  const nightCompletedToggle = useRef<HTMLButtonElement>(null)
   const night = (
     <>
       <NightStatus projectId={view.projectId} />
       <CampaignsSection view={view} workers={workers} nightOnly />
       {view.registry && diary ? (
-        <NightCard registry={view.registry} diary={diary} edits={edits} />
+        <NightCard
+          registry={view.registry}
+          diary={diary}
+          edits={edits}
+          completedRef={nightCompletedToggle}
+        />
       ) : (
         <p className={styles.sectionEmpty}>
           {t(view.projectId ? 'todo.night.empty' : 'todo.selectProject')}
         </p>
       )}
+      <CampaignsSection
+        view={view}
+        workers={workers}
+        nightOnly
+        finished
+        toggleRef={nightCompletedToggle}
+        nightCompleted={
+          view.registry && diary && nightIsCompleted(diary, view.registry.campaigns) ? (
+            <NightCompleted registry={view.registry} diary={diary} edits={edits} />
+          ) : null
+        }
+      />
     </>
   )
 

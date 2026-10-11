@@ -604,16 +604,17 @@
       "worktrees": [
         "alethe-agents-agy"
       ],
-      "atualizado_em": "2026-10-10",
+      "atualizado_em": "2026-10-11",
       "tarefas": [
         {
           "id": "AGY-01",
           "titulo": "Retomar a implementação parada na worktree (upstream #218)",
           "nivel": "T3",
-          "estado": "em execução",
+          "estado": "concluída",
           "depende_de": [],
           "origem": "USER",
-          "resultado": "Gate 1 do dono em 10/10/2026: port seletivo do WIP para a dev (codex_read agy-01-reintegracao-1, conferido), T3 por permissões; começa medindo o contrato do agy 1.3.3 (stream-json, accept-edits, sandbox)."
+          "resultado": "Gate 2 do dono em 11/10/2026: worker Antigravity no orquestrador sem bypass (--project alethe-worker com lista exata, accept-edits, --sandbox), turno negado vira blocked pelo --log-file lido inteiro por turno, diff com arquivos novos. Notas adiadas (hook por worktree, perfil sem instruções globais, teste de um arquivo) seguem no relatório do contrato.",
+          "evidencia": "PR #147 (merge 21aa15d); contrato medido em .workflow/local/agy-contract-1.3.3.md; revisões alethe-agy-01 r1–r4 adjudicadas 10/0"
         },
         {
           "id": "AGY-02",

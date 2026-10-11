@@ -129,6 +129,61 @@ describe('OrchestrationPage', () => {
     })
   })
 
+  // Antigravity runs workers only; the orchestrator stays Claude or Codex (#218).
+  it('offers Antigravity as the agent of a role but not as its orchestrator', () => {
+    withRoles([reviewer])
+    render(<OrchestrationPage />)
+
+    choose('Agent for reviewer', 'Antigravity')
+    expect(orchestration().roles[0]).toMatchObject({
+      agent: 'antigravity',
+      model: null,
+      effort: null,
+      readOnly: false,
+    })
+    expect(screen.getByRole('switch', { name: 'Read-only for reviewer' })).toBeDisabled()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Orchestrator for reviewer' }))
+    expect(screen.queryByRole('option', { name: 'Antigravity' })).toBeNull()
+  })
+
+  it('offers the approved Antigravity models and only the efforts each one takes', () => {
+    withRoles([
+      {
+        name: 'writer',
+        agent: 'antigravity',
+        model: null,
+        effort: null,
+        readOnly: false,
+        timeoutSeconds: null,
+      },
+    ])
+    render(<OrchestrationPage />)
+
+    // The CLI default carries its own effort, so none is offered next to it.
+    fireEvent.click(screen.getByRole('button', { name: 'Effort for writer' }))
+    expect(screen.queryByRole('option', { name: 'medium' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Effort for writer' }))
+
+    choose('Model for writer', 'claude-sonnet-5-5')
+    fireEvent.click(screen.getByRole('button', { name: 'Effort for writer' }))
+    expect(screen.queryByRole('option', { name: 'low' })).toBeNull()
+    expect(screen.queryByRole('option', { name: 'max' })).toBeNull()
+    fireEvent.click(screen.getByRole('option', { name: 'high' }))
+    expect(orchestration().roles[0]).toMatchObject({ model: 'claude-sonnet-5-5', effort: 'high' })
+
+    // A variant id names its effort, and agy refuses one next to it.
+    choose('Model for writer', 'claude-opus-5-5-high')
+    expect(orchestration().roles[0]).toMatchObject({ model: 'claude-opus-5-5-high', effort: null })
+    fireEvent.click(screen.getByRole('button', { name: 'Effort for writer' }))
+    expect(screen.queryByRole('option', { name: 'high' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Effort for writer' }))
+
+    choose('Model for writer', 'gemini-3.8-flash')
+    choose('Effort for writer', 'medium')
+    expect(orchestration().roles[0]).toMatchObject({ model: 'gemini-3.8-flash', effort: 'medium' })
+  })
+
   it('does not save a rename that takes the name of another role', () => {
     const writer: OrchestrationRole = {
       name: 'writer',

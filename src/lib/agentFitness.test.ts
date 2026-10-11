@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
-import { claudeFitness, codexFitness } from './agentFitness'
+import { antigravityFitness, claudeFitness, codexFitness } from './agentFitness'
+import type { AntigravityUsage } from './tauri/usage'
 
 const claudeWindow = (utilization: number, resets_at = '') => ({ utilization, resets_at })
 const codexWindow = (used_percent: number, resets_at_ms = 0) => ({
@@ -79,5 +80,35 @@ describe('agent fitness', () => {
     expect(fitness.worst).toBe('fable')
     expect(fitness.used).toBe(100)
     expect(fitness.resetsAt).toBe('monday')
+  })
+})
+
+const agyBucket = (label: string, used_percent: number, resets_at = '') => ({
+  label,
+  models: [],
+  used_percent,
+  remaining_percent: 100 - used_percent,
+  resets_at,
+})
+const agyUsage = (
+  buckets: AntigravityUsage['buckets'],
+  used_percent: number,
+  rate_limited = false,
+): AntigravityUsage => ({ status: 'ready', cli_path: 'agy', used_percent, rate_limited, buckets })
+
+// Antigravity meters model groups apart, and a worker role may run any of them (#218).
+describe('antigravity fitness', () => {
+  it('reports the tightest quota bucket, since the vendor reading is all the core gets', () => {
+    const fitness = antigravityFitness(
+      agyUsage([agyBucket('Gemini Flash', 20, 'soon'), agyBucket('Claude', 85.4, 'later')], 85.4),
+    )
+    expect(fitness).toEqual({ worst: 'Claude', used: 85, resetsAt: 'later', rateLimited: false })
+  })
+
+  it('falls back to the overall usage when no bucket is reported', () => {
+    const fitness = antigravityFitness(agyUsage([], 40, true))
+    expect(fitness.used).toBe(40)
+    expect(fitness.resetsAt).toBeNull()
+    expect(fitness.rateLimited).toBe(true)
   })
 })

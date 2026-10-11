@@ -642,12 +642,13 @@ export const DEFAULT_ROUTER9_PREFERENCES: Router9Preferences = {
 /** A named preset for delegated workers. A delegate call that names it gets exactly these values. */
 export type OrchestrationRole = {
   name: string
-  agent: 'codex' | 'claude'
+  /** The worker's CLI. Antigravity runs workers only, never the orchestrator. */
+  agent: 'codex' | 'claude' | 'antigravity'
   /** null runs the CLI's default model. */
   model: string | null
   /** Reasoning effort, as the chosen CLI names it; null keeps the CLI's setting. */
   effort: string | null
-  /** Codex read-only sandbox. Always false for Claude. */
+  /** Codex read-only sandbox. Always false for Claude and Antigravity. */
   readOnly: boolean
   /** null uses the default budget; 0 lets the worker run without a limit. */
   timeoutSeconds: number | null

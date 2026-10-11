@@ -13,6 +13,17 @@ export const CLAUDE_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
  */
 export const CODEX_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
 
+/**
+ * The Antigravity worker models the owner approved (agy 1.3.3), with the efforts offered for each.
+ * A family takes one through `--effort`; a variant id such as `claude-opus-5-5-high` names its own,
+ * and agy refuses an effort next to it.
+ */
+export const ANTIGRAVITY_MODELS: Readonly<Partial<Record<string, readonly string[]>>> = {
+  'claude-sonnet-5-5': ['medium', 'high'],
+  'claude-opus-5-5-high': [],
+  'gemini-3.8-flash': ['medium', 'high'],
+}
+
 /** A week. Past what any worker budget needs, and far below what the orchestrator can hold. */
 export const MAX_TIMEOUT_SECONDS = 7 * 24 * 60 * 60
 
@@ -41,11 +52,11 @@ export function isValidRole(role: unknown): role is OrchestrationRole {
     unknown
   >
   if (typeof name !== 'string' || !isOrchestrationName(name)) return false
-  if (agent !== 'codex' && agent !== 'claude') return false
+  if (agent !== 'codex' && agent !== 'claude' && agent !== 'antigravity') return false
   if (!optionalName(model) || !optionalName(effort) || typeof readOnly !== 'boolean') return false
   if (timeoutSeconds !== null && !wholeSeconds(timeoutSeconds)) return false
   if (!ORCHESTRATORS.includes(orchestrator)) return false
-  // The headless Claude launch bypasses permissions and has no read-only mode.
+  // The headless Claude and Antigravity launches have no read-only mode.
   return agent === 'codex' || !readOnly
 }
 

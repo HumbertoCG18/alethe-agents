@@ -2181,6 +2181,7 @@ export const zhCN: Record<MessageKey, string> = {
   'orchestrator.quotaWindowWeek': '每周限额',
   'orchestrator.quotaWindowOpus': 'Opus 每周限额',
   'orchestrator.quotaWindowModel': '{model} 每周限额',
+  'orchestrator.quotaWindowBucket': '{bucket} 配额',
   'orchestrator.quotaResetsNow': '现在',
   'orchestrator.runEyebrow': '跑',
   'orchestrator.runDone': '已完成 {done}/{total}',

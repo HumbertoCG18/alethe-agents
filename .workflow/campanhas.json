@@ -631,12 +631,12 @@
           "id": "AGY-03",
           "titulo": "Workers AGY por papel: implementação T1/T2 (Sonnet/Opus 5.5) e escrita/auditoria (Gemini 3.8 Flash), modelo e esforço por papel",
           "nivel": "T2",
-          "estado": "proposta",
+          "estado": "em execução",
           "depende_de": [
             "AGY-01"
           ],
           "origem": "USER",
-          "resultado": "Reescrita em 10/10/2026 pela divisão aprovada (references/routing.md, laboratório ea1499a): Claude do AGY implementa T1/T2, Gemini 3.8 Flash escreve e audita; T3 não usa o AGY."
+          "resultado": "Gate 1 do dono em 11/10/2026: só configuração (o AGY-01 já entrega papéis antigravity, fallback entre agentes e cota). Papéis executor-t1-agy (Sonnet 5.5 medium), executor-t2-agy (Opus 5.5 high, mesmo modelo do principal) e escritor-agy (Gemini 3.8 Flash medium); executor-t1/t2 caem para eles; executor-t3 sem fallback (T3 não usa o AGY); executor-codex removido; revisor/planejador alinhados ao gpt-6-astra e executor-t3 ao Opus 5.5."
         }
       ]
     },

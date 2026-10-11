@@ -199,6 +199,15 @@
       "origem": "",
       "detalhe": "https://github.com/Kc1t/alethe-agents/pull/328 — fix(terminal), @afthex, aberta, +35/-0 em 1 arquivo; conferir convivência com a #322 já portada (#149). Pedido do dono em 11/10.",
       "estado": "novo"
+    },
+    {
+      "id": "ACH-0022",
+      "data": "2026-10-11",
+      "tipo": "risco",
+      "titulo": "Teste a_denial_logged_just_after_the_result_still_blocks_its_turn flutua sob carga",
+      "origem": "",
+      "detalhe": "Visto 11/10 na AGY-04: falha 1 em 5 quando roda junto com binários de teste da lib (a linha tardia do fake chega depois da espera de 200 ms do AgyLog); passa isolado e nas suítes do orquestrador. Pode travar a CI. Opções: espera do teste maior ou sincronizar o fake.",
+      "estado": "novo"
     }
   ]
 }

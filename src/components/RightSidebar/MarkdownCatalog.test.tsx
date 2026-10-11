@@ -9,7 +9,12 @@ import { EMPTY_PROJECTS_FILE } from '../../lib/types'
 import { useProjectsStore } from '../../stores/projectsStore'
 import { useUiStore } from '../../stores/uiStore'
 import { MarkdownCatalog } from './MarkdownCatalog'
-import { recoverCatalogPath, useMarkdownCatalog } from './useMarkdownCatalog'
+import {
+  inArchive,
+  inProjectCopy,
+  recoverCatalogPath,
+  useMarkdownCatalog,
+} from './useMarkdownCatalog'
 const state = vi.hoisted(() => ({
   activeId: 'OITO',
   root: 'C:/repo',
@@ -199,6 +204,72 @@ it('also ages out underscore-dated files and archive folders, except for open ca
   )
   expect(screen.getByText('x_15-09.md')).toBeInTheDocument()
   expect(screen.getByText('2026-09-30-y.md')).toBeInTheDocument()
+})
+it('treats underscore folders as archives, never the file name itself', () => {
+  expect(inArchive('docs/reports/_harness-2026-09-04/run.md')).toBe(true)
+  expect(inArchive('_context-mode-hooks/notes.md')).toBe(true)
+  expect(inArchive('docs/reports/_archive/x.md')).toBe(true)
+  expect(inArchive('docs/Feitos/x.md')).toBe(true)
+  expect(inArchive('docs/_notes.md')).toBe(false)
+  expect(inArchive('docs/reports/report.md')).toBe(false)
+})
+it('recognizes project copies nested below the first folder, but not the project itself', () => {
+  for (const path of [
+    '.workflow/x.md',
+    '.mex/ROUTER.md',
+    '.github/pull_request_template.md',
+    '.agents/skill.md',
+    'AGENTS.md',
+    'claude.md',
+    'docs/workflow/x.md',
+    'docs/my-agents.md',
+  ])
+    expect(inProjectCopy(path), path).toBe(false)
+  for (const path of [
+    'docs/reports/p1/tentativa2/arvore_suite_ap1/.mex/patterns/p.md',
+    'docs/copy/.workflow/agents/a.md',
+    'docs/.agents/s.md',
+    'docs/.GitHub/x.md',
+    'docs/reports/arvore/AGENTS.md',
+    'docs/claude.md',
+    'docs/Gemini.MD',
+  ])
+    expect(inProjectCopy(path), path).toBe(true)
+})
+it('hides nested project copies and internal folders unless an open campaign uses them', async () => {
+  const data = structuredClone(example)
+  data.campanhas.find((c) => c.id === 'OITO')!.handoff =
+    'docs/reports/_bench/tree/.workflow/plan.md'
+  state.registry = { ...parseCampaigns(JSON.stringify(data)), main: 'C:/repo' }
+  const visible = [
+    'C:/repo/.workflow/workflow.md',
+    'C:/repo/.mex/ROUTER.md',
+    'C:/repo/.github/pull_request_template.md',
+    'C:/repo/CLAUDE.md',
+    'C:/repo/docs/_notes.md',
+  ]
+  const hidden = [
+    'C:/repo/docs/reports/copy/tree/.mex/patterns/pattern.md',
+    'C:/repo/docs/reports/copy/tree/.workflow/agents/nested-agent.md',
+    'C:/repo/docs/reports/copy/tree/.github/copilot.md',
+    'C:/repo/docs/reports/copy/tree/.agents/skill.md',
+    'C:/repo/docs/reports/copy/tree/Agents.md',
+    'C:/repo/docs/reports/_context-mode-pilot/pilot.md',
+    'C:/repo/docs/reports/_codegraph-benchmark/run.md',
+  ]
+  state.files.mockImplementation(async (root: string) =>
+    root === 'C:/repo' ? [...visible, ...hidden] : [],
+  )
+  state.find.mockImplementation(async (_root: string, path: string) =>
+    path === 'docs/reports/_bench/tree/.workflow/plan.md' ? `C:/repo/${path}` : null,
+  )
+  render(<Catalog />)
+  expect(await screen.findByText('plan.md')).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: /Development docs/ }))
+  for (const path of visible) expect(screen.getByTitle(path)).toBeInTheDocument()
+  for (const path of hidden) expect(screen.queryByTitle(path)).toBeNull()
+  fireEvent.click(screen.getByRole('button', { name: /\(7 hidden\)/ }))
+  for (const path of [...visible, ...hidden]) expect(screen.getByTitle(path)).toBeInTheDocument()
 })
 it('collapses a section through its header', async () => {
   render(<Catalog />)

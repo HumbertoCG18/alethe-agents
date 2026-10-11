@@ -307,7 +307,7 @@ export function useMarkdownCatalog() {
       const old =
         cutoff !== null &&
         !openCampaign &&
-        (inArchive(doc.relative) || pathDate(doc.relative) < cutoff)
+        (inArchive(doc.relative) || inProjectCopy(doc.relative) || pathDate(doc.relative) < cutoff)
       if (!showCompleted && (old || (doc.campaigns.length > 0 && !openCampaign))) {
         hidden++
         continue
@@ -343,10 +343,24 @@ function pathDate(relative: string): number {
   return dates.length ? Math.max(...dates) : Infinity
 }
 
-/** True when a directory (not the file name) of the path is an archive folder. */
-function inArchive(relative: string): boolean {
+/** True when a directory (not the file name) of the path is an archive or `_`-prefixed internal folder. */
+export function inArchive(relative: string): boolean {
   return normalizeCwd(relative)
     .split('/')
     .slice(0, -1)
-    .some((segment) => ['_archive', 'archive', 'feitos'].includes(segment.toLowerCase()))
+    .some(
+      (segment) => segment.startsWith('_') || ['archive', 'feitos'].includes(segment.toLowerCase()),
+    )
+}
+
+/**
+ * True for a copy of a project tree nested inside this one: agent folders below the first
+ * directory, or agent instruction files anywhere but the root. The project's own stay visible.
+ */
+export function inProjectCopy(relative: string): boolean {
+  const segments = normalizeCwd(relative).toLowerCase().split('/')
+  return (
+    segments.slice(1, -1).some((s) => ['.mex', '.workflow', '.agents', '.github'].includes(s)) ||
+    (segments.length > 1 && ['agents.md', 'claude.md', 'gemini.md'].includes(segments.at(-1)!))
+  )
 }

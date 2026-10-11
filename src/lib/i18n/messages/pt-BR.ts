@@ -70,7 +70,7 @@ export const ptBR: Record<MessageKey, string> = {
     'Caveman: tópicos curtíssimos. Médio: até 250 palavras. Detalhado: até 700 palavras.',
   'markdown.maxAge': 'Documentos antigos',
   'markdown.maxAgeDesc':
-    'Oculta da barra lateral documentos com data no caminho mais antiga que este limite e os de pastas de arquivo (_archive, archive, Feitos). Documentos sem data e de campanhas abertas sempre aparecem.',
+    'Oculta da barra lateral documentos com data no caminho mais antiga que este limite, os de pastas de arquivo ou internas (archive, Feitos, qualquer pasta iniciada por _) e cópias de projeto aninhadas abaixo do nível superior (.mex, .workflow, .agents, .github, AGENTS.md, CLAUDE.md, GEMINI.md). Outros documentos sem data e os de campanhas abertas sempre aparecem.',
   'markdown.maxAgeDays': 'Mais antigos que {count} dias',
   'markdown.maxAgeNever': 'Nunca ocultar',
   'markdown.generated': 'Resumo gerado por IA — confira o documento completo.',

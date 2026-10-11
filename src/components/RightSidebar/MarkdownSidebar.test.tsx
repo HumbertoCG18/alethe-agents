@@ -129,6 +129,20 @@ it('recovers a missing project document through the existing worktree resolver',
   ).toBe(false)
 })
 
+it('lets the catalog fill the panel unless a summary is open', async () => {
+  useUiStore.setState({ rightSidebarMode: 'markdown', markdownSummaryCollapsed: false })
+  render(<RightSidebar />)
+  const panel = screen.getByRole('region', { name: 'Markdown viewer' })
+  expect(panel).toHaveAttribute('data-catalog-layout', 'fill')
+  vi.mocked(readTextFile).mockResolvedValue('# Open summary')
+  act(() => useUiStore.getState().openMarkdownSidebar('C:/document.md', 'Document'))
+  expect(await screen.findByRole('heading', { name: 'Open summary' })).toBeInTheDocument()
+  expect(panel).toHaveAttribute('data-catalog-layout', 'split')
+  fireEvent.click(screen.getByRole('button', { name: 'Collapse summary' }))
+  expect(useUiStore.getState().markdownSummaryCollapsed).toBe(true)
+  expect(panel).toHaveAttribute('data-catalog-layout', 'fill')
+})
+
 it('reads a document named by repository text under its checkout and explains a refusal', async () => {
   vi.mocked(readRepositoryTextFile).mockRejectedValue('outside_repository')
   useUiStore.getState().openMarkdownSidebar('C:/repo/docs/linked.md', 'Linked', 'C:/repo')

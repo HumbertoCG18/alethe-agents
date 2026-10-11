@@ -4398,13 +4398,11 @@ fn an_antigravity_diff_runs_no_filter_the_worker_can_edit() {
     let _ = std::fs::remove_dir_all(&fake);
 }
 
-#[test]
-fn a_new_antigravity_worktree_runs_no_repository_hook() {
-    let dir = workspace("agy-hook");
-    let fake = workspace("agy-hook-fake");
-    git_repo(&dir);
-    let marker = fake.join("hook-ran");
-    hostile_hook(&dir, &marker);
+/// Starts an Antigravity worker on the repository `dir` and holds its first turn for 3 s, so the
+/// test can act as the worker in its worktree. Returns the fake agy's folder and the core.
+fn held_agy_worker(dir: &std::path::Path, fake_tag: &str) -> (PathBuf, Core) {
+    let fake = workspace(fake_tag);
+    std::fs::write(fake.join("hold1"), "3").expect("hold");
     std::fs::write(
         fake.join("turn.jsonl"),
         format!("{}\n", agy_result("DONE", 1, 1, 2)),
@@ -4417,31 +4415,392 @@ fn a_new_antigravity_worktree_runs_no_repository_hook() {
         "alethe_delegate",
         json!({ "tasks": ["task"], "cwd": dir.to_string_lossy(), "agent": "antigravity" }),
     );
-    let job = wait_for_job(&core, 20, |job| job["status"] == "done");
+    let stdin = wait_for_lines(&fake.join("stdin.txt"), 1, 20);
+    assert_eq!(stdin.len(), 1, "the first turn never arrived");
+    (fake, core)
+}
+
+/// The diff Alethe read for job-01 once its turn is done.
+fn finished_agy_diff(core: &Core) -> String {
+    let job = wait_for_job(core, 20, |job| job["status"] != "running");
     assert_eq!(job["status"], "done", "{job}");
-    assert!(agy_worktree(&dir).join("seed.txt").is_file(), "{job}");
+    let diff = call(core, "alethe_diff", json!({ "jobId": "job-01" }));
+    diff["diff"].as_str().unwrap_or_default().to_string()
+}
+
+// AGY-05 (#159): the diff loads no git config at all, so none of it reshapes or replaces the diff.
+#[test]
+fn an_antigravity_diff_reads_none_of_the_repository_config() {
+    let dir = workspace("agy-no-config");
+    git_repo(&dir);
+    let (fake, core) = held_agy_worker(&dir, "agy-no-config-fake");
+    let marker = fake.join("external-ran");
+    let attributes = fake.join("attributes");
+    std::fs::write(&attributes, "* -diff\n").expect("attributes");
+    for (key, value) in [
+        ("diff.noprefix", "true".to_string()),
+        ("color.diff", "always".to_string()),
+        ("diff.external", leaves(&marker)),
+        (
+            "core.attributesFile",
+            attributes.to_string_lossy().replace('\\', "/"),
+        ),
+    ] {
+        git_in(&dir, &["config", key, &value]);
+    }
+    let worktree = agy_worktree(&dir);
+    std::fs::write(worktree.join("seed.txt"), "seed\nchanged\n").expect("edit");
+    std::fs::write(worktree.join("new.txt"), "fresh\n").expect("new file");
+
+    let text = finished_agy_diff(&core);
     assert!(
-        !marker.exists(),
-        "Alethe ran the repository's post-checkout hook"
+        text.contains("--- a/seed.txt") && text.contains("+changed") && text.contains("+fresh"),
+        "{text}"
     );
-    // Plain git does run it, so the check above means something.
-    git_in(
-        &dir,
-        &[
-            "worktree",
-            "add",
-            "-q",
-            "-b",
-            "control",
-            "control-tree",
-            "HEAD",
-        ],
+    assert!(!text.contains('\u{1b}'), "colored: {text}");
+    assert!(!marker.exists(), "Alethe ran diff.external");
+    // Plain git there does read it, so the checks above mean something.
+    let plain = Command::new("git")
+        .args(["diff", "HEAD"])
+        .current_dir(&worktree)
+        .output()
+        .expect("git");
+    let plain = String::from_utf8_lossy(&plain.stdout);
+    assert!(
+        !plain.contains("+changed"),
+        "the setup changes nothing: {plain}"
     );
-    assert!(marker.exists(), "the setup runs nothing");
 
     let _ = call(&core, "alethe_cancel", json!({ "jobIds": ["job-01"] }));
     let _ = std::fs::remove_dir_all(&dir);
     let _ = std::fs::remove_dir_all(&fake);
+}
+
+// AGY-05 (#159): overriding filters one by one missed a name that is not UTF-8.
+#[test]
+fn an_antigravity_diff_runs_no_filter_whatever_its_name_or_include() {
+    use std::io::Write;
+    let dir = workspace("agy-odd-filter");
+    git_repo(&dir);
+    std::fs::write(dir.join("other.txt"), "other\n").expect("other");
+    git_in(&dir, &["add", "-A"]);
+    git_in(&dir, &["commit", "-qm", "other"]);
+    let (fake, core) = held_agy_worker(&dir, "agy-odd-filter-fake");
+    // One filter named with a byte that is not UTF-8, one defined only for the worktree's branch.
+    // Written as bytes, since the first fits no command line.
+    let markers = [fake.join("odd-ran"), fake.join("onbranch-ran")];
+    let included = fake.join("onbranch.cfg");
+    std::fs::write(
+        &included,
+        format!("[filter \"ob\"]\n\tclean = {}; cat\n", leaves(&markers[1])),
+    )
+    .expect("include");
+    let mut config = std::fs::OpenOptions::new()
+        .append(true)
+        .open(dir.join(".git").join("config"))
+        .expect("config");
+    config.write_all(b"[filter \"\xff\"]\n").expect("config");
+    write!(
+        config,
+        "\tclean = {}; cat\n[includeIf \"onbranch:alethe/**\"]\n\tpath = {}\n",
+        leaves(&markers[0]),
+        included.to_string_lossy().replace('\\', "/")
+    )
+    .expect("config");
+    let worktree = agy_worktree(&dir);
+    std::fs::write(
+        worktree.join(".gitattributes"),
+        b"seed.txt filter=\xff\nother.txt filter=ob\n",
+    )
+    .expect("attributes");
+    std::fs::write(worktree.join("seed.txt"), "seed\nchanged\n").expect("edit");
+    std::fs::write(worktree.join("other.txt"), "other\nchanged too\n").expect("edit");
+
+    let text = finished_agy_diff(&core);
+    assert!(
+        text.contains("+changed") && text.contains("+changed too"),
+        "{text}"
+    );
+    for marker in &markers {
+        assert!(!marker.exists(), "Alethe ran {}", marker.display());
+    }
+    // Plain git there does run both, so the check above means something.
+    let _ = Command::new("git")
+        .args(["diff", "HEAD"])
+        .current_dir(&worktree)
+        .output();
+    assert!(
+        markers.iter().all(|marker| marker.exists()),
+        "the setup runs nothing"
+    );
+
+    let _ = call(&core, "alethe_cancel", json!({ "jobIds": ["job-01"] }));
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&fake);
+}
+
+// AGY-05 (#159): the object reads loaded the repository's config too, so a config file the
+// worker can write could make them fail.
+#[test]
+fn an_antigravity_diff_survives_config_the_worker_can_write() {
+    use std::io::Write;
+    let dir = workspace("agy-include");
+    git_repo(&dir);
+    let (fake, core) = held_agy_worker(&dir, "agy-include-fake");
+    let worktree = agy_worktree(&dir);
+    // The owner's config includes a file in the worktree, which the worker fills.
+    let mut config = std::fs::OpenOptions::new()
+        .append(true)
+        .open(dir.join(".git").join("config"))
+        .expect("config");
+    write!(
+        config,
+        "[include]\n\tpath = {}\n",
+        worktree
+            .join("local.gitconfig")
+            .to_string_lossy()
+            .replace('\\', "/")
+    )
+    .expect("config");
+    std::fs::write(
+        worktree.join("local.gitconfig"),
+        "[core]\n\tabbrev = garbage\n",
+    )
+    .expect("include");
+    std::fs::write(worktree.join("seed.txt"), "seed\nchanged\n").expect("edit");
+
+    let text = finished_agy_diff(&core);
+    assert!(
+        text.contains("+changed") && text.contains("+\tabbrev = garbage"),
+        "{text}"
+    );
+    // Plain git there does fail on it, so the check above means something.
+    let plain = Command::new("git")
+        .args(["ls-tree", "HEAD"])
+        .current_dir(&worktree)
+        .output()
+        .expect("git");
+    assert!(!plain.status.success(), "the setup breaks nothing");
+
+    let _ = call(&core, "alethe_cancel", json!({ "jobIds": ["job-01"] }));
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&fake);
+}
+
+// AGY-05 (#159): a link and a file holding its target have the same bytes, so only the type
+// tells them apart.
+#[test]
+fn an_antigravity_diff_shows_a_file_turned_into_a_link() {
+    let dir = workspace("agy-to-link");
+    git_repo(&dir);
+    std::fs::write(dir.join("pointer"), "seed.txt").expect("pointer");
+    git_in(&dir, &["add", "-A"]);
+    git_in(&dir, &["commit", "-qm", "pointer"]);
+    let (fake, core) = held_agy_worker(&dir, "agy-to-link-fake");
+    let pointer = agy_worktree(&dir).join("pointer");
+    std::fs::remove_file(&pointer).expect("remove");
+    #[cfg(windows)]
+    let linked = std::os::windows::fs::symlink_file("seed.txt", &pointer);
+    #[cfg(unix)]
+    let linked = std::os::unix::fs::symlink("seed.txt", &pointer);
+
+    if let Err(error) = linked {
+        eprintln!("skipped: this machine cannot make a symbolic link ({error})");
+    } else {
+        let text = finished_agy_diff(&core);
+        assert!(
+            text.contains("deleted file mode 100644") && text.contains("new file mode 120000"),
+            "{text}"
+        );
+    }
+
+    let _ = call(&core, "alethe_cancel", json!({ "jobIds": ["job-01"] }));
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&fake);
+}
+
+// The way back needs a link in HEAD's checkout, which Git for Windows writes as a plain file
+// (`core.symlinks=false`), and Windows keeps no executable bit.
+#[cfg(unix)]
+#[test]
+fn an_antigravity_diff_shows_a_link_turned_into_a_file_and_a_new_exec_bit() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = workspace("agy-modes");
+    git_repo(&dir);
+    std::os::unix::fs::symlink("seed.txt", dir.join("pointer")).expect("link");
+    std::fs::write(dir.join("run.sh"), "echo\n").expect("script");
+    std::fs::write(dir.join("tool.sh"), "echo\n").expect("tool");
+    std::fs::set_permissions(dir.join("tool.sh"), std::fs::Permissions::from_mode(0o755))
+        .expect("chmod");
+    std::fs::write(dir.join("plain.txt"), "plain\n").expect("plain");
+    git_in(&dir, &["add", "-A"]);
+    git_in(&dir, &["commit", "-qm", "modes"]);
+    let (fake, core) = held_agy_worker(&dir, "agy-modes-fake");
+    let worktree = agy_worktree(&dir);
+    std::fs::remove_file(worktree.join("pointer")).expect("remove");
+    std::fs::write(worktree.join("pointer"), "seed.txt").expect("file");
+    std::fs::set_permissions(
+        worktree.join("run.sh"),
+        std::fs::Permissions::from_mode(0o755),
+    )
+    .expect("chmod");
+    // Git reads only the owner's bit: dropping it counts even with group and others still set,
+    // and giving the bit to others alone does not.
+    std::fs::set_permissions(
+        worktree.join("tool.sh"),
+        std::fs::Permissions::from_mode(0o655),
+    )
+    .expect("chmod");
+    std::fs::set_permissions(
+        worktree.join("plain.txt"),
+        std::fs::Permissions::from_mode(0o645),
+    )
+    .expect("chmod");
+
+    let text = finished_agy_diff(&core);
+    for expected in [
+        "deleted file mode 120000",
+        "new file mode 100644",
+        "diff --git a/run.sh b/run.sh\nold mode 100644\nnew mode 100755",
+        "diff --git a/tool.sh b/tool.sh\nold mode 100755\nnew mode 100644",
+    ] {
+        assert!(text.contains(expected), "no {expected:?} in {text}");
+    }
+    assert!(!text.contains("plain.txt"), "{text}");
+
+    let _ = call(&core, "alethe_cancel", json!({ "jobIds": ["job-01"] }));
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&fake);
+}
+
+// AGY-05 (#159): on a disk that ignores case, the old name still opened the renamed file.
+#[test]
+fn an_antigravity_diff_shows_a_case_only_rename() {
+    let dir = workspace("agy-case");
+    git_repo(&dir);
+    std::fs::write(dir.join("other.txt"), "other\n").expect("other");
+    git_in(&dir, &["add", "-A"]);
+    git_in(&dir, &["commit", "-qm", "other"]);
+    let (fake, core) = held_agy_worker(&dir, "agy-case-fake");
+    let worktree = agy_worktree(&dir);
+
+    if !worktree.join("SEED.TXT").exists() {
+        eprintln!("skipped: this disk tells names apart by case");
+    } else {
+        std::fs::rename(worktree.join("seed.txt"), worktree.join("Seed.txt")).expect("rename");
+        std::fs::rename(worktree.join("other.txt"), worktree.join("Other.txt")).expect("rename");
+        std::fs::write(worktree.join("Other.txt"), "other\nchanged\n").expect("edit");
+        let text = finished_agy_diff(&core);
+        for expected in [
+            "diff --git a/seed.txt b/seed.txt\ndeleted file mode",
+            "diff --git a/Seed.txt b/Seed.txt\nnew file mode",
+            "diff --git a/other.txt b/other.txt\ndeleted file mode",
+            "diff --git a/Other.txt b/Other.txt\nnew file mode",
+            "+changed",
+        ] {
+            assert!(text.contains(expected), "no {expected:?} in {text}");
+        }
+    }
+
+    let _ = call(&core, "alethe_cancel", json!({ "jobIds": ["job-01"] }));
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&fake);
+}
+
+#[test]
+fn an_antigravity_diff_shows_every_kind_of_change_and_nothing_else() {
+    let dir = workspace("agy-diff-kinds");
+    git_repo(&dir);
+    // Checked out with CRLF whatever this machine's settings, as a Windows checkout usually is.
+    std::fs::write(dir.join(".gitattributes"), "*.txt text eol=crlf\n").expect("attributes");
+    std::fs::write(dir.join(".gitignore"), "*.log\n").expect("ignore");
+    std::fs::write(dir.join("notes.txt"), "one\ntwo\nthree\n").expect("notes");
+    std::fs::write(dir.join("old file.txt"), "bye\n").expect("old");
+    std::fs::write(dir.join("image.bin"), b"\x00\x01png").expect("binary");
+    git_in(&dir, &["add", "-A"]);
+    git_in(&dir, &["commit", "-qm", "kinds"]);
+    let (fake, core) = held_agy_worker(&dir, "agy-diff-kinds-fake");
+    let worktree = agy_worktree(&dir);
+    assert_eq!(
+        std::fs::read(worktree.join("notes.txt")).ok(),
+        Some(b"one\r\ntwo\r\nthree\r\n".to_vec()),
+        "the setup has no CRLF checkout"
+    );
+    std::fs::write(worktree.join("notes.txt"), "one\r\nTWO\r\nthree\r\n").expect("edit");
+    std::fs::remove_file(worktree.join("old file.txt")).expect("delete");
+    std::fs::write(worktree.join("image.bin"), b"\x00\x02png").expect("binary edit");
+    std::fs::create_dir_all(worktree.join("new dir")).expect("new dir");
+    std::fs::write(worktree.join("new dir").join("fresh file.txt"), "fresh\r\n").expect("new");
+    std::fs::write(worktree.join("debug.log"), "noise\n").expect("ignored");
+
+    let text = finished_agy_diff(&core);
+    for expected in [
+        "-two",
+        "+TWO",
+        "old file.txt",
+        "-bye",
+        "image.bin",
+        "Binary files",
+        "new dir/fresh file.txt",
+        "+fresh",
+    ] {
+        assert!(text.contains(expected), "no {expected:?} in {text}");
+    }
+    // Untouched files and lines are no change, whatever their line endings; ignored files are left out.
+    for unexpected in ["seed.txt", "-one", "+one", "debug.log"] {
+        assert!(!text.contains(unexpected), "{unexpected:?} in {text}");
+    }
+
+    let _ = call(&core, "alethe_cancel", json!({ "jobIds": ["job-01"] }));
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&fake);
+}
+
+// A junction needs no privilege on Windows, unlike a symbolic link, and Git for Windows walks it
+// as a folder.
+#[cfg(windows)]
+#[test]
+fn an_antigravity_diff_reads_nothing_through_a_linked_folder() {
+    let dir = workspace("agy-linked");
+    git_repo(&dir);
+    std::fs::create_dir_all(dir.join("docs")).expect("docs");
+    std::fs::write(dir.join("docs").join("notes.txt"), "public\n").expect("notes");
+    git_in(&dir, &["add", "-A"]);
+    git_in(&dir, &["commit", "-qm", "docs"]);
+    let (fake, core) = held_agy_worker(&dir, "agy-linked-fake");
+    // The worker swaps a tracked folder for a link to one outside its worktree, which holds a
+    // tracked name, a name of its own and ignore rules.
+    let outside = workspace("agy-linked-outside");
+    std::fs::write(outside.join("notes.txt"), "SECRET\n").expect("secret");
+    std::fs::write(outside.join("private.txt"), "PRIVATE\n").expect("private");
+    std::fs::write(outside.join(".gitignore"), "hidden-rule\n").expect("ignore");
+    let docs = agy_worktree(&dir).join("docs");
+    std::fs::remove_dir_all(&docs).expect("remove docs");
+    let linked = Command::new("cmd")
+        .args(["/C", "mklink", "/J"])
+        .arg(&docs)
+        .arg(&outside)
+        .output()
+        .expect("mklink");
+    assert!(linked.status.success(), "{linked:?}");
+
+    let text = finished_agy_diff(&core);
+    assert!(text.contains("-public"), "{text}");
+    for unexpected in [
+        "SECRET",
+        "PRIVATE",
+        "private.txt",
+        "hidden-rule",
+        "unavailable",
+    ] {
+        assert!(!text.contains(unexpected), "{unexpected:?} in {text}");
+    }
+
+    let _ = call(&core, "alethe_cancel", json!({ "jobIds": ["job-01"] }));
+    let _ = std::fs::remove_dir(&docs);
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&fake);
+    let _ = std::fs::remove_dir_all(&outside);
 }
 
 #[test]

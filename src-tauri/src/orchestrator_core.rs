@@ -215,14 +215,17 @@ struct AgyLog {
     steps: Vec<u64>,
     /// Steps that may have been denied: commands, and any tool step that failed.
     watched_steps: Vec<u64>,
+    /// `AGY_LOG_GRACE`, or longer where a test asked for it.
+    grace: Duration,
 }
 
 impl AgyLog {
-    fn open(path: PathBuf) -> Self {
+    fn open(path: PathBuf, grace: Duration) -> Self {
         Self {
             path,
             steps: Vec::new(),
             watched_steps: Vec::new(),
+            grace,
         }
     }
 
@@ -251,7 +254,7 @@ impl AgyLog {
         let watched = std::mem::take(&mut self.watched_steps);
         // A file another process holds for a moment is read again once before giving up.
         let (mut lines, _) = self.read_denials().or_else(|_| {
-            thread::sleep(AGY_LOG_GRACE);
+            thread::sleep(self.grace);
             self.read_denials()
         })?;
         // Only a turn that ran such a step pays the wait.
@@ -261,12 +264,12 @@ impl AgyLog {
                 .any(|step| !lines.iter().any(|(named, _)| *named == Some(*step)))
         };
         if unexplained(&lines) {
-            thread::sleep(AGY_LOG_GRACE);
+            thread::sleep(self.grace);
             let (mut again, mut unfinished) = self.read_denials()?;
             // A line agy is still writing may be this turn's denial: wait once more, and never
             // take it for "nothing was denied".
             if unfinished && unexplained(&again) {
-                thread::sleep(AGY_LOG_GRACE);
+                thread::sleep(self.grace);
                 (again, unfinished) = self.read_denials()?;
                 if unfinished && unexplained(&again) {
                     return Err(format!("{} ends in an unfinished line", self.path.display()));
@@ -963,6 +966,10 @@ struct Job {
     pending: Option<Value>,
     child: Option<Arc<Mutex<Child>>>,
     stdin: Option<Arc<Mutex<ChildStdin>>>,
+    /// Held by a worker process's reader from finding an event current until it is applied, and by
+    /// a revive while it queues the next run, so such an event never lands in the run after it.
+    /// Always taken before `Core::inner`, never while holding it.
+    gate: Arc<Mutex<()>>,
     inbox: VecDeque<String>,
     /// Why this worker ran on the agent it ran on, recorded only when one side was actually
     /// running out — so the board stays quiet when the choice carried no signal.
@@ -1126,6 +1133,7 @@ impl Job {
             pending: None,
             child: None,
             stdin: None,
+            gate: Arc::default(),
             inbox: VecDeque::new(),
             routing: None,
             awaiting_steer: false,
@@ -1142,6 +1150,13 @@ impl Job {
             self.status.as_str(),
             STATUS_DONE | STATUS_FAILED | STATUS_CANCELLED | STATUS_RELEASED | STATUS_INTERRUPTED
         )
+    }
+
+    /// Whether `process` is the worker process this job runs now.
+    fn runs(&self, process: &Arc<Mutex<Child>>) -> bool {
+        self.child
+            .as_ref()
+            .is_some_and(|child| Arc::ptr_eq(child, process))
     }
 
     fn teardown(&mut self) {
@@ -1192,6 +1207,8 @@ struct Inner {
     max_concurrent: usize,
     /// The budget a worker gets when the call names none; None lets it run without a limit.
     default_timeout_ms: Option<u64>,
+    /// See `Core::set_agy_log_grace`; zero leaves `AGY_LOG_GRACE`.
+    agy_log_grace: Duration,
     roles: Vec<Role>,
     /// Codex plugins turned off in worker threads.
     worker_disabled_plugins: Vec<String>,
@@ -1266,7 +1283,14 @@ pub struct Core {
     codex_models: Arc<Mutex<Option<(Instant, Value)>>>,
     /// The agy agent Antigravity workers run as. Set by the desktop app; without it they never start.
     agy_agent: Arc<Mutex<Option<AgyAgent>>>,
+    #[cfg(test)]
+    reader_hook: Arc<Mutex<Option<ReaderHook>>>,
 }
+
+/// Called by a worker's reader with each event it found current, just before applying it. Tests
+/// use it to hold an event in that spot.
+#[cfg(test)]
+pub type ReaderHook = Arc<dyn Fn(&Value) + Send + Sync>;
 
 impl Default for Core {
     fn default() -> Self {
@@ -1288,6 +1312,8 @@ impl Default for Core {
             rules_injected: Arc::new(AtomicBool::new(false)),
             codex_models: Arc::new(Mutex::new(None)),
             agy_agent: Arc::new(Mutex::new(None)),
+            #[cfg(test)]
+            reader_hook: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -1793,6 +1819,18 @@ impl Core {
 
     pub fn set_agy_agent(&self, agent: AgyAgent) {
         *guard(&self.agy_agent) = Some(agent);
+    }
+
+    /// Lets Antigravity workers started from now on wait longer than `AGY_LOG_GRACE` for agy to
+    /// log a denial, never shorter. For tests whose late log line a loaded machine could delay
+    /// past the production wait.
+    pub fn set_agy_log_grace(&self, grace: Duration) {
+        guard(&self.inner).agy_log_grace = grace;
+    }
+
+    #[cfg(test)]
+    pub fn set_reader_hook(&self, hook: ReaderHook) {
+        *guard(&self.reader_hook) = Some(hook);
     }
 
     pub fn set_launcher(&self, launcher: Launcher) {
@@ -2410,7 +2448,8 @@ impl Core {
                     return;
                 }
             }
-            agy_log = Some(AgyLog::open(path));
+            let grace = guard(&self.inner).agy_log_grace.max(AGY_LOG_GRACE);
+            agy_log = Some(AgyLog::open(path, grace));
         }
         for (key, value) in &launcher.env {
             command.env(key, value);
@@ -2523,6 +2562,12 @@ impl Core {
             let core = self.clone();
             let owned_id = job_id.to_string();
             let stdin = Arc::clone(&stdin);
+            let process = Arc::clone(&child);
+            let gate = guard(&self.inner)
+                .jobs
+                .get(job_id)
+                .map(|job| Arc::clone(&job.gate))
+                .unwrap_or_default();
             thread::spawn(move || {
                 for line in BufReader::new(stdout).lines() {
                     let Ok(line) = line else { break };
@@ -2532,18 +2577,37 @@ impl Core {
                     let Ok(message) = serde_json::from_str::<Value>(&line) else {
                         continue;
                     };
+                    // A process released or replaced since speaks for a run that is over: a revived
+                    // worker's turn must not take its words. The gate keeps a revive from starting
+                    // that run while an event found current here is still being applied, AGY log
+                    // waits and diffs included. A release does not wait for it: it only ends this
+                    // run, and it kills a process whose input this handler may be stuck writing.
+                    let _applying = guard(&gate);
+                    let current = guard(&core.inner)
+                        .jobs
+                        .get(&owned_id)
+                        .is_some_and(|job| job.runs(&process));
+                    if !current {
+                        continue;
+                    }
+                    #[cfg(test)]
+                    if let Some(hook) = guard(&core.reader_hook).clone() {
+                        hook(&message);
+                    }
                     match agy_log.as_mut() {
                         Some(log) => core.on_worker_message_agy(&owned_id, &message, log),
                         None if stream => core.on_worker_message_claude(&owned_id, &message),
                         None => core.on_worker_message(&owned_id, &stdin, &spec, &message),
                     }
                 }
-                core.finish(
+                core.finish_turn(
                     &owned_id,
                     STATUS_FAILED,
                     Some("failed".into()),
                     "worker connection closed".into(),
                     true,
+                    true,
+                    Some(&process),
                 );
             });
         }
@@ -3313,6 +3377,7 @@ impl Core {
                 String::new(),
                 false,
                 false,
+                None,
             );
             return;
         }
@@ -3329,11 +3394,15 @@ impl Core {
         text: String,
         terminal: bool,
     ) {
-        self.finish_turn(job_id, status, outcome, text, terminal, true);
+        self.finish_turn(job_id, status, outcome, text, terminal, true, None);
     }
 
     /// `announce` is false for the `result` that only acknowledges an interrupt this side asked
     /// for: the turn ended, but nothing was delivered, so the planner must not be told it was.
+    /// `from` is the worker process the ending came from, when one did. It counts only while that
+    /// process is still the job's, checked under the same lock that ends the run: the output of one
+    /// released or replaced since can close after a revive, and must not end the run that followed.
+    #[allow(clippy::too_many_arguments)]
     fn finish_turn(
         &self,
         job_id: &str,
@@ -3342,6 +3411,7 @@ impl Core {
         text: String,
         terminal: bool,
         announce: bool,
+        from: Option<&Arc<Mutex<Child>>>,
     ) {
         let staged;
         {
@@ -3349,7 +3419,7 @@ impl Core {
             let Some(job) = inner.jobs.get_mut(job_id) else {
                 return;
             };
-            if job.settled() {
+            if job.settled() || from.is_some_and(|process| !job.runs(process)) {
                 return;
             }
             // Only a running worker, or one blocked on a question, holds a slot. A queued one never
@@ -4466,6 +4536,7 @@ fn dispatch_tool(
                             pending: None,
                             child: None,
                             stdin: None,
+                            gate: Arc::default(),
                             inbox: VecDeque::new(),
                             routing: fallback_note.clone(),
                             awaiting_steer: false,
@@ -4717,7 +4788,11 @@ fn dispatch_tool(
                 if job.agent == "antigravity" && job.git_pin.is_none() {
                     return Err("this Antigravity worker ran before Alethe pinned its worktree, so it is not run again; delegate the task again".into());
                 }
+                let gate = Arc::clone(&job.gate);
                 drop(inner);
+                // An event of the process it had may be landing right now; the next run starts
+                // after it. Once queued, that process's reader no longer finds anything current.
+                let applying = guard(&gate);
                 let queued = {
                     let mut inner = guard(&core.inner);
                     let job = inner
@@ -4727,10 +4802,19 @@ fn dispatch_tool(
                     job.inbox.push_back(message);
                     job.status = STATUS_QUEUED.to_string();
                     job.superseded_by = None;
+                    // The revive starts a new turn, as a live send does, so the last run's words
+                    // are not this one's. That also wipes what the released process's reader may
+                    // still have written after the release, which does not wait for the gate:
+                    // a late report, reply or question.
+                    job.outcome = None;
+                    job.reply.clear();
+                    job.report.clear();
+                    job.pending = None;
                     inner.queue.push_back(job_id.clone());
                     core.notify(&inner);
                     true
                 };
+                drop(applying);
                 core.persist();
                 core.drain_queue();
                 return Ok(
@@ -4971,6 +5055,7 @@ mod restart_tests {
             pending: None,
             child: None,
             stdin: None,
+            gate: Arc::default(),
             inbox: VecDeque::new(),
             routing: None,
             awaiting_steer: false,

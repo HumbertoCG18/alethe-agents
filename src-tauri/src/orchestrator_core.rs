@@ -5,7 +5,7 @@
 //! is what lets `tests/orchestrator.rs` compile this file directly instead of linking the GUI
 //! stack a Rust test binary cannot load.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
@@ -438,54 +438,17 @@ fn resolved_folder(cwd: &str) -> Result<String, String> {
 /// their own. `None` when nothing differs from HEAD, so a change the worker reverted leaves no diff,
 /// and outside a repository, where there is nothing to compare with. A file git cannot read is an
 /// error, never a missing change.
-///
-/// `git_dir` is set for an Antigravity worker, which can rewrite its worktree's `.git` file and so
-/// point git at config of its own. Git then reads only that pinned git dir, outside the worker's
-/// folder, and runs nothing it names: no fsmonitor, external diff, textconv or submodule check.
-fn worktree_diff(
-    cwd: &std::path::Path,
-    git_dir: Option<&std::path::Path>,
-) -> Result<Option<String>, String> {
-    let config = match git_dir {
-        Some(git_dir) => agy_git_config(cwd, Some(git_dir))?,
-        None => Vec::new(),
-    };
-    let run = |args: &[&str], exits: &[i32]| -> Result<std::process::Output, String> {
-        let Some(git_dir) = git_dir else {
-            return git_raw(cwd, args, exits);
-        };
-        let mut hardened = args.to_vec();
-        if args[0] == "diff" {
-            hardened.splice(
-                1..1,
-                ["--no-ext-diff", "--no-textconv", "--ignore-submodules=all"],
-            );
-        }
-        let output = Command::new("git")
-            .args(&hardened)
-            .current_dir(cwd)
-            .env("GIT_DIR", git_dir)
-            .env("GIT_WORK_TREE", cwd)
-            .envs(config.iter().map(|(key, value)| (key, value)))
-            .output()
-            .map_err(|error| format!("git not available: {error}"))?;
-        if !output
-            .status
-            .code()
-            .is_some_and(|code| exits.contains(&code))
-        {
-            return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
-        }
-        Ok(output)
-    };
-    let text =
-        |output: std::process::Output| String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if run(&["rev-parse", "--is-inside-work-tree"], &[0]).is_err() {
+fn worktree_diff(cwd: &std::path::Path) -> Result<Option<String>, String> {
+    if git(cwd, &["rev-parse", "--is-inside-work-tree"]).is_err() {
         return Ok(None);
     }
-    let mut diff = text(run(&["diff", "HEAD"], &[0])?);
+    let mut diff = git(cwd, &["diff", "HEAD"])?;
     // Untrimmed: a name may start or end with a space, and NUL is what separates them.
-    let untracked = run(&["ls-files", "--others", "--exclude-standard", "-z"], &[0])?;
+    let untracked = git_raw(
+        cwd,
+        &["ls-files", "--others", "--exclude-standard", "-z"],
+        &[0],
+    )?;
     // ponytail: one git per new file; batch them if workers start leaving hundreds.
     // A trailing `/` is a nested repository, such as an isolated worker's worktree.
     for path in String::from_utf8_lossy(&untracked.stdout)
@@ -494,7 +457,11 @@ fn worktree_diff(
     {
         // Measured: exits 1 for a difference but also for a file it could not open, which prints
         // nothing; any file it can read prints at least a header, even an empty one.
-        let output = run(&["diff", "--no-index", "--", "/dev/null", path], &[0, 1])?;
+        let output = git_raw(
+            cwd,
+            &["diff", "--no-index", "--", "/dev/null", path],
+            &[0, 1],
+        )?;
         let file = String::from_utf8_lossy(&output.stdout);
         if file.trim().is_empty() {
             let error = String::from_utf8_lossy(&output.stderr);
@@ -508,73 +475,456 @@ fn worktree_diff(
     Ok((!diff.trim().is_empty()).then_some(diff))
 }
 
-/// Config for git that Alethe runs on an Antigravity worker's repository, as `GIT_CONFIG_*`
-/// variables, which take a key whole where `-c` splits it at its first `=`, and a filter's name
-/// may hold one. Every filter driver the config names is emptied, so git reads files as they are:
-/// an empty `clean` or `process` is "no filter", not an error (measured, git 2.54). Hooks point at
-/// an empty folder of Alethe's, and fsmonitor is off. Listing the drivers runs nothing.
-fn agy_git_config(
-    cwd: &std::path::Path,
-    git_dir: Option<&std::path::Path>,
-) -> Result<Vec<(String, String)>, String> {
-    let mut list = Command::new("git");
-    list.args(["config", "-z", "--get-regexp", r"^filter\."])
-        .current_dir(cwd)
-        .stdin(Stdio::null());
-    if let Some(git_dir) = git_dir {
-        list.env("GIT_DIR", git_dir).env("GIT_WORK_TREE", cwd);
-    }
-    let output = list
-        .output()
-        .map_err(|error| format!("git not available: {error}"))?;
-    // 1 is "no such key", which is no driver at all.
-    if !matches!(output.status.code(), Some(0 | 1)) {
-        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
-    }
-    let no_hooks = std::env::temp_dir().join("alethe-no-hooks");
-    std::fs::create_dir_all(&no_hooks)
-        .map_err(|error| format!("{}: {error}", no_hooks.display()))?;
-    let empty = std::fs::read_dir(&no_hooks)
-        .map_err(|error| format!("{}: {error}", no_hooks.display()))?
-        .next()
-        .is_none();
-    if !empty {
-        return Err(format!("{} is not empty", no_hooks.display()));
-    }
-    let mut settings = vec![
-        ("core.fsmonitor".to_string(), "false".to_string()),
-        (
-            "core.hooksPath".to_string(),
-            no_hooks.to_string_lossy().into_owned(),
-        ),
+/// `worktree_diff` for an Antigravity worker, read without any of the repository's git config: the
+/// worker can edit files that config hands to commands (filters, textconv, fsmonitor, an external
+/// diff) or includes, and overriding those one by one always misses one. Git runs only in a bare
+/// repository of Alethe's own in `scratch`, with no system, global or attributes config, and reads
+/// the pinned repository's objects as an alternate. HEAD is resolved from the pinned git dir's
+/// files, the worker's folder is walked in Rust without following links and compared there with
+/// HEAD's blobs, and what changed goes into that repository's index for `git diff-index` to print.
+fn agy_diff(
+    work_tree: &std::path::Path,
+    git_dir: &std::path::Path,
+    scratch: &std::path::Path,
+) -> Result<Option<String>, String> {
+    let _ = std::fs::remove_dir_all(scratch);
+    let diff = agy_diff_in(work_tree, git_dir, scratch);
+    let _ = std::fs::remove_dir_all(scratch);
+    diff
+}
+
+fn agy_diff_in(
+    work_tree: &std::path::Path,
+    git_dir: &std::path::Path,
+    scratch: &std::path::Path,
+) -> Result<Option<String>, String> {
+    let common = std::fs::read_to_string(git_dir.join("commondir"))
+        .map_or_else(|_| git_dir.to_path_buf(), |path| git_dir.join(path.trim()));
+    let head = agy_head(git_dir, &common)?;
+    let own = scratch.join("git");
+    let blobs = scratch.join("blobs");
+    let empty = scratch.join("empty");
+    std::fs::create_dir_all(&blobs).map_err(at(&blobs))?;
+    std::fs::write(&empty, "").map_err(at(&empty))?;
+    let git = |cwd: &std::path::Path, args: &[&str]| {
+        let mut command = Command::new("git");
+        command
+            .arg("-c")
+            .arg(format!("core.attributesFile={}", empty.display()))
+            .args(args)
+            .current_dir(cwd)
+            .env("GIT_DIR", &own)
+            .env("GIT_ALTERNATE_OBJECT_DIRECTORIES", common.join("objects"))
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", &empty)
+            .env("GIT_ATTR_NOSYSTEM", "1");
+        command
+    };
+    // The input goes in from a thread, so git never waits on a full pipe while Alethe waits on git.
+    let run = |mut command: Command, input: Vec<u8>, exits: &[i32]| -> Result<Vec<u8>, String> {
+        let mut child = command
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|error| format!("git not available: {error}"))?;
+        let mut stdin = child.stdin.take().ok_or("git took no input")?;
+        let writer = thread::spawn(move || stdin.write_all(&input));
+        let output = child
+            .wait_with_output()
+            .map_err(|error| format!("git: {error}"))?;
+        let _ = writer.join();
+        if !output
+            .status
+            .code()
+            .is_some_and(|code| exits.contains(&code))
+        {
+            return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+        }
+        Ok(output.stdout)
+    };
+
+    let format = if head.len() == 64 { "sha256" } else { "sha1" };
+    let init = [
+        "init",
+        "-q",
+        "--bare",
+        "--template=",
+        &format!("--object-format={format}"),
     ];
-    // Each entry is `key` NL `value`; a driver's name sits between `filter.` and the last dot.
-    for entry in String::from_utf8_lossy(&output.stdout).split('\0') {
-        let key = entry.split('\n').next().unwrap_or_default();
-        let Some((driver, _)) = key
-            .strip_prefix("filter.")
-            .and_then(|rest| rest.rsplit_once('.'))
-        else {
+    run(git(scratch, &init), Vec::new(), &[0])?;
+    // `check-ignore` reads the repository's own excludes from the git dir it runs in.
+    if let Ok(exclude) = std::fs::read(common.join("info").join("exclude")) {
+        let info = own.join("info");
+        std::fs::create_dir_all(&info).map_err(at(&info))?;
+        std::fs::write(info.join("exclude"), exclude).map_err(at(&info))?;
+    }
+    let listing = run(
+        git(scratch, &["ls-tree", "-r", "-z", "--full-tree", &head]),
+        Vec::new(),
+        &[0],
+    )?;
+    // `<mode> <type> <id>` TAB `<path>`; a submodule is a commit and is never compared, as before.
+    let mut tracked = Vec::new();
+    let mut submodules = HashSet::new();
+    for entry in listing.split(|byte| *byte == 0) {
+        let Some(tab) = entry.iter().position(|byte| *byte == b'\t') else {
             continue;
         };
-        for (name, value) in [
-            ("clean", ""),
-            ("smudge", ""),
-            ("process", ""),
-            ("required", "false"),
-        ] {
-            let setting = (format!("filter.{driver}.{name}"), value.to_string());
-            if !settings.contains(&setting) {
-                settings.push(setting);
+        let path = &entry[tab + 1..];
+        match String::from_utf8_lossy(&entry[..tab])
+            .split(' ')
+            .collect::<Vec<_>>()[..]
+        {
+            [mode, "blob", id] => tracked.push((mode.to_string(), id.to_string(), path)),
+            [_, "commit", _] => {
+                submodules.insert(path);
+            }
+            _ => {}
+        }
+    }
+    let found = worktree_entries(work_tree, &submodules)?;
+
+    // Each change is a mode and a path, its new content in `blobs` under its index.
+    let mut changes: Vec<(&str, Vec<u8>)> = Vec::new();
+    let mut deleted = Vec::new();
+    let mut keep = |mode: &'static str, bytes: &[u8], path: &[u8]| -> Result<(), String> {
+        let blob = blobs.join(changes.len().to_string());
+        std::fs::write(&blob, bytes).map_err(at(&blob))?;
+        changes.push((mode, path.to_vec()));
+        Ok(())
+    };
+    // ponytail: reads every tracked blob and file each turn (0.3 s for Alethe's 45 MiB); compare
+    // sizes or object ids first if large repositories make it slow.
+    let mut cat = git(scratch, &["cat-file", "--batch"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|error| format!("git not available: {error}"))?;
+    let mut ask = cat.stdin.take().ok_or("git cat-file took no input")?;
+    let mut answers = BufReader::new(cat.stdout.take().ok_or("git cat-file gave no output")?);
+    let mut compare = || -> Result<(), String> {
+        for (head_mode, id, path) in &tracked {
+            // `<id> blob <size>` NL, the blob, NL.
+            let mut header = String::new();
+            writeln!(ask, "{id}")
+                .and_then(|()| ask.flush())
+                .and_then(|()| answers.read_line(&mut header))
+                .map_err(|error| format!("git cat-file: {error}"))?;
+            let size = header
+                .trim_end()
+                .rsplit(' ')
+                .next()
+                .and_then(|size| size.parse::<usize>().ok())
+                .ok_or_else(|| format!("git cat-file: {}", header.trim()))?;
+            let mut blob = vec![0; size + 1];
+            answers
+                .read_exact(&mut blob)
+                .map_err(|error| format!("git cat-file: {error}"))?;
+            blob.truncate(size);
+            // Looked up by the name the disk spells, so a file renamed only in case is not found.
+            let now = match found.get(*path) {
+                Some(entry) => worktree_file(work_tree, &git_path(path))?
+                    .map(|bytes| (disk_mode(entry, head_mode), bytes)),
+                None => None,
+            };
+            let Some((mode, now)) = now else {
+                deleted.push(*path);
+                continue;
+            };
+            // A Windows checkout usually writes CRLF where HEAD has LF, which alone is no change.
+            // ponytail: so is a change of line endings alone, and other checkout conversions (Git
+            // LFS, `ident`, `working-tree-encoding`) read as changes; undo one here if it matters.
+            let now = if mode == "120000" || blob.contains(&b'\r') || now.contains(&0) {
+                now
+            } else {
+                lf_only(&now)
+            };
+            if mode != head_mode || now != blob {
+                keep(mode, &now, path)?;
+            }
+        }
+        Ok(())
+    };
+    let compared = compare();
+    drop(ask);
+    let _ = cat.kill();
+    let _ = cat.wait();
+    compared?;
+
+    // Only paths the walk found go to git, so git never lists a folder or reads past a link. Git
+    // 2.32 and later read no `.gitignore` that is itself a link (measured with 2.54: it warns and
+    // skips it); one that is a junction is a folder, which git cannot read as a file either.
+    let known: HashSet<&[u8]> = tracked.iter().map(|(_, _, path)| *path).collect();
+    let candidates: Vec<&Vec<u8>> = found
+        .iter()
+        .filter(|(path, entry)| entry.may_be_new && !known.contains(path.as_slice()))
+        .map(|(path, _)| path)
+        .collect();
+    // Each starts with `./`, so a name such as `:!x` is never read as pathspec magic, which
+    // `check-ignore` takes no `GIT_LITERAL_PATHSPECS` against. It prints them back as given.
+    let mut input = Vec::new();
+    for path in &candidates {
+        input.extend_from_slice(b"./");
+        input.extend_from_slice(path);
+        input.push(0);
+    }
+    let mut check = git(work_tree, &["check-ignore", "--stdin", "-z", "--no-index"]);
+    check.env("GIT_WORK_TREE", work_tree);
+    // ponytail: the repository's `info/exclude` and the default global ignore file apply, but not
+    // a `core.excludesFile` set in config; read that one from the owner's config if it matters.
+    // 1 is "none of them is ignored".
+    let listed = run(check, input, &[0, 1])?;
+    let ignored: HashSet<&[u8]> = listed
+        .split(|byte| *byte == 0)
+        .filter_map(|path| path.strip_prefix(b"./"))
+        .collect();
+    for path in candidates {
+        if ignored.contains(path.as_slice()) {
+            continue;
+        }
+        // Gone since the walk, or a name Windows opens as another, such as one ending in a dot.
+        let now = worktree_file(work_tree, &git_path(path))?.ok_or_else(|| {
+            format!(
+                "{}: listed but cannot be read",
+                String::from_utf8_lossy(path)
+            )
+        })?;
+        keep(disk_mode(&found[path], ""), &now, path)?;
+    }
+    if changes.is_empty() && deleted.is_empty() {
+        return Ok(None);
+    }
+
+    let mut paths = Vec::new();
+    for index in 0..changes.len() {
+        paths.extend_from_slice(blobs.join(index.to_string()).to_string_lossy().as_bytes());
+        paths.push(b'\n');
+    }
+    let ids = run(
+        git(
+            scratch,
+            &["hash-object", "-w", "--no-filters", "--stdin-paths"],
+        ),
+        paths,
+        &[0],
+    )?;
+    let ids = String::from_utf8_lossy(&ids);
+    // A deleted path goes first, so a name renamed only in case is removed before it is added.
+    let none = "0".repeat(head.len());
+    let mut entries = Vec::new();
+    for path in deleted {
+        entries.extend_from_slice(format!("0 {none}\t").as_bytes());
+        entries.extend_from_slice(path);
+        entries.push(0);
+    }
+    for ((mode, path), id) in changes.iter().zip(ids.lines()) {
+        entries.extend_from_slice(format!("{mode} {id}\t").as_bytes());
+        entries.extend_from_slice(path);
+        entries.push(0);
+    }
+    run(git(scratch, &["read-tree", &head]), Vec::new(), &[0])?;
+    run(
+        git(scratch, &["update-index", "-z", "--index-info"]),
+        entries,
+        &[0],
+    )?;
+    let diff = run(
+        git(
+            scratch,
+            &["diff-index", "--cached", "-p", "--no-renames", &head],
+        ),
+        Vec::new(),
+        &[0],
+    )?;
+    let diff = String::from_utf8_lossy(&diff).trim().to_string();
+    // Something changed, so an empty diff would hide it.
+    if diff.is_empty() {
+        return Err("git diff-index printed nothing for what changed".into());
+    }
+    Ok(Some(diff))
+}
+
+/// The commit HEAD names in the pinned git dir, read from its files outside the worker's folder:
+/// no git runs, and no ref the worker can write is read.
+// ponytail: loose and packed refs only; a repository on reftable gets no diff until this reads it.
+fn agy_head(git_dir: &std::path::Path, common: &std::path::Path) -> Result<String, String> {
+    let mut name = "HEAD".to_string();
+    // A symbolic ref may name another one; git too gives up after a few.
+    for _ in 0..5 {
+        let loose = [git_dir, common]
+            .iter()
+            .find_map(|dir| std::fs::read_to_string(dir.join(&name)).ok());
+        let value = match loose {
+            Some(value) => value.trim().to_string(),
+            None => std::fs::read_to_string(common.join("packed-refs"))
+                .unwrap_or_default()
+                .lines()
+                .find_map(|line| {
+                    let id = line.strip_suffix(name.as_str())?.strip_suffix(' ')?;
+                    Some(id.to_string())
+                })
+                .ok_or_else(|| format!("{name} names no commit"))?,
+        };
+        match value.strip_prefix("ref:") {
+            Some(target) => name = target.trim().to_string(),
+            None if matches!(value.len(), 40 | 64)
+                && value.bytes().all(|byte| byte.is_ascii_hexdigit()) =>
+            {
+                return Ok(value)
+            }
+            None => return Err(format!("{name} holds {value:?}, not a commit")),
+        }
+    }
+    Err("HEAD: too many symbolic refs".into())
+}
+
+/// A file or link that the walk of a worker's folder found.
+struct Found {
+    link: bool,
+    executable: bool,
+    /// False inside a nested repository, whose files git never lists as new.
+    may_be_new: bool,
+}
+
+/// Every file and link in a worker's folder, keyed by its git path as the disk spells it, found
+/// without git: a link is one entry and is never followed, no `.git` is listed, and a submodule's
+/// folder is not entered.
+// ponytail: ignored folders are walked too; skip them level by level with `check-ignore` if a
+// worktree grows a large one.
+fn worktree_entries(
+    work_tree: &std::path::Path,
+    submodules: &HashSet<&[u8]>,
+) -> Result<HashMap<Vec<u8>, Found>, String> {
+    let mut found = HashMap::new();
+    let mut folders = vec![(PathBuf::new(), true)];
+    while let Some((folder, may_be_new)) = folders.pop() {
+        let full = work_tree.join(&folder);
+        for entry in std::fs::read_dir(&full).map_err(at(&full))? {
+            let entry = entry.map_err(at(&full))?;
+            let name = entry.file_name();
+            let dot_git = if cfg!(windows) {
+                name.eq_ignore_ascii_case(".git")
+            } else {
+                name == ".git"
+            };
+            if dot_git {
+                continue;
+            }
+            let relative = folder.join(&name);
+            let kind = entry.file_type().map_err(at(&entry.path()))?;
+            if kind.is_dir() {
+                if !submodules.contains(git_bytes(&relative).as_slice()) {
+                    let nested = std::fs::symlink_metadata(entry.path().join(".git")).is_ok();
+                    folders.push((relative, may_be_new && !nested));
+                }
+            } else if kind.is_file() || kind.is_symlink() {
+                let link = kind.is_symlink();
+                let executable = executable(&entry);
+                found.insert(
+                    git_bytes(&relative),
+                    Found {
+                        link,
+                        executable,
+                        may_be_new,
+                    },
+                );
             }
         }
     }
-    let mut env = vec![("GIT_CONFIG_COUNT".to_string(), settings.len().to_string())];
-    for (at, (key, value)) in settings.into_iter().enumerate() {
-        env.push((format!("GIT_CONFIG_KEY_{at}"), key));
-        env.push((format!("GIT_CONFIG_VALUE_{at}"), value));
+    Ok(found)
+}
+
+/// Whether a file the walk found is executable the way git reads it: the owner's bit only
+/// (`ce_permissions`). Windows keeps none.
+fn executable(entry: &std::fs::DirEntry) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        return entry
+            .metadata()
+            .is_ok_and(|meta| meta.permissions().mode() & 0o100 != 0);
     }
-    Ok(env)
+    #[cfg(not(unix))]
+    {
+        let _ = entry;
+        false
+    }
+}
+
+/// The mode git would record for `found`, given HEAD's (`""` for a new file). On Windows, as Git
+/// for Windows does by default, a file keeps HEAD's executable bit, and a link that HEAD's checkout
+/// wrote as a plain file (`core.symlinks=false`) is still that link.
+// ponytail: so on Windows a link replaced by a plain file holding its target reads as no change.
+fn disk_mode(found: &Found, head: &str) -> &'static str {
+    match (found.link, head) {
+        (true, _) => "120000",
+        (false, "120000") if cfg!(windows) => "120000",
+        (false, "100755") if cfg!(windows) => "100755",
+        (false, _) if found.executable => "100755",
+        _ => "100644",
+    }
+}
+
+/// A path git printed, relative to the worktree. Git keeps names as bytes, which are UTF-8 on
+/// Windows.
+fn git_path(bytes: &[u8]) -> PathBuf {
+    #[cfg(unix)]
+    return PathBuf::from(<std::ffi::OsStr as std::os::unix::ffi::OsStrExt>::from_bytes(bytes));
+    #[cfg(not(unix))]
+    PathBuf::from(String::from_utf8_lossy(bytes).into_owned())
+}
+
+/// `path`, relative to the worktree, as git spells it, with `/` between names.
+fn git_bytes(path: &std::path::Path) -> Vec<u8> {
+    #[cfg(unix)]
+    return std::os::unix::ffi::OsStrExt::as_bytes(path.as_os_str()).to_vec();
+    #[cfg(not(unix))]
+    path.to_string_lossy().replace('\\', "/").into_bytes()
+}
+
+/// A file in a worker's folder as git reads it: a link as its own target, never followed, since it
+/// may point outside the folder, and nothing past a linked folder. `None` when no file is there.
+fn worktree_file(
+    work_tree: &std::path::Path,
+    relative: &std::path::Path,
+) -> Result<Option<Vec<u8>>, String> {
+    let linked = |folder: &std::path::Path| {
+        std::fs::symlink_metadata(work_tree.join(folder))
+            .is_ok_and(|meta| meta.file_type().is_symlink())
+    };
+    if relative.ancestors().skip(1).any(linked) {
+        return Ok(None);
+    }
+    let path = &work_tree.join(relative);
+    let meta = match std::fs::symlink_metadata(path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        meta => meta.map_err(at(path))?,
+    };
+    if meta.file_type().is_symlink() {
+        return std::fs::read_link(path)
+            .map(|target| Some(git_bytes(&target)))
+            .map_err(at(path));
+    }
+    if meta.is_dir() {
+        return Ok(None);
+    }
+    std::fs::read(path).map(Some).map_err(at(path))
+}
+
+/// `bytes` with each CRLF turned into LF, as git stores a text file it converts.
+fn lf_only(bytes: &[u8]) -> Vec<u8> {
+    let crlf = |at: usize| bytes[at] == b'\r' && bytes.get(at + 1) == Some(&b'\n');
+    (0..bytes.len())
+        .filter(|at| !crlf(*at))
+        .map(|at| bytes[at])
+        .collect()
+}
+
+/// An I/O error, with the path it was about.
+fn at(path: &std::path::Path) -> impl Fn(std::io::Error) -> String + '_ {
+    move |error| format!("{}: {error}", path.display())
 }
 
 /// What Alethe trusts about an Antigravity worker's worktree, read right after Alethe made it and
@@ -630,9 +980,9 @@ fn sha256_hex(bytes: &[u8]) -> String {
 /// Same path/branch convention as `worktrees.rs` (`<repo>/.alethe/worktrees/<id>/`,
 /// `alethe/agent-<id>`) on purpose, so its functions can later commit/fetch/remove this worktree —
 /// this module stays crate-free (see file header), so it can't call `worktrees.rs` directly.
-/// `guarded` is for an Antigravity worker: its checkout runs none of the repository's hooks,
-/// filters or fsmonitor (see `agy_git_config`).
-fn isolate_worktree(cwd: &str, job_id: &str, guarded: bool) -> Result<String, String> {
+/// An Antigravity worktree is made the same way: before its worker runs, from HEAD, with the
+/// owner's own git config.
+fn isolate_worktree(cwd: &str, job_id: &str) -> Result<String, String> {
     let origin = PathBuf::from(cwd);
     let root = git(&origin, &["rev-parse", "--show-toplevel"])?;
     let root = PathBuf::from(root.replace('/', std::path::MAIN_SEPARATOR_STR));
@@ -644,20 +994,10 @@ fn isolate_worktree(cwd: &str, job_id: &str, guarded: bool) -> Result<String, St
     }
     let branch = format!("alethe/agent-{job_id}");
     let target_text = target.to_string_lossy().into_owned();
-    let add = ["worktree", "add", "-b", &branch, &target_text, "HEAD"];
-    if guarded {
-        let output = Command::new("git")
-            .args(add)
-            .current_dir(&root)
-            .envs(agy_git_config(&root, None)?)
-            .output()
-            .map_err(|error| format!("git not available: {error}"))?;
-        if !output.status.success() {
-            return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
-        }
-    } else {
-        git(&root, &add)?;
-    }
+    git(
+        &root,
+        &["worktree", "add", "-b", &branch, &target_text, "HEAD"],
+    )?;
     Ok(target_text)
 }
 
@@ -2706,7 +3046,7 @@ impl Core {
 
     /// Whether an Antigravity worker's worktree still points git where Alethe pinned it. Checked
     /// before agy starts and before every diff, without running git: a `.git` file the worker
-    /// rewrote could hand Alethe's own git a config that runs the worker's code.
+    /// rewrote could point Alethe's own git at another repository.
     fn verify_agy_git(&self, job_id: &str) -> Result<(), String> {
         let (cwd, pin) = match guard(&self.inner).jobs.get(job_id) {
             Some(job) => (job.cwd.clone(), job.git_pin.clone()),
@@ -3332,8 +3672,15 @@ impl Core {
                     return;
                 }
             }
-            let git_dir = git_pin.map(|(git_dir, _)| PathBuf::from(git_dir));
-            let diff = worktree_diff(&PathBuf::from(&cwd), git_dir.as_deref());
+            let cwd = PathBuf::from(&cwd);
+            let diff = match git_pin {
+                Some((git_dir, _)) => agy_diff(
+                    &cwd,
+                    std::path::Path::new(&git_dir),
+                    &self.job_dir(job_id).join("diff"),
+                ),
+                None => worktree_diff(&cwd),
+            };
             let mut inner = guard(&self.inner);
             if let Some(job) = inner.jobs.get_mut(job_id) {
                 job.diff = match diff {
@@ -4445,16 +4792,15 @@ fn dispatch_tool(
             if isolate {
                 for id in &ids {
                     // Read before any worker runs in it, so what is pinned is what Alethe made.
-                    let made =
-                        isolate_worktree(&cwd, id, agent == "antigravity").and_then(|path| {
-                            let pin = if agent == "antigravity" {
-                                agy_git_pin(std::path::Path::new(&path)).map(Some)
-                            } else {
-                                Ok(None)
-                            };
-                            prepared.push((path.clone(), Some(path)));
-                            pin
-                        });
+                    let made = isolate_worktree(&cwd, id).and_then(|path| {
+                        let pin = if agent == "antigravity" {
+                            agy_git_pin(std::path::Path::new(&path)).map(Some)
+                        } else {
+                            Ok(None)
+                        };
+                        prepared.push((path.clone(), Some(path)));
+                        pin
+                    });
                     match made {
                         Ok(pin) => git_pins.push(pin),
                         Err(error) => {

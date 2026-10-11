@@ -3414,6 +3414,7 @@ export const zhCN: Record<MessageKey, string> = {
   'todo.workers.running': '{count} running',
   'todo.workers.queued': '{count} queued',
   'todo.night.title': 'Night of {date}',
+  'todo.night.completed': 'Night of {date} · completed',
   'todo.night.empty': 'No night diary yet.',
   'todo.night.countOk': '{count} ok',
   'todo.night.countWaiting': '{count} waiting on you',

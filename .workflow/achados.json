@@ -162,6 +162,42 @@
       "origem": "",
       "detalhe": "Visto em 11/10 no GPT Tutor: o único diário, .workflow/local/noites/2026-10-02.json, tem PILOTO-01..03, todas concluídas no registro; o NightCard (NightCard.tsx:114) move as entradas para a sublista Concluídas (3) mas mantém o cabeçalho 'Noite de 02/10' com 0, que o dono lê como seção órfã. Esperado pelo dono: a noite inteira ir para Concluídas quando nada mais pende.",
       "estado": "novo"
+    },
+    {
+      "id": "ACH-0018",
+      "data": "2026-10-11",
+      "tipo": "ideia",
+      "titulo": "Portar upstream #325: celular envia mensagem que o Claude Code enfileirou ocupado",
+      "origem": "",
+      "detalhe": "https://github.com/Kc1t/alethe-agents/pull/325 — fix(remote), @afthex, aberta, +97/-16 em 4 arquivos. Pedido do dono em 11/10 para implementar depois.",
+      "estado": "novo"
+    },
+    {
+      "id": "ACH-0019",
+      "data": "2026-10-11",
+      "tipo": "ideia",
+      "titulo": "Portar upstream #326: fotos, fila editável e terminal que cabe no celular no Remoto",
+      "origem": "",
+      "detalhe": "https://github.com/Kc1t/alethe-agents/pull/326 — feat(remote), @afthex, aberta, +1152/-98 em 8 arquivos; provavelmente depende da #325. Pedido do dono em 11/10.",
+      "estado": "novo"
+    },
+    {
+      "id": "ACH-0020",
+      "data": "2026-10-11",
+      "tipo": "ideia",
+      "titulo": "Portar upstream #327: lembrar celulares pareados atrás de um PIN no Remoto",
+      "origem": "",
+      "detalhe": "https://github.com/Kc1t/alethe-agents/pull/327 — feat(remote), @afthex, aberta, +1896/-122 em 19 arquivos; mexe em pareamento/segurança (T3 provável). Pedido do dono em 11/10.",
+      "estado": "novo"
+    },
+    {
+      "id": "ACH-0021",
+      "data": "2026-10-11",
+      "tipo": "ideia",
+      "titulo": "Portar upstream #328: Shift+Enter quebra linha e Ctrl/Cmd+Enter envia no Claude Code",
+      "origem": "",
+      "detalhe": "https://github.com/Kc1t/alethe-agents/pull/328 — fix(terminal), @afthex, aberta, +35/-0 em 1 arquivo; conferir convivência com a #322 já portada (#149). Pedido do dono em 11/10.",
+      "estado": "novo"
     }
   ]
 }

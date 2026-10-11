@@ -179,6 +179,25 @@ describe('OrchestrationPage', () => {
     expect(screen.queryByRole('option', { name: 'high' })).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Effort for writer' }))
 
+    // OpenAI's open model in agy has a fixed effort, so it carries none either.
+    choose('Model for writer', 'gpt-oss-120b-medium')
+    expect(orchestration().roles[0]).toMatchObject({ model: 'gpt-oss-120b-medium', effort: null })
+    fireEvent.click(screen.getByRole('button', { name: 'Effort for writer' }))
+    expect(screen.queryByRole('option', { name: 'medium' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Effort for writer' }))
+
+    // The owner's vendor order inside Antigravity: Anthropic, then OpenAI, then Google.
+    fireEvent.click(screen.getByRole('button', { name: 'Model for writer' }))
+    const order = [
+      'claude-sonnet-5-5',
+      'claude-opus-5-5-high',
+      'gpt-oss-120b-medium',
+      'gemini-3.8-flash',
+    ]
+    const offered = screen.getAllByRole('option').map((option) => option.textContent ?? '')
+    expect(offered.filter((model) => order.includes(model))).toEqual(order)
+    fireEvent.click(screen.getByRole('button', { name: 'Model for writer' }))
+
     choose('Model for writer', 'gemini-3.8-flash')
     choose('Effort for writer', 'medium')
     expect(orchestration().roles[0]).toMatchObject({ model: 'gemini-3.8-flash', effort: 'medium' })

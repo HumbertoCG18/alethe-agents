@@ -7,6 +7,9 @@
 //! Environment:
 //!   ALETHE_CODEX   path to the codex launcher, otherwise resolved from PATH
 //!   ALETHE_MAX_WORKERS  how many workers may run at once, default 4
+//!
+//! `alethe-orchestrator-mcp agy-gate` is instead the `PreToolUse` hook of
+//! the agy agent Antigravity workers run as: one hook call on stdin, one decision on stdout.
 
 #[path = "../orchestrator_core.rs"]
 #[allow(dead_code)]
@@ -64,6 +67,13 @@ fn windows_launcher<'a>(matches: &[&'a str]) -> Option<&'a str> {
 }
 
 fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("agy-gate") {
+        let reply = orchestrator_core::agy_gate_reply(std::io::stdin());
+        println!("{reply}");
+        return;
+    }
+
     let core = Core::default();
 
     match resolve_codex() {

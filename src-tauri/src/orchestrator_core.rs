@@ -26,6 +26,13 @@ pub use shells::{Shell, ShellHost, ShellOwner, SHELL_EXITED, SHELL_RUNNING, SHEL
 mod rules;
 pub use rules::{default_rule_sets, find_set, rules_block, unknown_set_error, RuleSet, GENERAL_ID};
 
+#[path = "orchestrator_agy.rs"]
+mod agy;
+use agy::{AgyPin, AGY_AGENT};
+// The gate is the standalone binary's `agy-gate` subcommand, which the tests reach as a process.
+#[allow(unused_imports)]
+pub use agy::{agy_gate_reply, AgyAgent};
+
 const DEFAULT_MAX_CONCURRENT: usize = 4;
 /// Claude Code drops an MCP call somewhere past 45 seconds, and a check still blocked by then
 /// answers into a closed connection. Returning first and letting the planner call again is safe.
@@ -93,9 +100,10 @@ impl Launcher {
     }
 
     /// agy (1.3.3) streams turns over stdin without `-p`, which in agy takes the prompt as its value.
-    /// `accept-edits` lets it edit files on its own. A command runs only when it exactly matches an
-    /// allow-rule of the owner's `alethe-worker` agy project; any other is denied, never asked
-    /// about, and `--sandbox` keeps an allowed one inside the workspace. Never the bypass flag.
+    /// `accept-edits` lets it edit files on its own. It runs no commands: the managed agent
+    /// (`agy_worker_args`) lists no command tool and its hook denies any command call, while the
+    /// owner's `alethe-worker` agy project and `--sandbox` stay as agy's own limits. Never the
+    /// bypass flag.
     pub fn antigravity_headless(program: PathBuf) -> Self {
         Self {
             kind: "antigravity".into(),
@@ -170,7 +178,8 @@ fn agy_model_args(model: Option<&str>, effort: Option<&str>) -> Result<Vec<Strin
 /// What an Antigravity worker's command line adds to its launcher. `--add-dir` names the workspace
 /// (agy 1.2.9 ran its tools in its own scratch folder without it; it is not a write fence), and
 /// `--log-file` is the one place a denied command shows up (see `AgyLog`). agy resumes a
-/// conversation by id at start-up.
+/// conversation by id at start-up. `--agent` runs it as the agent Alethe installs, whose
+/// `PreToolUse` hook gates every command; a resume names it again.
 pub fn agy_worker_args(
     cwd: &str,
     log_file: &str,
@@ -178,7 +187,12 @@ pub fn agy_worker_args(
     model: Option<&str>,
     effort: Option<&str>,
 ) -> Result<Vec<String>, String> {
-    let mut args = vec!["--add-dir".to_string(), cwd.to_string()];
+    let mut args = vec![
+        "--agent".to_string(),
+        AGY_AGENT.to_string(),
+        "--add-dir".to_string(),
+        cwd.to_string(),
+    ];
     args.extend(agy_model_args(model, effort)?);
     args.extend(["--log-file".to_string(), log_file.to_string()]);
     if let Some(conversation) = resume_thread {
@@ -421,17 +435,54 @@ fn resolved_folder(cwd: &str) -> Result<String, String> {
 /// their own. `None` when nothing differs from HEAD, so a change the worker reverted leaves no diff,
 /// and outside a repository, where there is nothing to compare with. A file git cannot read is an
 /// error, never a missing change.
-fn worktree_diff(cwd: &std::path::Path) -> Result<Option<String>, String> {
-    if git(cwd, &["rev-parse", "--is-inside-work-tree"]).is_err() {
+///
+/// `git_dir` is set for an Antigravity worker, which can rewrite its worktree's `.git` file and so
+/// point git at config of its own. Git then reads only that pinned git dir, outside the worker's
+/// folder, and runs nothing it names: no fsmonitor, external diff, textconv or submodule check.
+fn worktree_diff(
+    cwd: &std::path::Path,
+    git_dir: Option<&std::path::Path>,
+) -> Result<Option<String>, String> {
+    let config = match git_dir {
+        Some(git_dir) => agy_git_config(cwd, Some(git_dir))?,
+        None => Vec::new(),
+    };
+    let run = |args: &[&str], exits: &[i32]| -> Result<std::process::Output, String> {
+        let Some(git_dir) = git_dir else {
+            return git_raw(cwd, args, exits);
+        };
+        let mut hardened = args.to_vec();
+        if args[0] == "diff" {
+            hardened.splice(
+                1..1,
+                ["--no-ext-diff", "--no-textconv", "--ignore-submodules=all"],
+            );
+        }
+        let output = Command::new("git")
+            .args(&hardened)
+            .current_dir(cwd)
+            .env("GIT_DIR", git_dir)
+            .env("GIT_WORK_TREE", cwd)
+            .envs(config.iter().map(|(key, value)| (key, value)))
+            .output()
+            .map_err(|error| format!("git not available: {error}"))?;
+        if !output
+            .status
+            .code()
+            .is_some_and(|code| exits.contains(&code))
+        {
+            return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+        }
+        Ok(output)
+    };
+    let text =
+        |output: std::process::Output| String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if run(&["rev-parse", "--is-inside-work-tree"], &[0]).is_err() {
         return Ok(None);
     }
-    let mut diff = git(cwd, &["diff", "HEAD"])?;
+    let mut diff = text(run(&["diff", "HEAD"], &[0])?);
     // Untrimmed: a name may start or end with a space, and NUL is what separates them.
-    let untracked = git_raw(
-        cwd,
-        &["ls-files", "--others", "--exclude-standard", "-z"],
-        &[0],
-    )?;
+    let untracked = run(&["ls-files", "--others", "--exclude-standard", "-z"], &[0])?;
     // ponytail: one git per new file; batch them if workers start leaving hundreds.
     // A trailing `/` is a nested repository, such as an isolated worker's worktree.
     for path in String::from_utf8_lossy(&untracked.stdout)
@@ -440,11 +491,7 @@ fn worktree_diff(cwd: &std::path::Path) -> Result<Option<String>, String> {
     {
         // Measured: exits 1 for a difference but also for a file it could not open, which prints
         // nothing; any file it can read prints at least a header, even an empty one.
-        let output = git_raw(
-            cwd,
-            &["diff", "--no-index", "--", "/dev/null", path],
-            &[0, 1],
-        )?;
+        let output = run(&["diff", "--no-index", "--", "/dev/null", path], &[0, 1])?;
         let file = String::from_utf8_lossy(&output.stdout);
         if file.trim().is_empty() {
             let error = String::from_utf8_lossy(&output.stderr);
@@ -458,10 +505,131 @@ fn worktree_diff(cwd: &std::path::Path) -> Result<Option<String>, String> {
     Ok((!diff.trim().is_empty()).then_some(diff))
 }
 
+/// Config for git that Alethe runs on an Antigravity worker's repository, as `GIT_CONFIG_*`
+/// variables, which take a key whole where `-c` splits it at its first `=`, and a filter's name
+/// may hold one. Every filter driver the config names is emptied, so git reads files as they are:
+/// an empty `clean` or `process` is "no filter", not an error (measured, git 2.54). Hooks point at
+/// an empty folder of Alethe's, and fsmonitor is off. Listing the drivers runs nothing.
+fn agy_git_config(
+    cwd: &std::path::Path,
+    git_dir: Option<&std::path::Path>,
+) -> Result<Vec<(String, String)>, String> {
+    let mut list = Command::new("git");
+    list.args(["config", "-z", "--get-regexp", r"^filter\."])
+        .current_dir(cwd)
+        .stdin(Stdio::null());
+    if let Some(git_dir) = git_dir {
+        list.env("GIT_DIR", git_dir).env("GIT_WORK_TREE", cwd);
+    }
+    let output = list
+        .output()
+        .map_err(|error| format!("git not available: {error}"))?;
+    // 1 is "no such key", which is no driver at all.
+    if !matches!(output.status.code(), Some(0 | 1)) {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+    let no_hooks = std::env::temp_dir().join("alethe-no-hooks");
+    std::fs::create_dir_all(&no_hooks)
+        .map_err(|error| format!("{}: {error}", no_hooks.display()))?;
+    let empty = std::fs::read_dir(&no_hooks)
+        .map_err(|error| format!("{}: {error}", no_hooks.display()))?
+        .next()
+        .is_none();
+    if !empty {
+        return Err(format!("{} is not empty", no_hooks.display()));
+    }
+    let mut settings = vec![
+        ("core.fsmonitor".to_string(), "false".to_string()),
+        (
+            "core.hooksPath".to_string(),
+            no_hooks.to_string_lossy().into_owned(),
+        ),
+    ];
+    // Each entry is `key` NL `value`; a driver's name sits between `filter.` and the last dot.
+    for entry in String::from_utf8_lossy(&output.stdout).split('\0') {
+        let key = entry.split('\n').next().unwrap_or_default();
+        let Some((driver, _)) = key
+            .strip_prefix("filter.")
+            .and_then(|rest| rest.rsplit_once('.'))
+        else {
+            continue;
+        };
+        for (name, value) in [
+            ("clean", ""),
+            ("smudge", ""),
+            ("process", ""),
+            ("required", "false"),
+        ] {
+            let setting = (format!("filter.{driver}.{name}"), value.to_string());
+            if !settings.contains(&setting) {
+                settings.push(setting);
+            }
+        }
+    }
+    let mut env = vec![("GIT_CONFIG_COUNT".to_string(), settings.len().to_string())];
+    for (at, (key, value)) in settings.into_iter().enumerate() {
+        env.push((format!("GIT_CONFIG_KEY_{at}"), key));
+        env.push((format!("GIT_CONFIG_VALUE_{at}"), value));
+    }
+    Ok(env)
+}
+
+/// What Alethe trusts about an Antigravity worker's worktree, read right after Alethe made it and
+/// before any worker ran there: the git dir its `.git` file names, in the main repository and so
+/// outside the worker's folder, and the SHA-256 of that `.git` file, which the worker can rewrite.
+/// Text, so the job record keeps both across restarts.
+fn agy_git_pin(work_tree: &std::path::Path) -> Result<(String, String), String> {
+    let bytes = git_pointer(work_tree)?;
+    let named = String::from_utf8_lossy(&bytes)
+        .trim()
+        .strip_prefix("gitdir:")
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| format!("{} names no git dir", work_tree.join(".git").display()))?;
+    let git_dir = resolved_folder(&work_tree.join(named).to_string_lossy())?;
+    let folder = resolved_folder(&work_tree.to_string_lossy())?;
+    if std::path::Path::new(&git_dir).starts_with(&folder) {
+        return Err(format!("{folder} keeps its git dir inside itself"));
+    }
+    Ok((git_dir, sha256_hex(&bytes)))
+}
+
+/// Whether the worktree's `.git` file still holds what was pinned. Reads it; runs no git.
+fn agy_git_pointer_unchanged(work_tree: &std::path::Path, pinned: &str) -> Result<(), String> {
+    if sha256_hex(&git_pointer(work_tree)?) != pinned {
+        return Err(format!(
+            "{} changed after Alethe made the worktree",
+            work_tree.join(".git").display()
+        ));
+    }
+    Ok(())
+}
+
+/// A worktree's `.git` file, which must be a plain file.
+fn git_pointer(work_tree: &std::path::Path) -> Result<Vec<u8>, String> {
+    let path = work_tree.join(".git");
+    let plain = std::fs::symlink_metadata(&path).is_ok_and(|meta| meta.file_type().is_file());
+    if !plain {
+        return Err(format!("{} is not a plain file", path.display()));
+    }
+    std::fs::read(&path).map_err(|error| format!("{}: {error}", path.display()))
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
 /// Same path/branch convention as `worktrees.rs` (`<repo>/.alethe/worktrees/<id>/`,
 /// `alethe/agent-<id>`) on purpose, so its functions can later commit/fetch/remove this worktree —
 /// this module stays crate-free (see file header), so it can't call `worktrees.rs` directly.
-fn isolate_worktree(cwd: &str, job_id: &str) -> Result<String, String> {
+/// `guarded` is for an Antigravity worker: its checkout runs none of the repository's hooks,
+/// filters or fsmonitor (see `agy_git_config`).
+fn isolate_worktree(cwd: &str, job_id: &str, guarded: bool) -> Result<String, String> {
     let origin = PathBuf::from(cwd);
     let root = git(&origin, &["rev-parse", "--show-toplevel"])?;
     let root = PathBuf::from(root.replace('/', std::path::MAIN_SEPARATOR_STR));
@@ -472,18 +640,22 @@ fn isolate_worktree(cwd: &str, job_id: &str) -> Result<String, String> {
         return Err(format!("a worktree already exists for {job_id}"));
     }
     let branch = format!("alethe/agent-{job_id}");
-    git(
-        &root,
-        &[
-            "worktree",
-            "add",
-            "-b",
-            &branch,
-            &target.to_string_lossy(),
-            "HEAD",
-        ],
-    )?;
-    Ok(target.to_string_lossy().into_owned())
+    let target_text = target.to_string_lossy().into_owned();
+    let add = ["worktree", "add", "-b", &branch, &target_text, "HEAD"];
+    if guarded {
+        let output = Command::new("git")
+            .args(add)
+            .current_dir(&root)
+            .envs(agy_git_config(&root, None)?)
+            .output()
+            .map_err(|error| format!("git not available: {error}"))?;
+        if !output.status.success() {
+            return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+        }
+    } else {
+        git(&root, &add)?;
+    }
+    Ok(target_text)
 }
 
 /// `job-07` -> 7, so restored ids never collide with new ones.
@@ -805,6 +977,12 @@ struct Job {
     /// The worker that took this one's task over after it ended without finishing. The board
     /// leaves a superseded worker out, so a task shows only the worker that currently has it.
     superseded_by: Option<String>,
+    /// What an Antigravity worker's managed agent held when it started; checked before each turn.
+    /// Live only, never persisted.
+    agy_pin: Option<AgyPin>,
+    /// An Antigravity worker's pinned git dir and `.git` file hash (see `agy_git_pin`). Persisted,
+    /// so a worker revived after a restart still has what was read before it ever ran.
+    git_pin: Option<(String, String)>,
 }
 
 impl Job {
@@ -868,6 +1046,8 @@ impl Job {
             "supersededBy": self.superseded_by,
             // 0 is "no limit", so a record that lacks the field can still mean the old default.
             "timeoutMs": self.timeout_ms.unwrap_or(0),
+            "gitDir": self.git_pin.as_ref().map(|(git_dir, _)| git_dir),
+            "gitPointer": self.git_pin.as_ref().map(|(_, pointer)| pointer),
             "role": self.role,
             "task": self.task,
             "model": self.model,
@@ -952,6 +1132,8 @@ impl Job {
             steers_queued: 0,
             next_request_id: 10,
             superseded_by: text("supersededBy"),
+            agy_pin: None,
+            git_pin: text("gitDir").zip(text("gitPointer")),
         })
     }
 
@@ -1082,6 +1264,8 @@ pub struct Core {
     rules_injected: Arc<AtomicBool>,
     /// The last model list Codex gave, and when; see `list_codex_models`.
     codex_models: Arc<Mutex<Option<(Instant, Value)>>>,
+    /// The agy agent Antigravity workers run as. Set by the desktop app; without it they never start.
+    agy_agent: Arc<Mutex<Option<AgyAgent>>>,
 }
 
 impl Default for Core {
@@ -1103,6 +1287,7 @@ impl Default for Core {
             rule_sets: Arc::new(Mutex::new(Vec::new())),
             rules_injected: Arc::new(AtomicBool::new(false)),
             codex_models: Arc::new(Mutex::new(None)),
+            agy_agent: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -1604,6 +1789,10 @@ impl Core {
 
     pub fn set_spawn_guard(&self, check: SpawnGuard) {
         *guard(&self.spawn_guard) = Some(check);
+    }
+
+    pub fn set_agy_agent(&self, agent: AgyAgent) {
+        *guard(&self.agy_agent) = Some(agent);
     }
 
     pub fn set_launcher(&self, launcher: Launcher) {
@@ -2179,6 +2368,29 @@ impl Core {
         }
         let mut agy_log = None;
         if agent == "antigravity" {
+            if let Err(error) = self.verify_agy_git(job_id) {
+                self.settle(job_id, STATUS_FAILED, "failed", &error);
+                return;
+            }
+            // Never without the gate: an agent that cannot be installed as it should be stops here.
+            let installed = guard(&self.agy_agent)
+                .clone()
+                .ok_or_else(|| {
+                    "the Antigravity worker's managed agent is not set up, so it does not start without its gate"
+                        .to_string()
+                })
+                .and_then(|managed| managed.install());
+            match installed {
+                Ok(pin) => {
+                    if let Some(job) = guard(&self.inner).jobs.get_mut(job_id) {
+                        job.agy_pin = Some(pin);
+                    }
+                }
+                Err(error) => {
+                    self.settle(job_id, STATUS_FAILED, "failed", &error);
+                    return;
+                }
+            }
             let path = self.job_dir(job_id).join("agy-cli.log");
             if let Some(dir) = path.parent() {
                 let _ = std::fs::create_dir_all(dir);
@@ -2244,6 +2456,10 @@ impl Core {
         }
 
         if stream {
+            if let Err(error) = self.verify_agy_agent(job_id) {
+                self.settle(job_id, STATUS_FAILED, "failed", &error);
+                return;
+            }
             // no handshake: the first line written is the first turn
             let _ = send_rpc(&stdin, &user_turn(&agent, &spec));
         } else {
@@ -2402,6 +2618,65 @@ impl Core {
                 true,
             );
         });
+    }
+
+    /// Whether an Antigravity worker's managed agent still holds what it started with. Its hook
+    /// is all that keeps commands to the allowed lines, and agy reads it again on every turn, so a
+    /// changed one could let any command through. Every other worker passes.
+    fn verify_agy_agent(&self, job_id: &str) -> Result<(), String> {
+        let (agent, pin) = match guard(&self.inner).jobs.get(job_id) {
+            Some(job) => (job.agent.clone(), job.agy_pin.clone()),
+            None => return Ok(()),
+        };
+        if agent != "antigravity" {
+            return Ok(());
+        }
+        pin.ok_or_else(|| "no managed agent was installed for it".to_string())
+            .and_then(|pin| pin.verify())
+            .map_err(|error| {
+                format!(
+                    "[unverified] the Antigravity worker's managed agent failed its check, so the turn was not sent and the worker was stopped: {error}"
+                )
+            })
+    }
+
+    /// Whether an Antigravity worker's worktree still points git where Alethe pinned it. Checked
+    /// before agy starts and before every diff, without running git: a `.git` file the worker
+    /// rewrote could hand Alethe's own git a config that runs the worker's code.
+    fn verify_agy_git(&self, job_id: &str) -> Result<(), String> {
+        let (cwd, pin) = match guard(&self.inner).jobs.get(job_id) {
+            Some(job) => (job.cwd.clone(), job.git_pin.clone()),
+            None => return Ok(()),
+        };
+        let Some((_, pointer)) = pin else {
+            return Err(
+                "[unverified] the Antigravity worker has no worktree Alethe made and pinned, so it does not run there; delegate the task again"
+                    .into(),
+            );
+        };
+        agy_git_pointer_unchanged(std::path::Path::new(&cwd), &pointer).map_err(|error| {
+            format!(
+                "[unverified] the worker changed the worktree's git pointer, so its changes were not read and the worker was stopped: {error}"
+            )
+        })
+    }
+
+    /// Writes a turn to a live worker. A failed check or write ends the job, process and all.
+    fn send_turn(
+        &self,
+        job_id: &str,
+        stdin: &Arc<Mutex<ChildStdin>>,
+        request: &Value,
+    ) -> Result<(), String> {
+        if let Err(error) = self.verify_agy_agent(job_id) {
+            self.settle(job_id, STATUS_FAILED, "failed", &error);
+            return Err(error);
+        }
+        if let Err(error) = send_rpc(stdin, request) {
+            self.settle(job_id, STATUS_FAILED, "send-failed", &error);
+            return Err(error);
+        }
+        Ok(())
     }
 
     fn settle(&self, job_id: &str, status: &str, outcome: &str, text: &str) {
@@ -2978,13 +3253,23 @@ impl Core {
     /// Closes one turn of a stream worker: takes the worktree diff, since these CLIs report none of
     /// their own, then either drops the turn a steer interrupted or delivers it.
     fn finish_stream_turn(&self, job_id: &str, status: &str, outcome: &str, result_text: String) {
-        let cwd = guard(&self.inner)
-            .jobs
-            .get(job_id)
-            .map(|job| job.cwd.clone());
+        let found = guard(&self.inner).jobs.get(job_id).map(|job| {
+            (
+                job.cwd.clone(),
+                job.agent == "antigravity",
+                job.git_pin.clone(),
+            )
+        });
         let mut diff_error = None;
-        if let Some(cwd) = cwd {
-            let diff = worktree_diff(&PathBuf::from(&cwd));
+        if let Some((cwd, antigravity, git_pin)) = found {
+            if antigravity {
+                if let Err(error) = self.verify_agy_git(job_id) {
+                    self.settle(job_id, STATUS_FAILED, "failed", &error);
+                    return;
+                }
+            }
+            let git_dir = git_pin.map(|(git_dir, _)| PathBuf::from(git_dir));
+            let diff = worktree_diff(&PathBuf::from(&cwd), git_dir.as_deref());
             let mut inner = guard(&self.inner);
             if let Some(job) = inner.jobs.get_mut(job_id) {
                 job.diff = match diff {
@@ -3118,8 +3403,7 @@ impl Core {
             self.notify(&inner);
         }
         if let Some((stdin, request)) = staged {
-            if let Err(error) = send_rpc(&stdin, &request) {
-                self.settle(job_id, STATUS_FAILED, "send-failed", &error);
+            if self.send_turn(job_id, &stdin, &request).is_err() {
                 return;
             }
         }
@@ -3441,7 +3725,7 @@ pub fn tools() -> Value {
                     "agent": {
                         "type": "string",
                         "enum": ["codex", "claude", "antigravity"],
-                        "description": "Which CLI runs the worker. Defaults to codex. A Claude worker runs without an approval channel (bypasses permissions) and does not yet report a live diff. An Antigravity (agy) worker edits files on its own but runs only the exact commands its agy project allows, has no approval channel or read-only mode, and cannot be interrupted: a steer waits for its turn to end. A turn where agy denied a command ends with outcome blocked. Each vendor meters a different set of windows - Codex a 5 hour and a weekly one, Claude those two plus a separate weekly budget for Opus - so how much room one has left says nothing about the other. Do not reason about that from here: every response these tools return carries a fitness block with the current reading and names the side with room in headroom. Read it and prefer that side when one is running out."
+                        "description": "Which CLI runs the worker. Defaults to codex. A Claude worker runs without an approval channel (bypasses permissions) and does not yet report a live diff. An Antigravity (agy) worker reads and edits files on its own but runs no commands at all: no git, tests, builds or package scripts. It names what should run, and you run git, tests and builds after its turn. It always works in its own git worktree, so its folder must be in a git repository. It has no approval channel or read-only mode, and cannot be interrupted: a steer waits for its turn to end. A turn where agy denied a tool ends with outcome blocked. Each vendor meters a different set of windows - Codex a 5 hour and a weekly one, Claude those two plus a separate weekly budget for Opus - so how much room one has left says nothing about the other. Do not reason about that from here: every response these tools return carries a fitness block with the current reading and names the side with room in headroom. Read it and prefer that side when one is running out."
                     },
                     "cwd": { "type": "string", "description": "Working directory. Defaults to the lead's directory." },
                     "rules": {
@@ -3455,7 +3739,7 @@ pub fn tools() -> Value {
                     },
                     "isolate": {
                         "type": "boolean",
-                        "description": "Give each worker its own detached git worktree. Use it whenever two units could touch the same files; without it parallel workers share one directory and can overwrite each other. Requires a git repository. The worktree path comes back with the job and is left in place for review."
+                        "description": "Give each worker its own detached git worktree. Use it whenever two units could touch the same files; without it parallel workers share one directory and can overwrite each other. Requires a git repository. Antigravity workers always get one. The worktree path comes back with the job and is left in place for review."
                     },
                     "askForApproval": {
                         "type": "boolean",
@@ -3849,6 +4133,10 @@ pub fn restart_job(core: &Core, job_id: &str) -> Result<Value, String> {
             .jobs
             .get(job_id)
             .ok_or_else(|| format!("unknown job {job_id}"))?;
+        // Its worker may have left config in the repository that the new worktree's git would run.
+        if job.agent == "antigravity" && job.git_pin.is_none() {
+            return Err("this Antigravity worker ran before Alethe pinned its worktree, so it is not run again; delegate the task again".into());
+        }
         let active = [STATUS_QUEUED, STATUS_RUNNING, STATUS_BLOCKED].contains(&job.status.as_str());
         (restart_arguments(job), job.planner_id.clone(), active)
     };
@@ -3943,7 +4231,7 @@ fn dispatch_tool(
                 })
                 .ok_or_else(|| "cwd is required".to_string())?;
 
-            let isolate = arguments
+            let mut isolate = arguments
                 .get("isolate")
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
@@ -3992,6 +4280,8 @@ fn dispatch_tool(
                     return Err("askForApproval is not available for Antigravity workers".into());
                 }
                 agy_model_args(model.as_deref(), effort.as_deref())?;
+                // Its own worktree keeps the git metadata out of the folder it can write.
+                isolate = true;
             }
             // agy reads a relative folder twice, at start-up and again in `--add-dir` from inside
             // it, so `..` would reach one level further. The resolved one is also what is kept.
@@ -4081,10 +4371,22 @@ fn dispatch_tool(
             // A batch is accepted whole or not at all. Half of it left queued with worktrees on
             // disk and no worker coming would be worse than a clean refusal.
             let mut prepared: Vec<(String, Option<String>)> = Vec::new();
+            let mut git_pins = Vec::new();
             if isolate {
                 for id in &ids {
-                    match isolate_worktree(&cwd, id) {
-                        Ok(path) => prepared.push((path.clone(), Some(path))),
+                    // Read before any worker runs in it, so what is pinned is what Alethe made.
+                    let made =
+                        isolate_worktree(&cwd, id, agent == "antigravity").and_then(|path| {
+                            let pin = if agent == "antigravity" {
+                                agy_git_pin(std::path::Path::new(&path)).map(Some)
+                            } else {
+                                Ok(None)
+                            };
+                            prepared.push((path.clone(), Some(path)));
+                            pin
+                        });
+                    match made {
+                        Ok(pin) => git_pins.push(pin),
                         Err(error) => {
                             for (_, worktree) in &prepared {
                                 if let Some(path) = worktree {
@@ -4102,13 +4404,17 @@ fn dispatch_tool(
                 }
             } else {
                 prepared = ids.iter().map(|_| (cwd.clone(), None)).collect();
+                git_pins = ids.iter().map(|_| None).collect();
             }
 
             let mut created = Vec::new();
             {
                 let mut inner = guard(&core.inner);
-                for ((spec, id), (job_cwd, worktree)) in
-                    tasks.into_iter().zip(ids).zip(prepared.into_iter())
+                for (((spec, id), (job_cwd, worktree)), git_pin) in tasks
+                    .into_iter()
+                    .zip(ids)
+                    .zip(prepared.into_iter())
+                    .zip(git_pins)
                 {
                     // The same planner sending the same task again replaces the worker that ended
                     // without finishing it. A finished worker stays: its result is still the answer.
@@ -4166,6 +4472,8 @@ fn dispatch_tool(
                             steers_queued: 0,
                             next_request_id: 10,
                             superseded_by: None,
+                            agy_pin: None,
+                            git_pin: git_pin.clone(),
                         },
                     );
                     inner.order.push(id.clone());
@@ -4406,6 +4714,9 @@ fn dispatch_tool(
             // A worker whose process is gone still has its thread on disk, so instead of refusing
             // the message it is started again and picks up where it left off.
             if job.stdin.is_none() {
+                if job.agent == "antigravity" && job.git_pin.is_none() {
+                    return Err("this Antigravity worker ran before Alethe pinned its worktree, so it is not run again; delegate the task again".into());
+                }
                 drop(inner);
                 let queued = {
                     let mut inner = guard(&core.inner);
@@ -4477,10 +4788,7 @@ fn dispatch_tool(
             drop(inner);
             // The slot was taken before the write, so a worker that never receives the turn has to
             // give it back rather than hold it until the process dies.
-            if let Err(error) = send_rpc(&stdin, &request) {
-                core.settle(&job_id, STATUS_FAILED, "send-failed", &error);
-                return Err(error);
-            }
+            core.send_turn(&job_id, &stdin, &request)?;
             core.persist();
             Ok(json!({ "sent": job_id }))
         }
@@ -4670,6 +4978,8 @@ mod restart_tests {
             next_request_id: 10,
             superseded_by: None,
             rules_name: None,
+            agy_pin: None,
+            git_pin: None,
         }
     }
 

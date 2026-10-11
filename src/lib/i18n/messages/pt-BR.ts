@@ -960,6 +960,7 @@ export const ptBR: Record<MessageKey, string> = {
   'todo.workers.running': '{count} rodando',
   'todo.workers.queued': '{count} na fila',
   'todo.night.title': 'Noite de {date}',
+  'todo.night.completed': 'Noite de {date} · concluída',
   'todo.night.empty': 'Nenhum diário noturno ainda.',
   'todo.night.countOk': '{count} ok',
   'todo.night.countWaiting': '{count} aguardando você',

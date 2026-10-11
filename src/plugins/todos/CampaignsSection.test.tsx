@@ -1632,22 +1632,22 @@ describe('Night card', () => {
     expect(findRepositoryFile).toHaveBeenCalledWith('C:\\repo', 'docs/motor.md')
   })
 
-  it('moves concluded entries to Completed, leaving the night with a zero count when all are done', async () => {
+  it('collapses a fully concluded night into one completed toggle, with no zero count on top', async () => {
     fs.files.set(REGISTRY, JSON.stringify(exemplo))
     fs.files.set(
       `${NIGHTS}\\2026-10-03.json`,
       diary('2026-10-03', [entry('BASE-01', 'ok'), entry('BASE-02', 'ok')]),
     )
     render(<TodoSidebar />)
-    const toggle = await screen.findByRole('button', { name: /^Night of 10\/03/ })
-    expect(toggle).toHaveTextContent('0')
-    fireEvent.click(toggle)
-    expect(screen.queryByText('BASE-01 resumo')).toBeNull()
-
-    const completed = screen.getByRole('button', { name: /^Completed/ })
+    const completed = await screen.findByRole('button', { name: /^Night of 10\/03 · completed/ })
     expect(completed).toHaveTextContent('2')
     expect(completed).toHaveAttribute('aria-expanded', 'false')
+    // The only night button: no header with a zero count, no second Completed toggle.
+    expect(screen.getAllByRole('button', { name: /^Night of/ })).toHaveLength(1)
+    expect(screen.queryByRole('button', { name: /^Completed/ })).toBeNull()
+    expect(screen.queryByText('BASE-01 resumo')).toBeNull()
     fireEvent.click(completed)
+    expect(completed).toHaveAttribute('aria-expanded', 'true')
     expect(screen.getByText('BASE-01 resumo')).toBeInTheDocument()
     expect(screen.getByText('BASE-02 resumo')).toBeInTheDocument()
   })
@@ -1667,6 +1667,25 @@ describe('Night card', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /^Completed/ }))
     expect(screen.getByText('BASE-01 resumo')).toBeInTheDocument()
+  })
+
+  it('collapses the night again once its last pending entry is concluded', async () => {
+    fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    fs.files.set(
+      `${NIGHTS}\\2026-10-03.json`,
+      diary('2026-10-03', [entry('OITO-03', 'ok'), entry('BASE-01', 'ok')]),
+    )
+    render(<TodoSidebar />)
+    fireEvent.click(await screen.findByRole('button', { name: /^Completed/ }))
+    expect(screen.getByText('BASE-01 resumo')).toBeInTheDocument()
+
+    await editRegistry((data) => {
+      for (const campaign of data.campanhas)
+        for (const item of campaign.tarefas) if (item.id === 'OITO-03') item.estado = 'concluída'
+    })
+    const completed = await screen.findByRole('button', { name: /^Night of 10\/03 · completed/ })
+    expect(completed).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByText('BASE-01 resumo')).toBeNull()
   })
 
   it('watches the folder and every diary, so fixing a malformed newest one shows it', async () => {
@@ -2004,6 +2023,30 @@ describe('Night card', () => {
       fireEvent.click(await focusItem('Conclude (Gate 2)'))
       await waitFor(() => expect(actions('OITO-07')).toBeNull())
       await waitFor(() => expect(card).toHaveFocus())
+    })
+
+    it('gives the focus to the completed night once its last pending entry is concluded', async () => {
+      fs.files.set(REGISTRY, JSON.stringify(exemplo))
+      fs.files.set(
+        `${NIGHTS}\\2026-10-03.json`,
+        diary('2026-10-03', [
+          entry('OITO-07', 'aguarda-voce', 'docs/oito.md'),
+          entry('BASE-01', 'ok'),
+        ]),
+      )
+      useTodosStore.setState({ tab: 'night' })
+      render(<TodoSidebar />)
+      fireEvent.click(await screen.findByRole('button', { name: /^Night of 10\/03/ }))
+      await waitFor(() => expect(actions('OITO-07')).not.toBeNull())
+      fireEvent.click(actions('OITO-07')!)
+      const item = await screen.findByRole('menuitem', { name: 'Conclude (Gate 2)' })
+      await waitFor(() => expect(item).toBeEnabled())
+      item.focus()
+      fireEvent.click(item)
+
+      // The night header the entry fell back to is gone: the completed night takes the focus.
+      const completed = await screen.findByRole('button', { name: /^Night of 10\/03 · completed/ })
+      await waitFor(() => expect(completed).toHaveFocus())
     })
 
     it('leaves Pending once you decide, and the focus goes to Pending', async () => {

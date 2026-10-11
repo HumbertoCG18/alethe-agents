@@ -117,6 +117,42 @@ export function NightCard({
     )
   const done = diary.entries.filter(concluded)
   const rest = diary.entries.filter((entry) => !concluded(entry))
+  const allDone = rest.length === 0 && done.length > 0
+  // A night whose last pending entry was just concluded arrives collapsed, whatever was open.
+  const [nightDoneOpen, setNightDoneOpen] = useState(false)
+  const [wasAllDone, setWasAllDone] = useState(allDone)
+  if (wasAllDone !== allDone) {
+    setWasAllDone(allDone)
+    setNightDoneOpen(false)
+  }
+
+  // Nothing pending: the whole night is completed, so only its collapsed toggle remains.
+  if (allDone) {
+    return (
+      <section className={`${sidebarStyles.section} ${styles.card}`}>
+        <SectionToggle
+          name={t('todo.night.completed', { date: nightDay(diary.date, locale) })}
+          count={done.length}
+          open={nightDoneOpen}
+          onToggle={() => setNightDoneOpen((current) => !current)}
+          toggleRef={doneToggle}
+        />
+        {nightDoneOpen ? (
+          <ul className={styles.tasks}>
+            {done.map((entry, index) => (
+              <NightEntryRow
+                key={`${entry.task}-${index}`}
+                entry={entry}
+                registry={registry}
+                edits={edits}
+                fallback={() => doneToggle.current}
+              />
+            ))}
+          </ul>
+        ) : null}
+      </section>
+    )
+  }
 
   return (
     <section className={`${sidebarStyles.section} ${styles.card}`}>
@@ -148,7 +184,8 @@ export function NightCard({
               entry={entry}
               registry={registry}
               edits={edits}
-              fallback={() => toggle.current}
+              // Concluding the last pending entry replaces this header with the completed night.
+              fallback={() => toggle.current ?? doneToggle.current}
             />
           ))}
         </ul>

@@ -665,11 +665,13 @@
           "id": "AGY-05",
           "titulo": "Diff do worker AGY sem nenhuma configuração do git (limites declarados da AGY-04)",
           "nivel": "T3",
-          "estado": "proposta",
+          "estado": "concluída",
           "depende_de": [
             "AGY-04"
           ],
-          "origem": "USER"
+          "origem": "USER",
+          "resultado": "Gate 2 por lote do dono em 11/10/2026 (\"Aprovo, Gate 2 por lote (Recomendado)\"): diff do AGY sem nenhuma config do git — HEAD resolvido em Rust no gitdir fixado, objetos lidos por um repositório bare próprio do Alethe sem config (alternates para o object store fixado), varredura Rust sem seguir links + check-ignore só nesses caminhos, patch por diff-index no índice próprio; modos/tipos, rename só de caixa e bit de execução do dono como o git. Worktree criada com git worktree add simples; pasta de hooks em TEMP e enumeração de filtros removidas. Limites ponytail: reftable, core.excludesFile, pastas ignoradas varridas, todo blob lido por turno, LFS/ident/working-tree-encoding.",
+          "evidencia": "PR #171 (merge 17481be); revisões Astra 159 r1–r3 adjudicadas 6/0; suíte local 3× (só a falha conhecida do tailscale); CI Linux/macOS rodou o teste cfg(unix)"
         }
       ]
     },

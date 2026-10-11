@@ -912,7 +912,7 @@
       "janela": "assistida",
       "depende_de": [],
       "worktrees": [],
-      "atualizado_em": "2026-10-05",
+      "atualizado_em": "2026-10-11",
       "tarefas": [
         {
           "id": "REMOTO-01",
@@ -945,6 +945,33 @@
           "estado": "pronta",
           "depende_de": [],
           "origem": "USER"
+        },
+        {
+          "id": "REMOTO-05",
+          "titulo": "Portar upstream #325: celular envia mensagem que o Claude Code enfileirou ocupado (#168)",
+          "nivel": "T1",
+          "estado": "proposta",
+          "depende_de": [],
+          "origem": "CODE",
+          "achado": "ACH-0018"
+        },
+        {
+          "id": "REMOTO-06",
+          "titulo": "Portar upstream #326: fotos, fila editável e terminal que cabe no celular (#169)",
+          "nivel": "T2",
+          "estado": "proposta",
+          "depende_de": [],
+          "origem": "CODE",
+          "achado": "ACH-0019"
+        },
+        {
+          "id": "REMOTO-07",
+          "titulo": "Portar upstream #327: lembrar celulares pareados atrás de um PIN (#170)",
+          "nivel": "T3",
+          "estado": "proposta",
+          "depende_de": [],
+          "origem": "CODE",
+          "achado": "ACH-0020"
         }
       ]
     }

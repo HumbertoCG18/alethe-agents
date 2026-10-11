@@ -171,7 +171,8 @@
       "titulo": "Portar upstream #325: celular envia mensagem que o Claude Code enfileirou ocupado",
       "origem": "",
       "detalhe": "https://github.com/Kc1t/alethe-agents/pull/325 — fix(remote), @afthex, aberta, +97/-16 em 4 arquivos. Pedido do dono em 11/10 para implementar depois.",
-      "estado": "novo"
+      "estado": "virou-tarefa",
+      "destino": "REMOTO-05"
     },
     {
       "id": "ACH-0019",
@@ -180,7 +181,8 @@
       "titulo": "Portar upstream #326: fotos, fila editável e terminal que cabe no celular no Remoto",
       "origem": "",
       "detalhe": "https://github.com/Kc1t/alethe-agents/pull/326 — feat(remote), @afthex, aberta, +1152/-98 em 8 arquivos; provavelmente depende da #325. Pedido do dono em 11/10.",
-      "estado": "novo"
+      "estado": "virou-tarefa",
+      "destino": "REMOTO-06"
     },
     {
       "id": "ACH-0020",
@@ -189,7 +191,8 @@
       "titulo": "Portar upstream #327: lembrar celulares pareados atrás de um PIN no Remoto",
       "origem": "",
       "detalhe": "https://github.com/Kc1t/alethe-agents/pull/327 — feat(remote), @afthex, aberta, +1896/-122 em 19 arquivos; mexe em pareamento/segurança (T3 provável). Pedido do dono em 11/10.",
-      "estado": "novo"
+      "estado": "virou-tarefa",
+      "destino": "REMOTO-07"
     },
     {
       "id": "ACH-0021",

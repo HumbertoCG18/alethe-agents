@@ -464,7 +464,7 @@
       "janela": "assistida",
       "depende_de": [],
       "worktrees": [],
-      "atualizado_em": "2026-10-03",
+      "atualizado_em": "2026-10-11",
       "tarefas": [
         {
           "id": "ELO-01",
@@ -550,6 +550,16 @@
           ],
           "origem": "USER",
           "evidencia": "agent-workflow-lab 77cf19f (hooks registrados em 3a5da7a); revisão independente aplicada"
+        },
+        {
+          "id": "ELO-09",
+          "titulo": "Isolar os workers Claude e Codex das instruções, hooks e plugins globais e rever o bypassPermissions do Claude",
+          "nivel": "T3",
+          "estado": "proposta",
+          "depende_de": [
+            "AGY-04"
+          ],
+          "origem": "USER"
         }
       ]
     },
@@ -648,7 +658,7 @@
             "AGY-01"
           ],
           "origem": "USER",
-          "resultado": "Gate 1 do dono em 11/10/2026 (\"Aprovo, com medição\"): issue #150; medir no agy 1.3.3 antes do desenho (escrita fora da worktree com --sandbox; agente do usuário com --agent: carrega, hooks próprios fora da worktree, isola GEMINI.md e hooks globais, o que o excludeDefaultComponents deixa; recarga do .agents/hooks.json no meio da sessão)."
+          "resultado": "Gate 1b do dono em 11/10/2026 (\"Aprovo\"): agente alethe-worker em ~/.gemini/config/agents/alethe-worker/ gerenciado pelo Alethe (inheritCustomizations/inheritMcp false, tools explícitas, hooks próprios, sem excludeDefaultComponents), worker com --agent alethe-worker; gate em Rust no alethe-orchestrator-mcp copiado para a pasta do agente; hash conferido antes de cada turno. Medição em .workflow/local/agy-04-medicao.md. Irmã ELO-09 (#151) para depois."
         }
       ]
     },

@@ -10,6 +10,7 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ## [Unreleased]
 
+- An orchestration worker revived after being released is no longer failed with "worker connection closed" when the process it replaced shuts down late, and that old process's last output no longer lands in the revived turn. A revived worker also starts clean: it no longer delivers the previous run's report, or shows its unanswered question, when the new turn ends without a final message of its own.
 - Terminal: Shift+Enter now adds a new line in Claude Code and Codex instead of submitting the prompt, and Ctrl+Enter (Cmd+Enter on macOS) in Claude Code panes sends the typed text right away, even while the agent is working. Ported from upstream #328.
 - Antigravity roles in Preferences → Orchestration can run on `gpt-oss-120b-medium` (fixed effort), and the Antigravity model list follows the vendor order Anthropic, OpenAI, Google.
 - Night tab: gains the same collapsible "Completed" section as the Tasks tab. It lists the finished night campaigns and, once every entry of the night is concluded, the night itself as one item that looks and behaves like a campaign row (code, "Night of {date}" title, progress, Completed status) and expands to its entries as the same task rows, instead of leaving a header with a zero count on top.

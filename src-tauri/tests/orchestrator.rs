@@ -3346,10 +3346,21 @@ fn the_codex_model_list_is_reused_instead_of_asked_again() {
 /// `init` once, and for turn N plays `turnN.jsonl` (else `turn.jsonl`): first it waits `holdN`
 /// seconds when that file exists and appends `denyN.log` to its log, then `partialN.log` as it is,
 /// with no line break added; after the turn it appends `lateN.log` there 30 ms later. It appends the way agy does, leaving the log readable meanwhile. Its files live apart from the worker's folder, so they never show
-/// up in the worker's diff.
+/// up in the worker's diff. Launched while `linger` exists, it leaves behind a process that holds
+/// its output open until `eof` appears (30 s at most), then writes `stale.jsonl` there, as a
+/// worker's own child can.
 fn scripted_agy_launcher(fake: &std::path::Path) -> Launcher {
     #[cfg(windows)]
     let (program, args): (&str, Vec<String>) = {
+        std::fs::write(
+            fake.join("linger.ps1"),
+            r#"$until = (Get-Date).AddSeconds(30)
+while (-not (Test-Path (Join-Path $PSScriptRoot 'eof')) -and (Get-Date) -lt $until) { Start-Sleep -Milliseconds 50 }
+$stale = Join-Path $PSScriptRoot 'stale.jsonl'
+if (Test-Path $stale) { foreach ($event in Get-Content $stale) { [Console]::Out.WriteLine($event) }; [Console]::Out.Flush() }
+"#,
+        )
+        .expect("write lingering child");
         let script = fake.join("fake-agy.ps1");
         std::fs::write(
             &script,
@@ -3357,6 +3368,7 @@ fn scripted_agy_launcher(fake: &std::path::Path) -> Launcher {
 Set-Content -Path (Join-Path $dir 'args.txt') -Value ($args -join "`n")
 Add-Content -Path (Join-Path $dir 'cwd.txt') -Value (Get-Location).Path
 Add-Content -Path (Join-Path $dir 'launches.txt') -Value 'launch'
+if (Test-Path (Join-Path $dir 'linger')) { Start-Process -NoNewWindow -FilePath powershell -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File',"`"$(Join-Path $dir 'linger.ps1')`"" }
 $log = $null
 for ($i = 0; $i -lt $args.Count - 1; $i++) { if ($args[$i] -eq '--log-file') { $log = $args[$i + 1] } }
 function Write-Log($text) { try { [IO.File]::AppendAllText($log, "$text`n") } catch {} }
@@ -3403,6 +3415,10 @@ while ($null -ne ($line = [Console]::In.ReadLine())) {
 printf '%s\n' "$@" > "$dir/args.txt"
 pwd >> "$dir/cwd.txt"
 echo launch >> "$dir/launches.txt"
+if [ -f "$dir/linger" ]; then
+  (i=0; while [ ! -f "$dir/eof" ] && [ $i -lt 600 ]; do sleep 0.05; i=$((i + 1)); done
+   [ -f "$dir/stale.jsonl" ] && cat "$dir/stale.jsonl") &
+fi
 log=; prev=
 for arg in "$@"; do [ "$prev" = "--log-file" ] && log=$arg; prev=$arg; done
 if [ -n "$log" ]; then echo 'I0000 fake agy started' > "$log"; fi
@@ -4866,6 +4882,9 @@ fn a_denial_logged_just_after_the_result_still_blocks_its_turn() {
     let core = Core::default();
     core.set_store(store.join("orchestrator.json"));
     use_scripted_agy(&core, &fake);
+    // The fake writes each late line 30 ms after `result`; on a loaded machine that write could
+    // land after the production wait (ACH-0022), so this core waits long enough for it anyway.
+    core.set_agy_log_grace(Duration::from_secs(2));
 
     call(
         &core,
@@ -5036,6 +5055,286 @@ fn a_resumed_antigravity_worker_sees_a_denial_early_in_its_restarted_log() {
     let _ = std::fs::remove_dir_all(&dir);
     let _ = std::fs::remove_dir_all(&fake);
     let _ = std::fs::remove_dir_all(&store);
+}
+
+/// Plays a turn on a `kind` worker the scripted fake stands in for and releases it while a process
+/// it left behind still holds its output open. Only once the worker is revived does that output say
+/// `stale` (when asked) and close, while the revived turn is still in flight. `turn` is the input
+/// line, counted from each launch, that `reply` answers; `opening` are the fake's other files.
+fn revive_while_the_released_output_is_open(
+    kind: &str,
+    turn: usize,
+    opening: &[(&str, String)],
+    reply: impl Fn(&str) -> String,
+    stale: bool,
+) -> Value {
+    let dir = workspace(&format!("late-eof-{kind}"));
+    git_repo(&dir);
+    let fake = workspace(&format!("late-eof-{kind}-fake"));
+    for (name, text) in opening {
+        std::fs::write(fake.join(name), text).expect("opening");
+    }
+    let played = fake.join(format!("turn{turn}.jsonl"));
+    std::fs::write(&played, reply("first")).expect("first turn");
+    std::fs::write(fake.join("linger"), "").expect("linger");
+    let core = Core::default();
+    let mut launcher = scripted_agy_launcher(&fake);
+    launcher.kind = kind.into();
+    core.set_launcher(launcher);
+    core.set_agy_agent(fake_agy_agent(&fake));
+
+    call(
+        &core,
+        "alethe_delegate",
+        json!({ "tasks": ["x"], "cwd": dir.to_string_lossy(), "agent": kind }),
+    );
+    let job = wait_for_job(&core, 20, |job| job["status"] == "done");
+    assert_eq!(job["summary"], "first", "{job}");
+    call(&core, "alethe_release", json!({ "jobIds": ["job-01"] }));
+
+    std::fs::remove_file(fake.join("linger")).expect("linger gone");
+    std::fs::write(fake.join(format!("hold{turn}")), "3").expect("hold");
+    std::fs::write(&played, reply("second")).expect("second turn");
+    if stale {
+        std::fs::write(fake.join("stale.jsonl"), reply("stale")).expect("stale");
+    }
+    let sent = call(
+        &core,
+        "alethe_send",
+        json!({ "jobId": "job-01", "message": "carry on" }),
+    );
+    assert_eq!(sent["revived"], json!("job-01"), "{sent}");
+    let launches = wait_for_lines(&fake.join("launches.txt"), 2, 20);
+    assert_eq!(launches.len(), 2, "the worker was not started again");
+    // The released process's output closes only now, inside the revived turn's hold.
+    std::fs::write(fake.join("eof"), "").expect("eof");
+    let job = wait_for_job(&core, 20, |job| {
+        job["status"] != "running" && job["status"] != "queued"
+    });
+
+    let _ = call(&core, "alethe_cancel", json!({ "jobIds": ["job-01"] }));
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&fake);
+    job
+}
+
+// ACH-0023: a released worker's process said nothing more, but its output closing after the revive
+// failed the revived run with "worker connection closed".
+#[test]
+fn a_released_antigravity_process_closing_late_does_not_end_its_revived_run() {
+    let job = revive_while_the_released_output_is_open(
+        "antigravity",
+        1,
+        &[],
+        |text| format!("{}\n", agy_result(text, 1, 1, 2)),
+        false,
+    );
+    assert_eq!(job["status"], "done", "{job}");
+    assert_eq!(job["summary"], "second", "{job}");
+}
+
+#[test]
+fn a_released_claude_process_speaking_late_does_not_reach_its_revived_run() {
+    let job = revive_while_the_released_output_is_open(
+        "claude",
+        1,
+        &[],
+        |text| {
+            format!(
+                "{}\n{}\n",
+                r#"{"type":"system","subtype":"init","session_id":"late-session"}"#,
+                json!({ "type": "result", "is_error": false, "result": text })
+            )
+        },
+        true,
+    );
+    assert_eq!(job["status"], "done", "{job}");
+    assert_eq!(job["summary"], "second", "{job}");
+}
+
+#[test]
+fn a_released_codex_process_speaking_late_does_not_reach_its_revived_run() {
+    // Input lines 1-3 are initialize, initialized and the thread's opening; line 4 is the turn.
+    let thread = json!({ "id": 2, "result": { "thread": { "id": "late-thread" } } });
+    let job = revive_while_the_released_output_is_open(
+        "codex",
+        4,
+        &[("turn3.jsonl", format!("{thread}\n"))],
+        |text| {
+            format!(
+                "{}\n{}\n",
+                json!({ "method": "item/completed", "params": { "item": { "type": "agentMessage", "text": text } } }),
+                json!({ "method": "turn/completed", "params": {} })
+            )
+        },
+        true,
+    );
+    assert_eq!(job["status"], "done", "{job}");
+    assert_eq!(job["summary"], "second", "{job}");
+}
+
+// The released process's reader may already have found an event current when the release lands; the
+// revive must still not start its run under that event.
+#[test]
+fn an_event_found_current_before_a_release_never_lands_in_the_revived_run() {
+    let dir = workspace("held-event");
+    git_repo(&dir);
+    let fake = workspace("held-event-fake");
+    let thread_reply = json!({ "id": 2, "result": { "thread": { "id": "held-thread" } } });
+    std::fs::write(fake.join("turn3.jsonl"), format!("{thread_reply}\n")).expect("thread");
+    let said = |text: &str| {
+        let item = json!({ "type": "agentMessage", "text": text });
+        json!({ "method": "item/completed", "params": { "item": item } })
+    };
+    let completed = json!({ "method": "turn/completed", "params": {} });
+    // Its last line comes after the turn ended, so the reader takes it while the job is done.
+    let late = json!({ "method": "turn/completed", "params": { "late": true } });
+    std::fs::write(
+        fake.join("turn4.jsonl"),
+        format!("{}\n{completed}\n{late}\n", said("first")),
+    )
+    .expect("turn 4");
+    let core = Core::default();
+    let mut launcher = scripted_agy_launcher(&fake);
+    launcher.kind = "codex".into();
+    core.set_launcher(launcher);
+    let (reached, held) = std::sync::mpsc::channel();
+    let (resume, go) = std::sync::mpsc::channel::<()>();
+    let go = Mutex::new(go);
+    core.set_reader_hook(Arc::new(move |message: &Value| {
+        if message["params"]["late"] == true {
+            let _ = reached.send(());
+            let _ = go.lock().expect("go").recv();
+        }
+    }));
+
+    call(
+        &core,
+        "alethe_delegate",
+        json!({ "tasks": ["x"], "cwd": dir.to_string_lossy(), "agent": "codex" }),
+    );
+    held.recv_timeout(Duration::from_secs(20))
+        .expect("the reader took the late line");
+    let job = core.snapshot()["jobs"][0].clone();
+    assert_eq!(job["summary"], "first", "{job}");
+
+    call(&core, "alethe_release", json!({ "jobIds": ["job-01"] }));
+    std::fs::write(fake.join("hold4"), "3").expect("hold");
+    std::fs::write(
+        fake.join("turn4.jsonl"),
+        format!("{}\n{completed}\n", said("second")),
+    )
+    .expect("turn 4 again");
+    let reviver = core.clone();
+    let (answered, answer) = std::sync::mpsc::channel();
+    thread::spawn(move || {
+        let sent = call(
+            &reviver,
+            "alethe_send",
+            json!({ "jobId": "job-01", "message": "carry on" }),
+        );
+        let _ = answered.send(sent);
+    });
+    // A revive that does not wait for the held event gets this long to start its run first.
+    let early = answer.recv_timeout(Duration::from_secs(2));
+    resume.send(()).expect("the reader goes on");
+    let sent = early
+        .or_else(|_| answer.recv_timeout(Duration::from_secs(20)))
+        .expect("the revive answered");
+    assert_eq!(sent["revived"], json!("job-01"), "{sent}");
+    let job = wait_for_job(&core, 20, |job| {
+        !["running", "queued", "released"].contains(&job["status"].as_str().unwrap_or_default())
+    });
+
+    let _ = call(&core, "alethe_cancel", json!({ "jobIds": ["job-01"] }));
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&fake);
+    assert_eq!(job["status"], "done", "{job}");
+    assert_eq!(job["summary"], "second", "{job}");
+}
+
+/// A Codex worker the scripted fake plays says "first", is released, and is revived into a turn
+/// that streams "second" as deltas only, with no `item/completed` of its own. With `late`, the
+/// first process also says "stale" after its turn ended, held by its reader until the release has
+/// landed. Returns the revived run's job.
+fn revive_into_a_turn_without_its_own_report(late: bool) -> Value {
+    let tag = if late { "late-report" } else { "kept-report" };
+    let dir = workspace(tag);
+    let fake = workspace(&format!("{tag}-fake"));
+    let thread_reply = json!({ "id": 2, "result": { "thread": { "id": "report-thread" } } });
+    std::fs::write(fake.join("turn3.jsonl"), format!("{thread_reply}\n")).expect("thread");
+    let said = |text: &str, late: bool| {
+        let item = json!({ "type": "agentMessage", "text": text });
+        json!({ "method": "item/completed", "params": { "item": item, "late": late } })
+    };
+    let completed = json!({ "method": "turn/completed", "params": {} });
+    let mut first = format!("{}\n{completed}\n", said("first", false));
+    if late {
+        first.push_str(&format!("{}\n", said("stale", true)));
+    }
+    std::fs::write(fake.join("turn4.jsonl"), first).expect("turn 4");
+    let core = Core::default();
+    let mut launcher = scripted_agy_launcher(&fake);
+    launcher.kind = "codex".into();
+    core.set_launcher(launcher);
+    let (reached, held) = std::sync::mpsc::channel();
+    let (resume, go) = std::sync::mpsc::channel::<()>();
+    let go = Mutex::new(go);
+    core.set_reader_hook(Arc::new(move |message: &Value| {
+        if message["params"]["late"] == true {
+            let _ = reached.send(());
+            let _ = go.lock().expect("go").recv();
+        }
+    }));
+
+    call(
+        &core,
+        "alethe_delegate",
+        json!({ "tasks": ["x"], "cwd": dir.to_string_lossy(), "agent": "codex" }),
+    );
+    if late {
+        held.recv_timeout(Duration::from_secs(20))
+            .expect("the reader took the late line");
+    }
+    let job = wait_for_job(&core, 20, |job| job["status"] == "done");
+    assert_eq!(job["summary"], "first", "{job}");
+    call(&core, "alethe_release", json!({ "jobIds": ["job-01"] }));
+    if late {
+        resume.send(()).expect("the reader goes on");
+        let job = wait_for_job(&core, 20, |job| job["summary"] == "stale");
+        assert_eq!(job["summary"], "stale", "the late line never landed: {job}");
+    }
+
+    let delta = json!({ "method": "item/agentMessage/delta", "params": { "delta": "second" } });
+    std::fs::write(fake.join("turn4.jsonl"), format!("{delta}\n{completed}\n")).expect("turn 4");
+    let sent = call(
+        &core,
+        "alethe_send",
+        json!({ "jobId": "job-01", "message": "carry on" }),
+    );
+    assert_eq!(sent["revived"], json!("job-01"), "{sent}");
+    let job = wait_for_job(&core, 20, |job| {
+        job["status"] != "running" && job["status"] != "queued"
+    });
+
+    let _ = call(&core, "alethe_cancel", json!({ "jobIds": ["job-01"] }));
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&fake);
+    job
+}
+
+#[test]
+fn a_report_written_after_the_release_is_not_delivered_by_the_revived_run() {
+    let job = revive_into_a_turn_without_its_own_report(true);
+    assert_eq!(job["status"], "done", "{job}");
+    assert_eq!(job["summary"], "second", "{job}");
+}
+
+#[test]
+fn a_revived_turn_without_its_own_report_does_not_deliver_the_last_one() {
+    let job = revive_into_a_turn_without_its_own_report(false);
+    assert_eq!(job["status"], "done", "{job}");
+    assert_eq!(job["summary"], "second", "{job}");
 }
 
 // agy wrote whole lines in every run measured, but a line caught mid-write may be this turn's denial.

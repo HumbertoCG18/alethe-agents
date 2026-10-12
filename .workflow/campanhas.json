@@ -976,10 +976,12 @@
           "id": "REMOTO-07",
           "titulo": "Portar upstream #327: lembrar celulares pareados atrás de um PIN (#170)",
           "nivel": "T3",
-          "estado": "proposta",
+          "estado": "concluída",
           "depende_de": [],
           "origem": "CODE",
-          "achado": "ACH-0020"
+          "achado": "ACH-0020",
+          "resultado": "Gate 2 por lote do dono em 11/10/2026; escolhas de produto mantidas como o upstream (\"mantém como o upstream, segue com a #170\"): upstream #327 portada (celulares lembrados atrás de PIN). Fork: estado de segurança sob um lock com gravação atômica e ids estáveis, contador de PIN errado persistido, confiança de 7 dias checada em toda requisição e envio do websocket, trocar/limpar PIN desconecta todos, falha de gravação limpa o PIN, textos fiéis, aviso de envio no Terminal.",
+          "evidencia": "PR #176 (merge e688faf); revisões Astra 170 r1 4/0, r2 4/0, r3 APPROVED"
         },
         {
           "id": "REMOTO-08",

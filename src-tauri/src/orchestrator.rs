@@ -57,8 +57,17 @@ fn prepare(app: &AppHandle, state: &OrchestratorState) {
         ));
         core.set_launcher(launcher);
     }
-    if let Some(program) = cli_resolver::find_windows_cli_launcher("claude") {
-        core.set_launcher(Launcher::claude_headless(PathBuf::from(program)));
+    // The person's Claude folder, where a worker finds the CLAUDE.md it leaves out and the tool
+    // guards it keeps (#151). Without a home folder Claude Code cannot run, so neither can a worker.
+    let claude_home = std::env::var_os("CLAUDE_CONFIG_DIR")
+        .map(PathBuf::from)
+        .or_else(|| crate::provider_common::provider_home_dir(&[".claude"]));
+    // Its settings.json is read each time a worker starts.
+    if let (Some(program), Some(home)) = (
+        cli_resolver::find_windows_cli_launcher("claude"),
+        claude_home,
+    ) {
+        core.set_launcher(Launcher::claude_headless(PathBuf::from(program), home));
     }
     if let Some(program) = cli_resolver::find_windows_cli_launcher("agy") {
         core.set_launcher(Launcher::antigravity_headless(PathBuf::from(program)));

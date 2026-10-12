@@ -1293,6 +1293,7 @@ fn silent_launcher() -> Launcher {
         program: PathBuf::from(program),
         args,
         env: Vec::new(),
+        claude_home: None,
     }
 }
 
@@ -1319,6 +1320,7 @@ fn fake_claude_launcher(dir: &std::path::Path, transcript: &str) -> Launcher {
         program: PathBuf::from(program),
         args,
         env: Vec::new(),
+        claude_home: Some(dir.join("claude-home")),
     }
 }
 
@@ -1638,6 +1640,7 @@ ping -n 60 127.0.0.1 >NUL
         program: PathBuf::from(program),
         args,
         env: Vec::new(),
+        claude_home: Some(dir.join("claude-home")),
     }
 }
 
@@ -1867,6 +1870,7 @@ ping -n 60 127.0.0.1 >NUL
         program: PathBuf::from(program),
         args,
         env: Vec::new(),
+        claude_home: Some(dir.join("claude-home")),
     }
 }
 
@@ -3245,6 +3249,8 @@ fn a_codex_thread_that_fails_to_open_fails_its_worker() {
     let transcript = concat!(
         r#"{"id":1,"result":{}}"#,
         "\n",
+        r#"{"id":4,"result":{"config":{},"origins":{}}}"#,
+        "\n",
         r#"{"id":2,"error":{"code":-32602,"message":"unknown model: gpt-nope"}}"#,
         "\n",
     );
@@ -3315,6 +3321,7 @@ fn fake_codex_model_launcher(dir: &std::path::Path, reply: &str) -> Launcher {
         program: PathBuf::from(program),
         args,
         env: Vec::new(),
+        claude_home: None,
     }
 }
 
@@ -3444,6 +3451,7 @@ done
         program: PathBuf::from(program),
         args,
         env: Vec::new(),
+        claude_home: None,
     }
 }
 
@@ -5439,6 +5447,7 @@ fn revive_while_the_released_output_is_open(
     let core = Core::default();
     let mut launcher = scripted_agy_launcher(&fake);
     launcher.kind = kind.into();
+    launcher.claude_home = Some(fake.join("claude-home"));
     core.set_launcher(launcher);
     core.set_agy_agent(fake_agy_agent(&fake));
 
@@ -5511,14 +5520,414 @@ fn a_released_claude_process_speaking_late_does_not_reach_its_revived_run() {
     assert_eq!(job["summary"], "second", "{job}");
 }
 
+/// What a scripted Codex worker answers before its first turn (#151): input line 3 reads the
+/// person's config, line 4 opens the thread, so line 5 is the turn.
+fn codex_opening(thread_id: &str) -> [(&'static str, String); 2] {
+    let config = json!({ "id": 4, "result": { "config": {}, "origins": {} } });
+    let thread = json!({ "id": 2, "result": { "thread": { "id": thread_id } } });
+    [
+        ("turn3.jsonl", format!("{config}\n")),
+        ("turn4.jsonl", format!("{thread}\n")),
+    ]
+}
+
+// A Codex worker reads the person's config on its own app-server first, then opens its thread
+// without their hooks, plugins, memories, apps and MCP servers. A project's server stays (#151).
+#[test]
+fn a_codex_worker_opens_its_thread_without_the_persons_extensions() {
+    let dir = workspace("isolated-thread");
+    let fake = workspace("isolated-thread-fake");
+    let user = json!({
+        "name": { "type": "user", "file": "C:\\me\\.codex\\config.toml", "profile": null },
+        "version": "1"
+    });
+    let project = json!({
+        "name": { "type": "project", "dotCodexFolder": "C:\\repo\\.codex" },
+        "version": "1"
+    });
+    let config = json!({ "id": 4, "result": {
+        "config": { "mcp_servers": {
+            "context7": { "url": "https://mcp.example/mcp" },
+            "repo-tools": { "command": "node" }
+        } },
+        "origins": {
+            "mcp_servers.context7.url": user,
+            "mcp_servers.repo-tools.command": project
+        }
+    } });
+    std::fs::write(fake.join("turn3.jsonl"), format!("{config}\n")).expect("config");
+    let thread = json!({ "id": 2, "result": { "thread": { "id": "isolated-thread" } } });
+    std::fs::write(fake.join("turn4.jsonl"), format!("{thread}\n")).expect("thread");
+    let said = json!({ "method": "item/completed", "params": { "item": { "type": "agentMessage", "text": "done" } } });
+    let completed = json!({ "method": "turn/completed", "params": {} });
+    std::fs::write(fake.join("turn5.jsonl"), format!("{said}\n{completed}\n")).expect("turn 5");
+    let core = Core::default();
+    let mut launcher = scripted_agy_launcher(&fake);
+    launcher.kind = "codex".into();
+    core.set_launcher(launcher);
+
+    call(
+        &core,
+        "alethe_delegate",
+        json!({ "tasks": ["x"], "cwd": dir.to_string_lossy(), "agent": "codex" }),
+    );
+    let job = wait_for_job(&core, 20, |job| {
+        job["status"] != "running" && job["status"] != "queued"
+    });
+    let stdin = wait_for_lines(&fake.join("stdin.txt"), 5, 5);
+    let _ = call(&core, "alethe_cancel", json!({ "jobIds": ["job-01"] }));
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&fake);
+
+    assert_eq!(job["status"], "done", "{job}");
+    assert_eq!(job["summary"], "done", "{job}");
+    let line = |at: usize| serde_json::from_str::<Value>(&stdin[at]).expect("a JSON line");
+    let (read, opening) = (line(2), line(3));
+    assert_eq!(read["method"], "config/read", "{read}");
+    assert_eq!(opening["method"], "thread/start", "{opening}");
+    assert_eq!(read["params"]["cwd"], opening["params"]["cwd"], "{read}");
+    assert_eq!(
+        opening["params"]["config"]["features"],
+        json!({ "hooks": false, "plugins": false, "memories": false, "apps": false }),
+        "{opening}"
+    );
+    assert_eq!(
+        opening["params"]["config"]["mcp_servers"],
+        json!({ "context7": { "enabled": false } }),
+        "{opening}"
+    );
+}
+
+// A config that cannot be read leaves the person's MCP servers unknown, so the thread never opens
+// without them turned off; the worker fails instead (#151).
+#[test]
+fn a_codex_worker_whose_config_cannot_be_read_never_opens_its_thread() {
+    let dir = workspace("config-read-error");
+    let fake = workspace("config-read-error-fake");
+    let refused =
+        json!({ "id": 4, "error": { "code": -32603, "message": "config.toml is broken" } });
+    std::fs::write(fake.join("turn3.jsonl"), format!("{refused}\n")).expect("config");
+    let thread = json!({ "id": 2, "result": { "thread": { "id": "unseen-thread" } } });
+    std::fs::write(fake.join("turn4.jsonl"), format!("{thread}\n")).expect("thread");
+    let core = Core::default();
+    let mut launcher = scripted_agy_launcher(&fake);
+    launcher.kind = "codex".into();
+    core.set_launcher(launcher);
+
+    call(
+        &core,
+        "alethe_delegate",
+        json!({ "tasks": ["x"], "cwd": dir.to_string_lossy(), "agent": "codex" }),
+    );
+    let job = wait_for_job(&core, 20, |job| {
+        job["status"] != "running" && job["status"] != "queued"
+    });
+    let stdin = read_lossy(&fake.join("stdin.txt"));
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&fake);
+
+    assert_eq!(job["status"], "failed", "{job}");
+    assert_eq!(job["outcome"], "start-failed", "{job}");
+    assert!(stdin.contains("config/read"), "{stdin}");
+    assert!(
+        !stdin.contains("thread/"),
+        "the thread opened anyway: {stdin}"
+    );
+    assert_eq!(core.counts().0, 0, "the failed worker kept its slot");
+}
+
+// An app-server that never answers its opening must not hold a slot: a worker without a budget
+// would hold it for good, and the queue behind it would never start (#151).
+#[test]
+fn a_codex_worker_whose_app_server_never_answers_frees_its_slot() {
+    let dir = workspace("silent-open");
+    let core = Core::default();
+    core.set_launcher(silent_launcher());
+    core.set_codex_open_timeout(Duration::from_millis(500));
+    let started = std::time::Instant::now();
+
+    call(
+        &core,
+        "alethe_delegate",
+        json!({ "tasks": ["x"], "cwd": dir.to_string_lossy(), "agent": "codex", "timeoutSeconds": 0 }),
+    );
+    let job = wait_for_job(&core, 15, |job| {
+        job["status"] != "running" && job["status"] != "queued"
+    });
+    let _ = std::fs::remove_dir_all(&dir);
+
+    assert_eq!(job["status"], "failed", "{job}");
+    assert_eq!(job["outcome"], "start-failed", "{job}");
+    assert!(
+        job["summary"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("did not open"),
+        "{job}"
+    );
+    assert_eq!(core.counts().0, 0, "the silent worker kept its slot");
+    assert!(started.elapsed() < Duration::from_secs(15), "{job}");
+}
+
+/// A scripted Claude worker whose settings folder is `home` (#151). It records its arguments in
+/// `fake` and ends each turn with `text`.
+fn scripted_claude(fake: &std::path::Path, home: &std::path::Path, text: &str) -> Launcher {
+    let result = json!({ "type": "result", "is_error": false, "result": text });
+    std::fs::write(fake.join("turn.jsonl"), format!("{result}\n")).expect("turn");
+    let mut launcher = scripted_agy_launcher(fake);
+    launcher.kind = "claude".into();
+    launcher.claude_home = Some(home.to_path_buf());
+    launcher
+}
+
+fn job_settled(core: &Core, job_id: &str) -> Value {
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        let status = job_field(core, job_id, "status");
+        if (status != "running" && status != "queued") || std::time::Instant::now() > deadline {
+            return status;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+}
+
+// The person's settings are read at each start: a broken file stops the worker rather than start it
+// with a shell and bypass but without their guards, and once fixed the next worker starts, with no
+// restart. The worker's own settings travel as a file Alethe owns, never as JSON in its arguments
+// (#151).
+#[test]
+fn a_claude_worker_reads_its_settings_at_each_start_and_never_starts_without_its_guards() {
+    let dir = workspace("claude-settings");
+    let fake = workspace("claude-settings-fake");
+    let home = workspace("claude-settings-home");
+    let store = workspace("claude-settings-store");
+    let settings = home.join("settings.json");
+    std::fs::write(&settings, r#"{ "env": { "API_TOKEN": "sk-broken-secret" "#).expect("broken");
+    let core = Core::default();
+    core.set_store(store.join("orchestrator.json"));
+    core.set_launcher(scripted_claude(&fake, &home, "isolated"));
+    let delegate = || {
+        call(
+            &core,
+            "alethe_delegate",
+            json!({ "tasks": ["x"], "cwd": dir.to_string_lossy(), "agent": "claude" }),
+        )
+    };
+
+    delegate();
+    let broken = job_settled(&core, "job-01");
+    let refused = job_field(&core, "job-01", "summary")
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    let launched_broken = fake.join("launches.txt").exists();
+
+    let guards = json!([{ "matcher": "Read", "hooks": [{ "type": "command", "command": "python guard.py" }] }]);
+    let fixed =
+        json!({ "env": { "API_TOKEN": "sk-env-secret" }, "hooks": { "PreToolUse": guards } });
+    std::fs::write(&settings, format!("\u{feff}{fixed}")).expect("fixed");
+    delegate();
+    let started = job_settled(&core, "job-02");
+    let args = read_lossy(&fake.join("args.txt"));
+    let args: Vec<&str> = args.lines().map(str::trim).collect();
+    let file = args
+        .iter()
+        .position(|arg| *arg == "--settings")
+        .and_then(|at| args.get(at + 1))
+        .map(PathBuf::from);
+    let written = file
+        .as_ref()
+        .and_then(|file| std::fs::read_to_string(file).ok())
+        .and_then(|text| serde_json::from_str::<Value>(&text).ok());
+
+    let _ = call(
+        &core,
+        "alethe_cancel",
+        json!({ "jobIds": ["job-01", "job-02"] }),
+    );
+    for folder in [&dir, &fake, &home, &store] {
+        let _ = std::fs::remove_dir_all(folder);
+    }
+    assert_eq!(broken, "failed", "{refused}");
+    assert!(
+        refused.contains(&settings.display().to_string()),
+        "{refused}"
+    );
+    assert!(!refused.contains("sk-broken-secret"), "{refused}");
+    assert!(!launched_broken, "a worker started without its guards");
+    assert_eq!(started, "done");
+    for flag in ["--setting-sources", "project,local", "--strict-mcp-config"] {
+        assert!(args.contains(&flag), "{args:?}");
+    }
+    assert!(!args.iter().any(|arg| arg.starts_with('{')), "{args:?}");
+    assert!(!args.concat().contains("sk-env-secret"), "{args:?}");
+    let file = file.expect("a --settings path");
+    assert!(file.starts_with(&store), "{file:?} is not Alethe's own");
+    let written = written.expect("the settings file holds JSON");
+    assert_eq!(
+        written["hooks"],
+        json!({ "PreToolUse": guards }),
+        "{written}"
+    );
+    assert_eq!(written["autoMemoryEnabled"], false, "{written}");
+    assert!(written.get("env").is_none(), "{written}");
+}
+
+// A settings file that cannot be read stops the worker; with none at all it starts isolated, with
+// no guards to keep (#151).
+#[test]
+fn a_claude_worker_with_an_unreadable_settings_file_does_not_start() {
+    let dir = workspace("claude-unreadable");
+    let fake = workspace("claude-unreadable-fake");
+    let home = workspace("claude-unreadable-home");
+    let store = workspace("claude-unreadable-store");
+    let settings = home.join("settings.json");
+    // A folder where the file should be cannot be read as one, on every platform.
+    std::fs::create_dir_all(&settings).expect("unreadable settings");
+    let core = Core::default();
+    core.set_store(store.join("orchestrator.json"));
+    core.set_launcher(scripted_claude(&fake, &home, "isolated"));
+    let delegate = || {
+        call(
+            &core,
+            "alethe_delegate",
+            json!({ "tasks": ["x"], "cwd": dir.to_string_lossy(), "agent": "claude" }),
+        )
+    };
+
+    delegate();
+    let unreadable = job_settled(&core, "job-01");
+    let refused = job_field(&core, "job-01", "summary")
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    let launched_unreadable = fake.join("launches.txt").exists();
+    std::fs::remove_dir_all(&settings).expect("settings gone");
+    delegate();
+    let missing = job_settled(&core, "job-02");
+    let written = std::fs::read_to_string(
+        store
+            .join("jobs")
+            .join("job-02")
+            .join("claude-settings.json"),
+    )
+    .ok()
+    .and_then(|text| serde_json::from_str::<Value>(&text).ok());
+
+    let _ = call(
+        &core,
+        "alethe_cancel",
+        json!({ "jobIds": ["job-01", "job-02"] }),
+    );
+    for folder in [&dir, &fake, &home, &store] {
+        let _ = std::fs::remove_dir_all(folder);
+    }
+    assert_eq!(unreadable, "failed", "{refused}");
+    assert!(
+        refused.contains(&settings.display().to_string()),
+        "{refused}"
+    );
+    assert!(!launched_unreadable, "a worker started without its guards");
+    assert_eq!(missing, "done");
+    let written = written.expect("the settings file holds JSON");
+    assert!(written.get("hooks").is_none(), "{written}");
+    assert_eq!(written["autoMemoryEnabled"], false, "{written}");
+}
+
+/// Links `link` to `target`; false, with the reason, when this machine cannot make a symbolic link.
+fn file_link(target: &std::path::Path, link: &std::path::Path) -> bool {
+    #[cfg(windows)]
+    let linked = std::os::windows::fs::symlink_file(target, link);
+    #[cfg(unix)]
+    let linked = std::os::unix::fs::symlink(target, link);
+    if let Err(error) = &linked {
+        eprintln!("skipped: this machine cannot make a symbolic link ({error})");
+    }
+    linked.is_ok()
+}
+
+// A settings link whose target is gone reads as missing, but it is there: the worker does not
+// start without the guards it was meant to give (#151).
+#[test]
+fn a_claude_worker_whose_settings_link_points_nowhere_does_not_start() {
+    let dir = workspace("claude-dangling");
+    let fake = workspace("claude-dangling-fake");
+    let home = workspace("claude-dangling-home");
+    let store = workspace("claude-dangling-store");
+    let settings = home.join("settings.json");
+    if file_link(&home.join("gone.json"), &settings) {
+        let core = Core::default();
+        core.set_store(store.join("orchestrator.json"));
+        core.set_launcher(scripted_claude(&fake, &home, "isolated"));
+        call(
+            &core,
+            "alethe_delegate",
+            json!({ "tasks": ["x"], "cwd": dir.to_string_lossy(), "agent": "claude" }),
+        );
+        let status = job_settled(&core, "job-01");
+        let refused = job_field(&core, "job-01", "summary")
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        let launched = fake.join("launches.txt").exists();
+        let _ = call(&core, "alethe_cancel", json!({ "jobIds": ["job-01"] }));
+        assert_eq!(status, "failed", "{refused}");
+        assert!(
+            refused.contains(&settings.display().to_string()),
+            "{refused}"
+        );
+        assert!(!launched, "a worker started without its guards");
+    }
+    for folder in [&dir, &fake, &home, &store] {
+        let _ = std::fs::remove_dir_all(folder);
+    }
+}
+
+// A link left where the worker's settings are staged is replaced, never written through: it could
+// point at the person's own settings (#151).
+#[test]
+fn a_claude_worker_never_writes_through_a_link_left_in_its_job_folder() {
+    let dir = workspace("claude-staged-link");
+    let fake = workspace("claude-staged-link-fake");
+    let home = workspace("claude-staged-link-home");
+    let store = workspace("claude-staged-link-store");
+    let victim = home.join("victim.json");
+    std::fs::write(&victim, "precious").expect("victim");
+    let job_dir = store.join("jobs").join("job-01");
+    std::fs::create_dir_all(&job_dir).expect("job folder");
+    if file_link(&victim, &job_dir.join("claude-settings.json.tmp")) {
+        let core = Core::default();
+        core.set_store(store.join("orchestrator.json"));
+        core.set_launcher(scripted_claude(&fake, &home, "isolated"));
+        call(
+            &core,
+            "alethe_delegate",
+            json!({ "tasks": ["x"], "cwd": dir.to_string_lossy(), "agent": "claude" }),
+        );
+        let status = job_settled(&core, "job-01");
+        let kept = std::fs::read_to_string(&victim).unwrap_or_default();
+        let written = std::fs::read_to_string(job_dir.join("claude-settings.json"))
+            .ok()
+            .and_then(|text| serde_json::from_str::<Value>(&text).ok());
+        let _ = call(&core, "alethe_cancel", json!({ "jobIds": ["job-01"] }));
+        assert_eq!(kept, "precious", "the link's target was overwritten");
+        assert_eq!(status, "done");
+        let written = written.expect("the settings file holds JSON");
+        assert_eq!(written["autoMemoryEnabled"], false, "{written}");
+    }
+    for folder in [&dir, &fake, &home, &store] {
+        let _ = std::fs::remove_dir_all(folder);
+    }
+}
+
 #[test]
 fn a_released_codex_process_speaking_late_does_not_reach_its_revived_run() {
-    // Input lines 1-3 are initialize, initialized and the thread's opening; line 4 is the turn.
-    let thread = json!({ "id": 2, "result": { "thread": { "id": "late-thread" } } });
+    // Input lines 1-4 are initialize, initialized, config/read and the thread's opening; line 5 is
+    // the turn.
     let job = revive_while_the_released_output_is_open(
         "codex",
-        4,
-        &[("turn3.jsonl", format!("{thread}\n"))],
+        5,
+        &codex_opening("late-thread"),
         |text| {
             format!(
                 "{}\n{}\n",
@@ -5539,8 +5948,9 @@ fn an_event_found_current_before_a_release_never_lands_in_the_revived_run() {
     let dir = workspace("held-event");
     git_repo(&dir);
     let fake = workspace("held-event-fake");
-    let thread_reply = json!({ "id": 2, "result": { "thread": { "id": "held-thread" } } });
-    std::fs::write(fake.join("turn3.jsonl"), format!("{thread_reply}\n")).expect("thread");
+    for (name, text) in codex_opening("held-thread") {
+        std::fs::write(fake.join(name), text).expect("opening");
+    }
     let said = |text: &str| {
         let item = json!({ "type": "agentMessage", "text": text });
         json!({ "method": "item/completed", "params": { "item": item } })
@@ -5549,10 +5959,10 @@ fn an_event_found_current_before_a_release_never_lands_in_the_revived_run() {
     // Its last line comes after the turn ended, so the reader takes it while the job is done.
     let late = json!({ "method": "turn/completed", "params": { "late": true } });
     std::fs::write(
-        fake.join("turn4.jsonl"),
+        fake.join("turn5.jsonl"),
         format!("{}\n{completed}\n{late}\n", said("first")),
     )
-    .expect("turn 4");
+    .expect("turn 5");
     let core = Core::default();
     let mut launcher = scripted_agy_launcher(&fake);
     launcher.kind = "codex".into();
@@ -5578,12 +5988,12 @@ fn an_event_found_current_before_a_release_never_lands_in_the_revived_run() {
     assert_eq!(job["summary"], "first", "{job}");
 
     call(&core, "alethe_release", json!({ "jobIds": ["job-01"] }));
-    std::fs::write(fake.join("hold4"), "3").expect("hold");
+    std::fs::write(fake.join("hold5"), "3").expect("hold");
     std::fs::write(
-        fake.join("turn4.jsonl"),
+        fake.join("turn5.jsonl"),
         format!("{}\n{completed}\n", said("second")),
     )
-    .expect("turn 4 again");
+    .expect("turn 5 again");
     let reviver = core.clone();
     let (answered, answer) = std::sync::mpsc::channel();
     thread::spawn(move || {
@@ -5620,8 +6030,9 @@ fn revive_into_a_turn_without_its_own_report(late: bool) -> Value {
     let tag = if late { "late-report" } else { "kept-report" };
     let dir = workspace(tag);
     let fake = workspace(&format!("{tag}-fake"));
-    let thread_reply = json!({ "id": 2, "result": { "thread": { "id": "report-thread" } } });
-    std::fs::write(fake.join("turn3.jsonl"), format!("{thread_reply}\n")).expect("thread");
+    for (name, text) in codex_opening("report-thread") {
+        std::fs::write(fake.join(name), text).expect("opening");
+    }
     let said = |text: &str, late: bool| {
         let item = json!({ "type": "agentMessage", "text": text });
         json!({ "method": "item/completed", "params": { "item": item, "late": late } })
@@ -5631,7 +6042,7 @@ fn revive_into_a_turn_without_its_own_report(late: bool) -> Value {
     if late {
         first.push_str(&format!("{}\n", said("stale", true)));
     }
-    std::fs::write(fake.join("turn4.jsonl"), first).expect("turn 4");
+    std::fs::write(fake.join("turn5.jsonl"), first).expect("turn 5");
     let core = Core::default();
     let mut launcher = scripted_agy_launcher(&fake);
     launcher.kind = "codex".into();
@@ -5665,7 +6076,7 @@ fn revive_into_a_turn_without_its_own_report(late: bool) -> Value {
     }
 
     let delta = json!({ "method": "item/agentMessage/delta", "params": { "delta": "second" } });
-    std::fs::write(fake.join("turn4.jsonl"), format!("{delta}\n{completed}\n")).expect("turn 4");
+    std::fs::write(fake.join("turn5.jsonl"), format!("{delta}\n{completed}\n")).expect("turn 5");
     let sent = call(
         &core,
         "alethe_send",

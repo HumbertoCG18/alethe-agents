@@ -252,19 +252,12 @@ describe('OrchestrationPage', () => {
     expect(screen.getByTitle('Budget (s)')).toHaveTextContent('Budget (s)')
   })
 
-  // Codex plugins a worker starts without (#266).
-  it('saves the Codex plugins workers start without, one id per line or comma', () => {
+  // Workers start without every plugin of the person's own (#151), so there is no list to keep.
+  it('offers no list of Codex plugins for workers to start without', () => {
     render(<OrchestrationPage />)
 
-    fireEvent.change(screen.getByRole('textbox', { name: 'Codex plugins off in workers' }), {
-      target: { value: 'claude-mem@claude-mem-local, ecc@ecc\nponytail@ponytail' },
-    })
-
-    expect(orchestration().workerDisabledPlugins).toEqual([
-      'claude-mem@claude-mem-local',
-      'ecc@ecc',
-      'ponytail@ponytail',
-    ])
+    expect(screen.queryByRole('textbox', { name: 'Codex plugins off in workers' })).toBeNull()
+    expect(orchestration()).not.toHaveProperty('workerDisabledPlugins')
   })
 
   // A role's fallback while its provider is running out (#268).

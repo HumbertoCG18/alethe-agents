@@ -670,8 +670,6 @@ export type OrchestrationSettings = {
   maxConcurrent: number
   /** Budget per worker when a call names none; 0 means no limit. */
   defaultTimeoutSeconds: number
-  /** Codex plugin ids (`name@marketplace`) turned off in worker threads. */
-  workerDisabledPlugins: string[]
 }
 
 export type MarkdownSummarySettings = {
@@ -992,7 +990,6 @@ export const DEFAULT_PREFERENCES: Preferences = {
     roles: [],
     maxConcurrent: 4,
     defaultTimeoutSeconds: 900,
-    workerDisabledPlugins: [],
   },
   closeOrchestrationBoardWithTerminal: true,
   playwrightBrowserMode: 'shared',

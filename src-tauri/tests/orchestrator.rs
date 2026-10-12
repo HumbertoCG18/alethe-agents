@@ -5669,6 +5669,372 @@ fn a_codex_worker_whose_app_server_never_answers_frees_its_slot() {
     assert!(started.elapsed() < Duration::from_secs(15), "{job}");
 }
 
+/// A Claude worker started through a wrapper, the way `codex.cmd` runs Codex under cmd.exe (#173):
+/// the wrapper starts a grandchild that shares its input and waits for it. The grandchild writes
+/// its own pid and the wrapper's to `pids.txt` in `fake` and prints `turn.jsonl` when there is
+/// one. It then leaves at the end of its input or, while `fake` holds a `stubborn` file, reads
+/// none of it and stays a minute. `stubborn` puts that file there.
+fn wrapped_worker_launcher(fake: &std::path::Path, stubborn: bool) -> Launcher {
+    if stubborn {
+        std::fs::write(fake.join("stubborn"), "").expect("stubborn");
+    }
+    #[cfg(windows)]
+    let (program, args): (&str, Vec<String>) = {
+        let grandchild = fake.join("grandchild.ps1");
+        std::fs::write(
+            &grandchild,
+            r#"$wrapper = (Get-CimInstance Win32_Process -Filter "ProcessId = $PID").ParentProcessId
+Set-Content -Path (Join-Path $PSScriptRoot 'pids.txt') -Value "$PID`n$wrapper"
+$turn = Join-Path $PSScriptRoot 'turn.jsonl'
+if (Test-Path $turn) { foreach ($event in Get-Content $turn) { [Console]::Out.WriteLine($event) }; [Console]::Out.Flush() }
+if (Test-Path (Join-Path $PSScriptRoot 'stubborn')) { Start-Sleep -Seconds 60 }
+else { while ($null -ne [Console]::In.ReadLine()) {} }
+"#,
+        )
+        .expect("write grandchild");
+        let wrapper = fake.join("wrapper.bat");
+        std::fs::write(
+            &wrapper,
+            format!(
+                "@echo off\r\npowershell -NoProfile -ExecutionPolicy Bypass -File \"{}\"\r\n",
+                grandchild.display()
+            ),
+        )
+        .expect("write wrapper");
+        (
+            "cmd",
+            vec!["/c".into(), wrapper.to_string_lossy().into_owned()],
+        )
+    };
+    // A stubborn grandchild lets go of the input, so a kill that reaches only the wrapper still
+    // ends a write blocked on it.
+    #[cfg(not(windows))]
+    let (program, args): (&str, Vec<String>) = {
+        let grandchild = fake.join("grandchild.sh");
+        std::fs::write(
+            &grandchild,
+            r#"dir=$(dirname "$0")
+printf '%s\n%s\n' $$ $PPID > "$dir/pids.txt"
+if [ -f "$dir/turn.jsonl" ]; then cat "$dir/turn.jsonl"; fi
+if [ -f "$dir/stubborn" ]; then exec 0</dev/null; sleep 60; else cat >/dev/null; fi
+"#,
+        )
+        .expect("write grandchild");
+        (
+            "sh",
+            vec!["-c".into(), format!("sh '{}'; true", grandchild.display())],
+        )
+    };
+    Launcher {
+        kind: "claude".into(),
+        program: PathBuf::from(program),
+        args,
+        env: Vec::new(),
+        claude_home: Some(fake.join("claude-home")),
+    }
+}
+
+/// Starts job-01 on `wrapped_worker_launcher`, which prints `turn` first. Returns the core, the
+/// worker's folder, the fake's, the grandchild's pid and the wrapper's.
+fn start_wrapped_worker(
+    tag: &str,
+    stubborn: bool,
+    turn: &str,
+) -> (Core, PathBuf, PathBuf, u32, u32) {
+    let dir = workspace(tag);
+    let fake = workspace(&format!("{tag}-fake"));
+    if !turn.is_empty() {
+        std::fs::write(fake.join("turn.jsonl"), turn).expect("turn");
+    }
+    let core = Core::default();
+    core.set_launcher(wrapped_worker_launcher(&fake, stubborn));
+    call(
+        &core,
+        "alethe_delegate",
+        json!({ "tasks": ["x"], "cwd": dir.to_string_lossy(), "agent": "claude" }),
+    );
+    let pids: Vec<u32> = wait_for_lines(&fake.join("pids.txt"), 2, 20)
+        .iter()
+        .filter_map(|line| line.trim().parse().ok())
+        .collect();
+    assert_eq!(pids.len(), 2, "the grandchild never wrote its pids");
+    (core, dir, fake, pids[0], pids[1])
+}
+
+/// Whether process `pid` is still running.
+fn alive(pid: u32) -> bool {
+    #[cfg(windows)]
+    {
+        let listed = Command::new("tasklist")
+            .args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"])
+            .output()
+            .expect("tasklist");
+        String::from_utf8_lossy(&listed.stdout).contains(&format!("\"{pid}\""))
+    }
+    #[cfg(not(windows))]
+    {
+        Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .status()
+            .is_ok_and(|status| status.success())
+    }
+}
+
+fn gone_within(pid: u32, secs: u64) -> bool {
+    let deadline = std::time::Instant::now() + Duration::from_secs(secs);
+    while alive(pid) {
+        if std::time::Instant::now() > deadline {
+            return false;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    true
+}
+
+/// When `event` happened to process `pid` after `since`, waiting up to `secs` for it.
+fn process_event_within(
+    pid: u32,
+    event: &str,
+    since: std::time::Instant,
+    secs: u64,
+) -> Option<std::time::Instant> {
+    let deadline = std::time::Instant::now() + Duration::from_secs(secs);
+    loop {
+        let at = orchestrator_core::process_event(pid, event).filter(|at| *at >= since);
+        if at.is_some() || std::time::Instant::now() > deadline {
+            return at;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+}
+
+// A worker's process is often a wrapper: on Windows Codex runs as `codex.cmd` under cmd.exe. A
+// release closes the worker's input and the whole tree leaves on its own, with no kill: killing
+// Codex mid-call can crash lsass (#173, #202).
+#[test]
+fn a_released_worker_that_leaves_at_the_end_of_its_input_takes_its_tree_along_unkilled() {
+    let since = std::time::Instant::now();
+    let result = json!({ "type": "result", "is_error": false, "result": "parked" });
+    let (core, dir, fake, grandchild, wrapper) =
+        start_wrapped_worker("teardown-eof", false, &format!("{result}\n"));
+    let job = wait_for_job(&core, 20, |job| job["status"] == "done");
+
+    call(&core, "alethe_release", json!({ "jobIds": ["job-01"] }));
+    let left = gone_within(grandchild, 15) && gone_within(wrapper, 15);
+    let killed = process_event_within(wrapper, "kill_tree", since, 0);
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&fake);
+
+    assert_eq!(job["status"], "done", "{job}");
+    assert!(left, "the worker's tree outlived its release");
+    assert!(killed.is_none(), "a worker that left on its own was killed");
+}
+
+// A worker that ignores the end of its input has its whole tree killed, and only once its full
+// grace has run out. The wait holds neither the core nor the job: the cancel returns at once and
+// the core answers while the worker is still running (#173).
+#[test]
+fn a_cancelled_worker_that_ignores_the_end_of_its_input_is_killed_with_its_tree_off_the_lock() {
+    let since = std::time::Instant::now();
+    let (core, dir, fake, grandchild, wrapper) =
+        start_wrapped_worker("teardown-stubborn", true, "");
+
+    let asked = std::time::Instant::now();
+    call(&core, "alethe_cancel", json!({ "jobIds": ["job-01"] }));
+    let cancelled_in = asked.elapsed();
+    let asked = std::time::Instant::now();
+    let job = core.snapshot()["jobs"][0].clone();
+    let answered_in = asked.elapsed();
+    let torn_down = process_event_within(wrapper, "teardown", since, 10);
+    let killed = process_event_within(wrapper, "kill_tree", since, 30);
+    // Elsewhere `kill_tree` reaches only the wrapper, and the grandchild leaves within its minute.
+    #[cfg(windows)]
+    let left = gone_within(grandchild, 15);
+    #[cfg(not(windows))]
+    let _ = grandchild;
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&fake);
+
+    assert_eq!(job["status"], "cancelled", "{job}");
+    assert!(
+        cancelled_in < Duration::from_secs(2),
+        "the cancel waited {cancelled_in:?}"
+    );
+    assert!(
+        answered_in < Duration::from_secs(1),
+        "the core waited {answered_in:?}"
+    );
+    let torn_down = torn_down.expect("the worker's teardown never started");
+    let killed = killed.expect("the worker that would not leave was never killed");
+    assert!(
+        killed.duration_since(torn_down) >= orchestrator_core::WORKER_EXIT_GRACE,
+        "the worker was killed {:?} into its teardown",
+        killed.duration_since(torn_down)
+    );
+    #[cfg(windows)]
+    assert!(left, "the worker's grandchild outlived the kill");
+}
+
+// A send blocked on a worker that stopped reading fails only when that worker is killed, a grace
+// after its run ended. By then the job can be running again: the failed write was to the old
+// process and must leave the revived run alone (#173).
+#[test]
+fn a_write_still_blocked_when_its_worker_is_torn_down_leaves_the_revived_run_alone() {
+    let dir = workspace("blocked-write");
+    let fake = workspace("blocked-write-fake");
+    let init = json!({ "type": "system", "subtype": "init", "session_id": "blocked-session" });
+    let result = json!({ "type": "result", "is_error": false, "result": "parked" });
+    std::fs::write(fake.join("turn.jsonl"), format!("{init}\n{result}\n")).expect("turn");
+    let core = Core::default();
+    core.set_launcher(wrapped_worker_launcher(&fake, true));
+    call(
+        &core,
+        "alethe_delegate",
+        json!({ "tasks": ["x"], "cwd": dir.to_string_lossy(), "agent": "claude", "timeoutSeconds": 8 }),
+    );
+    let parked = wait_for_job(&core, 20, |job| job["status"] == "done");
+
+    // The worker reads none of it, so the write fills the pipe and waits there.
+    let sender = core.clone();
+    let (sent, blocked) = std::sync::mpsc::channel();
+    thread::spawn(move || {
+        let answer = call(
+            &sender,
+            "alethe_send",
+            json!({ "jobId": "job-01", "message": "x".repeat(1 << 20) }),
+        );
+        let _ = sent.send(answer);
+    });
+    // The budget ends the run while the write still waits, and the teardown gives the worker its
+    // grace before the kill that fails the write.
+    let ended = wait_for_job(&core, 30, |job| job["outcome"] == "timeout");
+    std::fs::remove_file(fake.join("stubborn")).expect("stubborn gone");
+    std::fs::write(fake.join("turn.jsonl"), format!("{init}\n")).expect("turn");
+    let revived = call(
+        &core,
+        "alethe_send",
+        json!({ "jobId": "job-01", "message": "carry on" }),
+    );
+    let failed = blocked.recv_timeout(Duration::from_secs(30));
+    let job = core.snapshot()["jobs"][0].clone();
+
+    let _ = call(&core, "alethe_cancel", json!({ "jobIds": ["job-01"] }));
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&fake);
+    assert_eq!(parked["status"], "done", "{parked}");
+    assert_eq!(ended["outcome"], "timeout", "{ended}");
+    assert_eq!(revived["revived"], json!("job-01"), "{revived}");
+    let failed = failed.expect("the blocked write never returned");
+    assert!(failed["error"].is_string(), "{failed}");
+    assert_eq!(job["status"], "running", "{job}");
+    assert_eq!(job["outcome"], Value::Null, "{job}");
+}
+
+/// A cancel reads the run it ends, then writes that run's worker an interrupt. Here the run ends,
+/// is released and revived between the two, through the cancel hook. The scripted fake plays
+/// `working` on input line `turn` and holds `ended` in a lingering child until the hook lets it
+/// out. Returns the job just after the cancel and every input line the fake's processes read
+/// (#173).
+fn cancel_across_a_revive(
+    kind: &str,
+    turn: usize,
+    opening: &[(&str, String)],
+    working: &[Value],
+    ended: &Value,
+) -> (Value, Vec<String>) {
+    let dir = workspace(&format!("cancel-revive-{kind}"));
+    let fake = workspace(&format!("cancel-revive-{kind}-fake"));
+    for (name, text) in opening {
+        std::fs::write(fake.join(name), text).expect("opening");
+    }
+    let played: String = working.iter().map(|event| format!("{event}\n")).collect();
+    std::fs::write(fake.join(format!("turn{turn}.jsonl")), played).expect("turn");
+    std::fs::write(fake.join("stale.jsonl"), format!("{ended}\n")).expect("ended");
+    std::fs::write(fake.join("linger"), "").expect("linger");
+    let core = Core::default();
+    let mut launcher = scripted_agy_launcher(&fake);
+    launcher.kind = kind.into();
+    launcher.claude_home = Some(fake.join("claude-home"));
+    core.set_launcher(launcher);
+    call(
+        &core,
+        "alethe_delegate",
+        json!({ "tasks": ["x"], "cwd": dir.to_string_lossy(), "agent": kind, "timeoutSeconds": 0 }),
+    );
+    let working = |job: &Value| job["status"] == "running" && job["summary"] == "working";
+    let first = wait_for_job(&core, 20, working);
+    assert!(working(&first), "the first run never got to work: {first}");
+
+    let reviver = core.clone();
+    let hooked = fake.clone();
+    let done = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    core.set_cancel_hook(Arc::new(move |_job_id: &str| {
+        if done.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            return;
+        }
+        // The first run ends on its own and is released, and a send revives the job.
+        std::fs::remove_file(hooked.join("linger")).expect("linger gone");
+        std::fs::write(hooked.join("eof"), "").expect("eof");
+        let parked = wait_for_job(&reviver, 20, |job| job["status"] == "done");
+        assert_eq!(parked["status"], "done", "{parked}");
+        call(&reviver, "alethe_release", json!({ "jobIds": ["job-01"] }));
+        let sent = call(
+            &reviver,
+            "alethe_send",
+            json!({ "jobId": "job-01", "message": "carry on" }),
+        );
+        assert_eq!(sent["revived"], json!("job-01"), "{sent}");
+        let revived = wait_for_job(&reviver, 20, working);
+        assert!(
+            working(&revived),
+            "the revived run never got to work: {revived}"
+        );
+    }));
+    call(&core, "alethe_cancel", json!({ "jobIds": ["job-01"] }));
+    let job = core.snapshot()["jobs"][0].clone();
+    // An interrupt that did reach a worker shows up as one more line.
+    let lines = wait_for_lines(&fake.join("stdin.txt"), 2 * turn + 1, 3);
+
+    let _ = call(&core, "alethe_cancel", json!({ "jobIds": ["job-01"] }));
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&fake);
+    (job, lines)
+}
+
+#[test]
+fn a_cancel_never_interrupts_a_claude_run_revived_after_it_read_the_job() {
+    let init = json!({ "type": "system", "subtype": "init", "session_id": "cancel-session" });
+    let said = json!({ "type": "assistant", "message": { "content": [{ "type": "text", "text": "working" }] } });
+    let result = json!({ "type": "result", "is_error": false, "result": "first" });
+    let (job, lines) = cancel_across_a_revive("claude", 1, &[], &[init, said], &result);
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    assert!(
+        lines.iter().all(|line| !line.contains("interrupt")),
+        "a worker got the cancel's interrupt: {lines:?}"
+    );
+    assert_eq!(job["status"], "running", "{job}");
+}
+
+#[test]
+fn a_cancel_never_interrupts_a_codex_run_revived_after_it_read_the_job() {
+    let started = json!({ "method": "turn/started", "params": { "turn": { "id": "turn-1" } } });
+    let said = json!({ "method": "item/agentMessage/delta", "params": { "delta": "working" } });
+    let completed = json!({ "method": "turn/completed", "params": {} });
+    let (job, lines) = cancel_across_a_revive(
+        "codex",
+        5,
+        &codex_opening("cancel-thread"),
+        &[started, said],
+        &completed,
+    );
+    assert_eq!(lines.len(), 10, "{lines:?}");
+    assert!(
+        lines.iter().all(|line| !line.contains("interrupt")),
+        "a worker got the cancel's interrupt: {lines:?}"
+    );
+    assert_eq!(job["status"], "running", "{job}");
+}
+
 /// A scripted Claude worker whose settings folder is `home` (#151). It records its arguments in
 /// `fake` and ends each turn with `text`.
 fn scripted_claude(fake: &std::path::Path, home: &std::path::Path, text: &str) -> Launcher {

@@ -6,13 +6,13 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{mpsc, LockResult, Mutex, MutexGuard};
+use std::sync::{mpsc, Arc, LockResult, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use super::util::{local_ip, peer_ip, tailscale_ip, tokens_equal};
 use super::{
-    AUTH_FAILURE_LIMIT, AUTH_FAILURE_WINDOW, AUTH_LOCKOUT, DEFAULT_SESSION_EXPIRY_SECS,
-    MESSAGE_RATE_LIMIT, MESSAGE_RATE_WINDOW, PAIRING_WINDOW_SECS,
+    ATTACHMENT_RATE_LIMIT, AUTH_FAILURE_LIMIT, AUTH_FAILURE_WINDOW, AUTH_LOCKOUT,
+    DEFAULT_SESSION_EXPIRY_SECS, MESSAGE_RATE_LIMIT, MESSAGE_RATE_WINDOW, PAIRING_WINDOW_SECS,
 };
 
 #[derive(Clone, Serialize)]
@@ -98,6 +98,9 @@ pub struct RemoteHub {
     sessions: Mutex<Vec<RemoteSession>>,
     failures: Mutex<HashMap<IpAddr, AuthFailures>>,
     message_rate: Mutex<HashMap<usize, MessageRate>>,
+    attachment_rate: Mutex<HashMap<usize, MessageRate>>,
+    // ponytail: never pruned; one tiny entry per terminal written to remotely.
+    pty_input: Mutex<HashMap<String, Arc<Mutex<()>>>>,
     qr_cache: Mutex<Option<(String, String)>>,
     last_active_unix: AtomicU64,
 }
@@ -124,6 +127,8 @@ impl RemoteHub {
             sessions: Mutex::new(Vec::new()),
             failures: Mutex::new(HashMap::new()),
             message_rate: Mutex::new(HashMap::new()),
+            attachment_rate: Mutex::new(HashMap::new()),
+            pty_input: Mutex::new(HashMap::new()),
             qr_cache: Mutex::new(None),
             last_active_unix: AtomicU64::new(unix_now()),
         }
@@ -494,20 +499,24 @@ impl RemoteHub {
     /// paired device can fire prompts, so a stolen/leaked session token
     /// can't hammer an agent or shell at machine speed.
     pub(crate) fn allow_message(&self, session_id: usize) -> bool {
-        let Ok(mut rates) = self.message_rate.lock() else {
-            return true;
-        };
-        let now = Instant::now();
-        let entry = rates.entry(session_id).or_insert(MessageRate {
-            count: 0,
-            window_start: now,
-        });
-        if now.duration_since(entry.window_start) > MESSAGE_RATE_WINDOW {
-            entry.count = 0;
-            entry.window_start = now;
-        }
-        entry.count += 1;
-        entry.count <= MESSAGE_RATE_LIMIT
+        allow_rate(&self.message_rate, session_id, MESSAGE_RATE_LIMIT)
+    }
+
+    /// Photo uploads have their own budget: one message may carry several,
+    /// and they must not use up the prompts.
+    pub(crate) fn allow_attachment(&self, session_id: usize) -> bool {
+        allow_rate(&self.attachment_rate, session_id, ATTACHMENT_RATE_LIMIT)
+    }
+
+    /// Held across a whole remote input sequence on one terminal: a photo
+    /// paste waits for the agent to read it, and another device's Enter in
+    /// that gap would submit the photo with the wrong text.
+    pub(crate) fn pty_input_lock(&self, pty_id: &str) -> Arc<Mutex<()>> {
+        let mut locks = self
+            .pty_input
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        Arc::clone(locks.entry(pty_id.to_string()).or_default())
     }
 
     pub(crate) fn session_id_for(&self, token: &str) -> Option<usize> {
@@ -674,6 +683,24 @@ impl RemoteHub {
     }
 }
 
+/// Fixed-window counter shared by the message and photo throttles.
+fn allow_rate(rates: &Mutex<HashMap<usize, MessageRate>>, session_id: usize, limit: u32) -> bool {
+    let Ok(mut rates) = rates.lock() else {
+        return true;
+    };
+    let now = Instant::now();
+    let entry = rates.entry(session_id).or_insert(MessageRate {
+        count: 0,
+        window_start: now,
+    });
+    if now.duration_since(entry.window_start) > MESSAGE_RATE_WINDOW {
+        entry.count = 0;
+        entry.window_start = now;
+    }
+    entry.count += 1;
+    entry.count <= limit
+}
+
 fn unix_now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -693,6 +720,24 @@ mod tests {
     use std::sync::{mpsc, Arc};
     use std::thread;
     use std::time::Duration;
+
+    #[test]
+    fn writes_to_one_terminal_share_one_input_lock() {
+        let hub = RemoteHub::new();
+        assert!(Arc::ptr_eq(
+            &hub.pty_input_lock("a"),
+            &hub.pty_input_lock("a")
+        ));
+        assert!(!Arc::ptr_eq(
+            &hub.pty_input_lock("a"),
+            &hub.pty_input_lock("b")
+        ));
+        // A held sequence on "a" makes a second writer to "a" wait, not one to "b".
+        let held = hub.pty_input_lock("a");
+        let _turn = held.lock().unwrap();
+        assert!(hub.pty_input_lock("a").try_lock().is_err());
+        assert!(hub.pty_input_lock("b").try_lock().is_ok());
+    }
 
     #[test]
     fn activation_reports_enabled_only_with_both_ports() {

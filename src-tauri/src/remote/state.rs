@@ -161,7 +161,7 @@ impl RemoteHub {
 
     /// Runs the test hook installed under `name`, outside the hooks' own lock.
     #[cfg(test)]
-    fn hook(&self, name: &str) {
+    pub(crate) fn hook(&self, name: &str) {
         let hook = self.test_hooks.lock().unwrap().remove(name);
         if let Some(hook) = hook {
             hook();
@@ -169,7 +169,7 @@ impl RemoteHub {
     }
 
     #[cfg(not(test))]
-    fn hook(&self, _name: &str) {}
+    pub(crate) fn hook(&self, _name: &str) {}
 
     #[cfg(test)]
     pub(crate) fn on_hook(&self, name: &'static str, hook: impl FnOnce() + Send + 'static) {

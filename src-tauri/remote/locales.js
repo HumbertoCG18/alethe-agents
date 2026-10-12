@@ -20,6 +20,28 @@ export const messages = {
     'chat.interruptError': 'Could not stop the agent: {message}',
     'chat.attachPhoto': 'Attach a photo',
     'chat.removePhoto': 'Remove photo',
+    'chat.queueEditing':
+      "Queued message back here to edit. It is also in the terminal's input box: check it in the Terminal view and tap Clear the box to erase it there.",
+    'chat.queueEditError': 'Could not take the message back: {message}',
+    'chat.queueEditShared':
+      'The message stays queued: the queue also holds text typed elsewhere, which taking it back would erase.',
+    'chat.queueEditUnknown':
+      'The message stays queued: Alethe could not confirm what Claude Code has queued. Try again in a moment.',
+    'chat.queueEditTooLong': 'The message stays queued: it is too long to take back from here.',
+    'chat.queueEditPhoto': 'The message stays queued: one of its photos was sent from another tab.',
+    'chat.queueEditTooManyPhotos':
+      'The message stays queued: its photos and the ones in the box would be more than 6. Remove some from the box first.',
+    'chat.clearBox': 'Clear the box',
+    'chat.boxCleared': "The terminal's input box was cleared.",
+    'chat.clearBoxShared':
+      'Nothing was erased: someone else typed in the terminal since the pull. Check its input box on the computer.',
+    'chat.clearBoxChanged':
+      "Nothing was erased: the terminal's input box may have changed since the pull. Check it in the Terminal view.",
+    'chat.clearBoxError': 'Could not clear the box: {message}',
+    'chat.boxPending':
+      "Text you took back is still in the terminal's input box. Check it in the Terminal view and tap Clear the box before sending.",
+    'chat.boxPendingError':
+      "Not sent: text this phone took back is still in the terminal's input box. Check it in the Terminal view and tap Clear the box, then send again.",
     'chat.photoAttached': 'Photo attached. Write your message and send it.',
     'chat.photoTooLarge': 'The photo is larger than 4 MB',
     'chat.photoError': 'Could not attach the photo: {message}',
@@ -142,6 +164,28 @@ export const messages = {
     'chat.interruptError': 'Não foi possível parar o agente: {message}',
     'chat.attachPhoto': 'Anexar foto',
     'chat.removePhoto': 'Remover foto',
+    'chat.queueEditing':
+      'A mensagem da fila voltou para cá para editar. Ela também está na caixa de entrada do terminal: confira na visão Terminal e toque em Limpar a caixa para apagá-la lá.',
+    'chat.queueEditError': 'Não deu para trazer a mensagem de volta: {message}',
+    'chat.queueEditShared':
+      'A mensagem ficou na fila: a fila também tem texto digitado em outro lugar, que seria apagado.',
+    'chat.queueEditUnknown':
+      'A mensagem ficou na fila: o Alethe não conseguiu confirmar o que o Claude Code enfileirou. Tente de novo em instantes.',
+    'chat.queueEditTooLong': 'A mensagem ficou na fila: é longa demais para trazer de volta daqui.',
+    'chat.queueEditPhoto': 'A mensagem ficou na fila: uma das fotos foi enviada de outra aba.',
+    'chat.queueEditTooManyPhotos':
+      'A mensagem ficou na fila: as fotos dela e as do campo passariam de 6. Tire algumas do campo antes.',
+    'chat.clearBox': 'Limpar a caixa',
+    'chat.boxCleared': 'A caixa de entrada do terminal foi limpa.',
+    'chat.clearBoxShared':
+      'Nada foi apagado: alguém digitou no terminal depois de a mensagem voltar. Confira a caixa de entrada no computador.',
+    'chat.clearBoxChanged':
+      'Nada foi apagado: a caixa de entrada do terminal pode ter mudado depois de a mensagem voltar. Confira na visão Terminal.',
+    'chat.clearBoxError': 'Não deu para limpar a caixa: {message}',
+    'chat.boxPending':
+      'O texto que voltou da fila ainda está na caixa de entrada do terminal. Confira na visão Terminal e toque em Limpar a caixa antes de enviar.',
+    'chat.boxPendingError':
+      'Não enviado: um texto que este celular trouxe de volta ainda está na caixa de entrada do terminal. Confira na visão Terminal, toque em Limpar a caixa e envie de novo.',
     'chat.photoAttached': 'Foto anexada. Escreva a mensagem e envie.',
     'chat.photoTooLarge': 'A foto passa de 4 MB',
     'chat.photoError': 'Não foi possível anexar a foto: {message}',
@@ -264,6 +308,24 @@ export const messages = {
     'chat.interruptError': '无法停止智能体：{message}',
     'chat.attachPhoto': '附加照片',
     'chat.removePhoto': '移除照片',
+    'chat.queueEditing':
+      '排队的消息已放回此处供编辑。它也在终端的输入框中：请在终端视图中查看，并点按“清空输入框”将其清除。',
+    'chat.queueEditError': '无法取回消息：{message}',
+    'chat.queueEditShared': '消息仍在队列中：队列里还有在别处输入的内容，取回会将其清除。',
+    'chat.queueEditUnknown': '消息仍在队列中：Alethe 无法确认 Claude Code 排队了什么。请稍后再试。',
+    'chat.queueEditTooLong': '消息仍在队列中：内容太长，无法从这里取回。',
+    'chat.queueEditPhoto': '消息仍在队列中：其中一张照片是从另一个标签页发送的。',
+    'chat.queueEditTooManyPhotos':
+      '消息仍在队列中：它的照片加上输入框中的照片会超过 6 张。请先从输入框移除一些。',
+    'chat.clearBox': '清空输入框',
+    'chat.boxCleared': '终端的输入框已清空。',
+    'chat.clearBoxShared': '未清除任何内容：取回后有人在终端中输入过。请在电脑上检查其输入框。',
+    'chat.clearBoxChanged': '未清除任何内容：取回后终端的输入框可能已变化。请在终端视图中检查。',
+    'chat.clearBoxError': '无法清空输入框：{message}',
+    'chat.boxPending':
+      '取回的文本仍在终端的输入框中。请在终端视图中检查，并在发送前点按“清空输入框”。',
+    'chat.boxPendingError':
+      '未发送：此手机取回的文本仍在终端的输入框中。请在终端视图中检查，点按“清空输入框”后再发送。',
     'chat.photoAttached': '照片已附加。输入消息后发送。',
     'chat.photoTooLarge': '照片超过 4 MB',
     'chat.photoError': '无法附加照片：{message}',

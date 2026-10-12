@@ -7,16 +7,20 @@ use serde_json::{json, Value};
 use super::state::PinOutcome;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::sync::{Arc, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::thread;
 use std::time::Duration;
 
 use tauri::{AppHandle, Emitter, Manager};
 
-use crate::pty::PtySessions;
+use crate::pty::{pty_input, write_counted, InputLedger, PtySessions, RemoteSend, Writer};
 
 use super::appearance::{projects_document, remote_appearance, selected_brand_icon};
 use super::pty_bridge::{read_pty_size, read_scrollback, write_remote};
+use super::takeback::{
+    claude_queue, clear_box_keys, clear_verdict, takeback_verdict, ClaudeLog, BOX_CHANGED,
+    BOX_PENDING, PULL_KEY, QUEUE_PHOTO_MISSING, QUEUE_SHARED, QUEUE_TOO_LONG, QUEUE_UNKNOWN,
+};
 use super::util::{query_value, sanitize_remote_message};
 use super::workspace::{pty_agent, pty_is_shared, shared_tab, workspace_snapshot};
 use super::{
@@ -501,7 +505,7 @@ fn handle_api(
         let input_lock = hub.pty_input_lock(&payload.pty_id);
         let turn = input_lock.lock().unwrap_or_else(PoisonError::into_inner);
         let written = hub.with_active_session(generation, session_id, || {
-            write_remote(sessions, &payload.pty_id, &input)
+            write_remote(sessions, &payload.pty_id, session_id, &input)
         })?;
         drop(turn);
         if !written {
@@ -524,73 +528,48 @@ fn handle_api(
         return respond(stream, 204, "text/plain", "");
     }
     if path == "/api/agent-control" && method == "POST" {
-        if hub.is_read_only() {
-            return respond(
-                stream,
-                403,
-                "application/json",
-                r#"{"error":"Remote control is in read-only mode"}"#,
-            );
+        let (payload, agent) =
+            match agent_control_gate(hub, session_id, body, |pty_id| pty_agent(app, pty_id))? {
+                Gate::Pass(payload, agent) => (payload, agent),
+                Gate::Refuse(status, error) => {
+                    return respond(
+                        stream,
+                        status,
+                        "application/json",
+                        &json!({ "error": error }).to_string(),
+                    )
+                }
+            };
+        if matches!(payload.action.as_str(), "edit_queued" | "clear_box") {
+            return queued_box(stream, app, hub, sessions, generation, session_id, &payload);
         }
-        if !hub.allow_message(session_id) {
+        let Some((keys, preview, guarded)) = control_keys(&payload.action, &agent) else {
             return respond(
                 stream,
-                429,
+                400,
                 "application/json",
-                r#"{"error":"Too many messages, slow down"}"#,
+                r#"{"error":"Unknown agent control action"}"#,
             );
-        }
-        let payload: RemoteAgentControl =
-            serde_json::from_slice(body).map_err(|error| error.to_string())?;
-        let Some(agent) = pty_agent(app, &payload.pty_id) else {
-            return respond(
-                stream,
-                403,
-                "application/json",
-                r#"{"error":"This terminal is not available remotely"}"#,
-            );
-        };
-        if agent != "claude" && agent != "codex" {
-            return respond(
-                stream,
-                409,
-                "application/json",
-                r#"{"error":"Only Codex and Claude Code can be controlled remotely"}"#,
-            );
-        }
-        // Claude Code queues a message typed while a turn is running and only
-        // offers `ctrl+x ctrl+s` to send it now — a chord a phone keyboard
-        // cannot type.
-        let (keys, preview): (&[&str], &str) = match payload.action.as_str() {
-            "interrupt" => (&["\x03"], "Interrupted the active agent turn"),
-            "send_now" if agent == "claude" => (&["\x18", "\x13"], "Sent the queued message now"),
-            _ => {
-                return respond(
-                    stream,
-                    400,
-                    "application/json",
-                    r#"{"error":"Unknown agent control action"}"#,
-                );
-            }
         };
         let input_lock = hub.pty_input_lock(&payload.pty_id);
         let turn = input_lock.lock().unwrap_or_else(PoisonError::into_inner);
-        let mut written = true;
-        for (index, key) in keys.iter().enumerate() {
-            if index > 0 {
-                // Each half of the chord must arrive as its own keypress.
-                thread::sleep(Duration::from_millis(60));
-            }
-            written = hub.with_active_session(generation, session_id, || {
-                write_remote(sessions, &payload.pty_id, key)
-            })?;
-            if !written {
-                break;
-            }
-        }
+        let (out, ledger) = pty_input(sessions, &payload.pty_id)?;
+        // Each half of a chord must arrive as its own keypress.
+        let sent = write_sequence(
+            hub,
+            generation,
+            session_id,
+            &out,
+            &ledger,
+            keys,
+            Duration::from_millis(60),
+            guarded,
+        )?;
         drop(turn);
-        if !written {
-            return respond_session_inactive(stream);
+        match sent {
+            Sent::Inactive => return respond_session_inactive(stream),
+            Sent::BoxPending(pull_id) => return respond_box_pending(stream, &pull_id),
+            Sent::Written { .. } => {}
         }
         let device_name = hub.device_name(session_id);
         eprintln!(
@@ -722,34 +701,29 @@ fn handle_api(
         // write to this terminal can land between a paste and its Enter.
         let input_lock = hub.pty_input_lock(&payload.pty_id);
         let turn = input_lock.lock().unwrap_or_else(PoisonError::into_inner);
-        for photo in &photos {
-            // Bracketed paste is what makes both agents attach the image
-            // (checked live: `[Image #1]`); typed as plain text it stays a path.
-            let written = hub.with_active_session(generation, session_id, || {
-                write_remote(
-                    sessions,
-                    &payload.pty_id,
-                    &format!("\x1b[200~{photo}\x1b[201~"),
-                )
-            })?;
-            if !written {
-                return respond_session_inactive(stream);
-            }
-            // The agent reads the file on paste; Enter before that sends the
-            // text without the image.
-            thread::sleep(ATTACHMENT_SETTLE);
-        }
-        let line = if photos.is_empty() {
-            format!("{text}\r")
-        } else {
-            format!(" {text}\r")
+        let (out, ledger) = pty_input(sessions, &payload.pty_id)?;
+        let send = RemoteSend {
+            device: session_id,
+            start: 0,
+            text: payload.text.trim().to_string(),
+            photos: payload.attachments.clone(),
+            sent_ms: 0,
         };
-        let written = hub.with_active_session(generation, session_id, || {
-            write_remote(sessions, &payload.pty_id, &line)
-        })?;
+        let sent = send_message(
+            hub,
+            generation,
+            &out,
+            &ledger,
+            &photos,
+            text,
+            send,
+            ATTACHMENT_SETTLE,
+        )?;
         drop(turn);
-        if !written {
-            return respond_session_inactive(stream);
+        match sent {
+            Sent::Inactive => return respond_session_inactive(stream),
+            Sent::BoxPending(pull_id) => return respond_box_pending(stream, &pull_id),
+            Sent::Written { .. } => {}
         }
         let device_name = hub.device_name(session_id);
         eprintln!(
@@ -781,6 +755,376 @@ fn respond_session_inactive(stream: &mut TcpStream) -> Result<(), String> {
         "application/json",
         r#"{"error":"Remote session is no longer active"}"#,
     )
+}
+
+/// Text this device pulled back still sits untouched in the input box.
+fn respond_box_pending(stream: &mut TcpStream, pull_id: &str) -> Result<(), String> {
+    respond(stream, 409, "application/json", &box_pending_body(pull_id))
+}
+
+/// Names the device's own pending pull, so a tab that lost its id (a reload,
+/// another tab) can still offer to clear the box.
+fn box_pending_body(pull_id: &str) -> String {
+    json!({
+        "error": "Text taken back from the queue is still in the input box; clear it first",
+        "code": BOX_PENDING,
+        "pullId": pull_id,
+    })
+    .to_string()
+}
+
+/// What `/api/agent-control` decided before touching the terminal.
+enum Gate {
+    /// Go ahead: the request and the terminal's agent.
+    Pass(RemoteAgentControl, String),
+    Refuse(u16, &'static str),
+}
+
+/// `/api/agent-control`'s checks, in order: read-only, rate limit, the
+/// request, a terminal not shared (`agent_of` names a shared terminal's
+/// agent), an agent it cannot drive, a queue action for an agent without one.
+fn agent_control_gate(
+    hub: &RemoteHub,
+    device: usize,
+    body: &[u8],
+    agent_of: impl FnOnce(&str) -> Option<String>,
+) -> Result<Gate, String> {
+    if hub.is_read_only() {
+        return Ok(Gate::Refuse(403, "Remote control is in read-only mode"));
+    }
+    if !hub.allow_message(device) {
+        return Ok(Gate::Refuse(429, "Too many messages, slow down"));
+    }
+    let payload: RemoteAgentControl =
+        serde_json::from_slice(body).map_err(|error| error.to_string())?;
+    let Some(agent) = agent_of(&payload.pty_id) else {
+        return Ok(Gate::Refuse(403, "This terminal is not available remotely"));
+    };
+    if agent != "claude" && agent != "codex" {
+        return Ok(Gate::Refuse(
+            409,
+            "Only Codex and Claude Code can be controlled remotely",
+        ));
+    }
+    if matches!(payload.action.as_str(), "edit_queued" | "clear_box") && agent != "claude" {
+        return Ok(Gate::Refuse(409, "Only Claude Code queues messages"));
+    }
+    Ok(Gate::Pass(payload, agent))
+}
+
+/// Keys and log preview for a key action of `/api/agent-control` on `agent`,
+/// and whether text this device pulled back into the box blocks it.
+fn control_keys(
+    action: &str,
+    agent: &str,
+) -> Option<(&'static [&'static str], &'static str, bool)> {
+    match action {
+        // Stopping the agent stays possible whatever the box holds.
+        "interrupt" => Some((&["\x03"], "Interrupted the active agent turn", false)),
+        // Claude Code queues a message typed while a turn is running and only
+        // offers `ctrl+x ctrl+s` to send it now, a chord a phone keyboard
+        // cannot type. With pulled text in the box it would submit that.
+        "send_now" if agent == "claude" => {
+            Some((&["\x18", "\x13"], "Sent the queued message now", true))
+        }
+        _ => None,
+    }
+}
+
+/// What became of a remote device's sequence of writes.
+#[derive(Debug, PartialEq)]
+enum Sent {
+    /// `start` is the ledger sequence of the first write, `last_ms` the Unix
+    /// ms just before the last one.
+    Written {
+        start: u64,
+        last_ms: u64,
+    },
+    /// The device's pull with this id left text untouched in the input box:
+    /// what it types now would join it, and Enter would submit both.
+    BoxPending(String),
+    Inactive,
+}
+
+/// Writes `chunks` for `device`, `gap` apart; when `guarded`, refuses first
+/// while the device's pulled text sits untouched in the input box. The check
+/// and the first write share one ledger hold. Lock order as in `pull_queued`.
+#[allow(clippy::too_many_arguments)]
+fn write_sequence<S: AsRef<str>>(
+    hub: &RemoteHub,
+    generation: u64,
+    device: usize,
+    out: &Mutex<Box<dyn Write + Send>>,
+    ledger: &Mutex<InputLedger>,
+    chunks: &[S],
+    gap: Duration,
+    guarded: bool,
+) -> Result<Sent, String> {
+    let (mut start, mut last_ms) = (0, 0);
+    for (index, chunk) in chunks.iter().enumerate() {
+        if index > 0 {
+            thread::sleep(gap);
+        }
+        let mut ledger = ledger.lock().unwrap_or_else(PoisonError::into_inner);
+        if index == 0 {
+            if let Some(pull_id) = ledger.pending_pull(device).filter(|_| guarded) {
+                return Ok(Sent::BoxPending(pull_id.to_string()));
+            }
+            start = ledger.next_seq();
+        }
+        last_ms = crate::provider_common::now_ms();
+        let written = hub.with_active_session(generation, device, || {
+            write_counted(&mut ledger, out, Writer::Device(device), chunk.as_ref())
+        })?;
+        if !written {
+            return Ok(Sent::Inactive);
+        }
+    }
+    Ok(Sent::Written { start, last_ms })
+}
+
+/// `/api/message`'s writes: each photo pasted, then `text` and Enter, as one
+/// send, remembered from its first write on for a later pull.
+#[allow(clippy::too_many_arguments)]
+fn send_message(
+    hub: &RemoteHub,
+    generation: u64,
+    out: &Mutex<Box<dyn Write + Send>>,
+    ledger: &Mutex<InputLedger>,
+    photos: &[String],
+    text: &str,
+    mut send: RemoteSend,
+    settle: Duration,
+) -> Result<Sent, String> {
+    // Bracketed paste is what makes both agents attach the image (checked
+    // live: `[Image #1]`); typed as plain text it stays a path.
+    let mut chunks: Vec<String> = photos
+        .iter()
+        .map(|photo| format!("\x1b[200~{photo}\x1b[201~"))
+        .collect();
+    chunks.push(if photos.is_empty() {
+        format!("{text}\r")
+    } else {
+        format!(" {text}\r")
+    });
+    // The agent reads a photo's file on paste; Enter before `settle` sends
+    // the text without the image.
+    let sent = write_sequence(
+        hub,
+        generation,
+        send.device,
+        out,
+        ledger,
+        &chunks,
+        settle,
+        true,
+    )?;
+    if let Sent::Written { start, last_ms } = sent {
+        send.start = start;
+        send.sent_ms = last_ms;
+        ledger
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remember_send(send);
+    }
+    Ok(sent)
+}
+
+#[derive(Debug, PartialEq)]
+enum Takeback {
+    Pulled {
+        pull_id: String,
+        texts: Vec<String>,
+        photos: Vec<String>,
+    },
+    Cleared,
+    Refused(&'static str),
+    Inactive,
+}
+
+/// `edit_queued` pulls this device's queued messages out of Claude Code's
+/// queue into its input box; `clear_box` later erases that box, once the user
+/// saw it. Either refuses with a `code` and writes nothing.
+fn queued_box(
+    stream: &mut TcpStream,
+    app: &AppHandle,
+    hub: &RemoteHub,
+    sessions: &PtySessions,
+    generation: u64,
+    session_id: usize,
+    payload: &RemoteAgentControl,
+) -> Result<(), String> {
+    let (out, ledger) = pty_input(sessions, &payload.pty_id)?;
+    let cols = read_pty_size(sessions, &payload.pty_id).map_or(80, |(cols, _)| cols);
+    let input_lock = hub.pty_input_lock(&payload.pty_id);
+    let outcome = match payload.action.as_str() {
+        "clear_box" => clear_box(
+            hub,
+            generation,
+            session_id,
+            &input_lock,
+            &out,
+            &ledger,
+            &payload.pull_id,
+            cols,
+        )?,
+        _ => {
+            // The terminal's own session only: the newest transcript in its
+            // folder may be another terminal's.
+            let transcript = shared_tab(app, &payload.pty_id).and_then(|tab| {
+                let id = tab.session_id.filter(|id| !id.trim().is_empty())?;
+                crate::handoff::resolve_source_file(
+                    crate::handoff::Provider::Claude,
+                    &tab.cwd,
+                    Some(&id),
+                )
+                .ok()
+            });
+            match transcript {
+                None => Takeback::Refused(QUEUE_UNKNOWN),
+                Some((_, path, _)) => {
+                    let started_ms = ledger
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .started_ms;
+                    // Read before any lock is taken: a transcript runs to megabytes.
+                    let log = std::fs::read(&path)
+                        .map(|bytes| claude_queue(&String::from_utf8_lossy(&bytes), started_ms))
+                        .unwrap_or_default();
+                    pull_queued(
+                        hub,
+                        generation,
+                        session_id,
+                        &input_lock,
+                        &out,
+                        &ledger,
+                        &log,
+                        &payload.photos,
+                        cols,
+                    )?
+                }
+            }
+        }
+    };
+    let device_name = hub.device_name(session_id);
+    let (preview, body) = match outcome {
+        Takeback::Inactive => return respond_session_inactive(stream),
+        Takeback::Refused(code) => {
+            eprintln!(
+                "[remote] {device_name} (device {session_id}) was refused {} in {}: {code}",
+                payload.action, payload.pty_id
+            );
+            let error = match code {
+                QUEUE_SHARED => "The terminal holds input from elsewhere",
+                QUEUE_TOO_LONG => "The queued messages are too long to take back",
+                QUEUE_PHOTO_MISSING => "A queued photo is no longer on this page",
+                BOX_CHANGED => "The input box may have changed since the pull",
+                _ => "Could not confirm what Claude Code has queued",
+            };
+            return respond(
+                stream,
+                409,
+                "application/json",
+                &json!({ "error": error, "code": code }).to_string(),
+            );
+        }
+        Takeback::Pulled {
+            pull_id,
+            texts,
+            photos,
+        } => (
+            "Pulled the queued message back to edit",
+            json!({ "texts": texts, "photos": photos, "pulled": true, "pullId": pull_id }),
+        ),
+        Takeback::Cleared => ("Cleared the input box", json!({ "cleared": true })),
+    };
+    eprintln!(
+        "[remote] {device_name} (device {session_id}) {} in {}",
+        payload.action, payload.pty_id
+    );
+    let _ = app.emit(
+        "remote://message",
+        json!({
+            "ptyId": payload.pty_id,
+            "deviceId": session_id,
+            "deviceName": device_name,
+            "preview": preview,
+        }),
+    );
+    respond_large(stream, 200, "application/json", &body.to_string())
+}
+
+/// Re-checks the verdict with the PTY's input held (remote writers wait on
+/// `pty_input`, the desktop on the ledger), then sends only the up arrow: the
+/// queue moves into the input box and nothing is deleted. Lock order is
+/// `pty_input`, then the ledger: every other remote writer takes `pty_input`
+/// first too, so holding the ledger into `with_active_session` cannot
+/// deadlock against them.
+#[allow(clippy::too_many_arguments)]
+fn pull_queued(
+    hub: &RemoteHub,
+    generation: u64,
+    device: usize,
+    pty_input: &Mutex<()>,
+    out: &Mutex<Box<dyn Write + Send>>,
+    ledger: &Mutex<InputLedger>,
+    log: &ClaudeLog,
+    held: &[String],
+    cols: u16,
+) -> Result<Takeback, String> {
+    let _turn = pty_input.lock().unwrap_or_else(PoisonError::into_inner);
+    let mut ledger = ledger.lock().unwrap_or_else(PoisonError::into_inner);
+    let picked = match takeback_verdict(&ledger, device, log, held, cols) {
+        Ok(picked) => picked,
+        Err(code) => return Ok(Takeback::Refused(code)),
+    };
+    let written = hub.with_active_session(generation, device, || {
+        write_counted(&mut ledger, out, Writer::Device(device), PULL_KEY)
+    })?;
+    if !written {
+        return Ok(Takeback::Inactive);
+    }
+    // No longer queued: a log that has not caught up cannot pull them twice.
+    ledger.forget_sends(device, picked.since);
+    // Random like a pairing token: only the asking tab can name this pull.
+    let pull_id = nanoid::nanoid!(32);
+    ledger.mark_pull(device, pull_id.clone(), log.items());
+    Ok(Takeback::Pulled {
+        pull_id,
+        texts: picked.texts,
+        photos: picked.photos,
+    })
+}
+
+/// Erases what this device's pull `pull_id` put in the input box, unless
+/// anyone wrote to the PTY since. Same locks, in the same order, as
+/// `pull_queued`.
+#[allow(clippy::too_many_arguments)]
+fn clear_box(
+    hub: &RemoteHub,
+    generation: u64,
+    device: usize,
+    pty_input: &Mutex<()>,
+    out: &Mutex<Box<dyn Write + Send>>,
+    ledger: &Mutex<InputLedger>,
+    pull_id: &str,
+    cols: u16,
+) -> Result<Takeback, String> {
+    let _turn = pty_input.lock().unwrap_or_else(PoisonError::into_inner);
+    let mut ledger = ledger.lock().unwrap_or_else(PoisonError::into_inner);
+    let keys = match clear_verdict(&mut ledger, device, pull_id, cols) {
+        Ok(rounds) => clear_box_keys(rounds),
+        Err(code) => return Ok(Takeback::Refused(code)),
+    };
+    hub.hook("clear_checked");
+    let written = hub.with_active_session(generation, device, || {
+        write_counted(&mut ledger, out, Writer::Device(device), &keys)
+    })?;
+    Ok(if written {
+        Takeback::Cleared
+    } else {
+        Takeback::Inactive
+    })
 }
 
 #[derive(Deserialize)]
@@ -917,6 +1261,12 @@ struct RemoteAgentControl {
     #[serde(rename = "ptyId")]
     pty_id: String,
     action: String,
+    /// For `edit_queued`: the photo ids the asking tab still holds.
+    #[serde(default)]
+    photos: Vec<String>,
+    /// For `clear_box`: the pull the user confirmed, as `edit_queued` named it.
+    #[serde(rename = "pullId", default)]
+    pull_id: String,
 }
 
 fn question_answer_input(
@@ -1182,6 +1532,532 @@ mod tests {
         store_attachment,
     };
     use crate::remote::{MAX_ATTACHMENT, MAX_BODY};
+
+    mod takeback {
+        use super::super::{
+            agent_control_gate, box_pending_body, clear_box, control_keys, pull_queued,
+            send_message, write_sequence, Gate, Sent, Takeback,
+        };
+        use crate::pty::{write_counted, InputLedger, RemoteSend, Writer};
+        use crate::remote::takeback::{
+            claude_queue, clear_box_keys, BOX_CHANGED, QUEUE_SHARED, QUEUE_UNKNOWN,
+        };
+        use crate::remote::RemoteHub;
+        use std::io::Write;
+        use std::sync::{mpsc, Arc, Mutex};
+        use std::time::Duration;
+
+        /// `paired_for_test` activates a fresh hub once.
+        const GENERATION: u64 = 1;
+
+        /// A PTY end that keeps what it was sent.
+        #[derive(Clone, Default)]
+        struct Typed(Arc<Mutex<Vec<u8>>>);
+
+        impl Write for Typed {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        impl Typed {
+            fn text(&self) -> String {
+                String::from_utf8(self.0.lock().unwrap().clone()).unwrap()
+            }
+        }
+
+        /// A PTY where a device sent a text.
+        struct Pty {
+            typed: Typed,
+            out: Arc<Mutex<Box<dyn Write + Send>>>,
+            ledger: Arc<Mutex<InputLedger>>,
+        }
+
+        impl Pty {
+            fn write(&self, writer: Writer, data: &str) {
+                let mut ledger = self.ledger.lock().unwrap();
+                write_counted(&mut ledger, &self.out, writer, data).unwrap();
+            }
+
+            /// What `/api/message` leaves in the ledger.
+            fn send(&self, device: usize, text: &str) {
+                let mut ledger = self.ledger.lock().unwrap();
+                let start = ledger.next_seq();
+                ledger.record(Writer::Device(device), &format!("{text}\r"));
+                ledger.remember_send(RemoteSend {
+                    device,
+                    start,
+                    text: text.into(),
+                    photos: vec![],
+                    sent_ms: 0,
+                });
+            }
+        }
+
+        fn after_send(device: usize, text: &str) -> Pty {
+            let typed = Typed::default();
+            let out: Arc<Mutex<Box<dyn Write + Send>>> =
+                Arc::new(Mutex::new(Box::new(typed.clone())));
+            let pty = Pty {
+                typed,
+                out,
+                ledger: Arc::new(Mutex::new(InputLedger::new(0))),
+            };
+            pty.send(device, text);
+            pty
+        }
+
+        /// A pull while Claude Code's log shows `queued` still queued.
+        fn pull(hub: &RemoteHub, device: usize, pty: &Pty, queued: &[&str]) -> Takeback {
+            let log: String = queued
+                .iter()
+                .map(|content| {
+                    let line = serde_json::json!({
+                        "type": "queue-operation",
+                        "operation": "enqueue",
+                        "timestamp": "2026-10-11T12:00:01.000Z",
+                        "content": content,
+                    });
+                    format!("{line}\n")
+                })
+                .collect();
+            pull_queued(
+                hub,
+                GENERATION,
+                device,
+                &Mutex::new(()),
+                &pty.out,
+                &pty.ledger,
+                &claude_queue(&log, 0),
+                &[],
+                80,
+            )
+            .unwrap()
+        }
+
+        /// The id a successful pull hands the tab.
+        fn pulled(outcome: Takeback) -> String {
+            match outcome {
+                Takeback::Pulled { pull_id, .. } => pull_id,
+                other => panic!("not pulled: {other:?}"),
+            }
+        }
+
+        fn clear(hub: &RemoteHub, device: usize, pty: &Pty, pull_id: &str) -> Takeback {
+            clear_box(
+                hub,
+                GENERATION,
+                device,
+                &Mutex::new(()),
+                &pty.out,
+                &pty.ledger,
+                pull_id,
+                80,
+            )
+            .unwrap()
+        }
+
+        /// "hello" is one row: 1 + 1 per message + 2.
+        fn burst() -> String {
+            clear_box_keys(4)
+        }
+
+        #[test]
+        fn a_pull_sends_only_the_up_arrow() {
+            let (hub, device) = RemoteHub::paired_for_test();
+            let pty = after_send(device, "hello");
+            let Takeback::Pulled {
+                pull_id,
+                texts,
+                photos,
+            } = pull(&hub, device, &pty, &["hello"])
+            else {
+                panic!("not pulled");
+            };
+            assert_eq!(texts, ["hello"]);
+            assert!(photos.is_empty());
+            // Random, like a pairing token: a tab cannot guess another pull's.
+            assert!(pull_id.len() >= 32, "{pull_id}");
+            assert_eq!(pty.typed.text(), "\x1b[A");
+            let mut ledger = pty.ledger.lock().unwrap();
+            // Pulled sends are no longer queued: a log that has not caught
+            // up yet cannot make them pullable twice.
+            assert_eq!(ledger.sends().count(), 0);
+            assert_eq!(ledger.take_pull(device, &pull_id).unwrap().texts, ["hello"]);
+        }
+
+        #[test]
+        fn a_refused_or_inactive_pull_writes_nothing() {
+            let (hub, device) = RemoteHub::paired_for_test();
+            let desktop = after_send(device, "hello");
+            desktop.write(Writer::Desktop, "x");
+            let system = after_send(device, "hello");
+            for (pty, queued, refusal) in [
+                (&desktop, &["hello"][..], QUEUE_SHARED),
+                (
+                    &system,
+                    &["<task-notification>done</task-notification>", "hello"][..],
+                    QUEUE_SHARED,
+                ),
+                (&system, &[][..], QUEUE_UNKNOWN),
+            ] {
+                let typed = pty.typed.text();
+                assert_eq!(pull(&hub, device, pty, queued), Takeback::Refused(refusal));
+                assert_eq!(pty.typed.text(), typed);
+                assert_eq!(pty.ledger.lock().unwrap().sends().count(), 1);
+            }
+
+            let after_stop = after_send(device, "hello");
+            hub.shutdown();
+            assert_eq!(
+                pull(&hub, device, &after_stop, &["hello"]),
+                Takeback::Inactive
+            );
+            assert_eq!(after_stop.typed.text(), "");
+        }
+
+        #[test]
+        fn a_second_pull_before_the_log_catches_up_is_refused() {
+            let (hub, device) = RemoteHub::paired_for_test();
+            let pty = after_send(device, "hello");
+            pulled(pull(&hub, device, &pty, &["hello"]));
+            // The log still shows "hello" queued: a second up arrow could
+            // pull history into the box instead.
+            assert_eq!(
+                pull(&hub, device, &pty, &["hello"]),
+                Takeback::Refused(QUEUE_SHARED)
+            );
+            assert_eq!(pty.typed.text(), "\x1b[A");
+        }
+
+        #[test]
+        fn a_clear_needs_the_id_of_the_pull_it_confirms() {
+            let (hub, device) = RemoteHub::paired_for_test();
+            let pty = after_send(device, "hello");
+            assert_eq!(
+                clear(&hub, device, &pty, "unknown"),
+                Takeback::Refused(BOX_CHANGED)
+            );
+            let pull_id = pulled(pull(&hub, device, &pty, &["hello"]));
+            // No id, or one of no pull here.
+            for stale in ["", "unknown"] {
+                assert_eq!(
+                    clear(&hub, device, &pty, stale),
+                    Takeback::Refused(BOX_CHANGED)
+                );
+            }
+            assert_eq!(pty.typed.text(), "\x1b[A");
+            // Neither used the pull up.
+            assert_eq!(clear(&hub, device, &pty, &pull_id), Takeback::Cleared);
+        }
+
+        #[test]
+        fn a_late_clear_of_an_earlier_pull_never_clears_a_later_one() {
+            let (hub, device) = RemoteHub::paired_for_test();
+            let pty = after_send(device, "X");
+            let first = pulled(pull(&hub, device, &pty, &["X"]));
+            // Tab A's clear of "X" is still on its way. The desktop clears
+            // "X" by hand, then tab B sends "Y" and pulls it.
+            pty.write(Writer::Desktop, "\x15");
+            pty.send(device, "Y");
+            let second = pulled(pull(&hub, device, &pty, &["Y"]));
+            assert_eq!(
+                clear(&hub, device, &pty, &first),
+                Takeback::Refused(BOX_CHANGED)
+            );
+            assert_eq!(pty.typed.text(), "\x1b[A\x15\x1b[A");
+            // "Y" goes only with its own pull's clear.
+            assert_eq!(clear(&hub, device, &pty, &second), Takeback::Cleared);
+        }
+
+        #[test]
+        fn a_pull_id_from_before_the_pty_restarted_is_refused() {
+            let (hub, device) = RemoteHub::paired_for_test();
+            let old = after_send(device, "hello");
+            let old_id = pulled(pull(&hub, device, &old, &["hello"]));
+            // The PTY restarts under the same id: a new process, a new ledger.
+            let new = after_send(device, "hello");
+            assert_eq!(
+                clear(&hub, device, &new, &old_id),
+                Takeback::Refused(BOX_CHANGED)
+            );
+            let new_id = pulled(pull(&hub, device, &new, &["hello"]));
+            assert_ne!(new_id, old_id);
+            assert_eq!(
+                clear(&hub, device, &new, &old_id),
+                Takeback::Refused(BOX_CHANGED)
+            );
+            assert_eq!(new.typed.text(), "\x1b[A");
+        }
+
+        #[test]
+        fn a_clear_after_anyone_wrote_since_the_pull_is_refused() {
+            let (hub, device) = RemoteHub::paired_for_test();
+            for (writer, refusal) in [
+                (Writer::Desktop, QUEUE_SHARED),
+                (Writer::Device(device + 1), QUEUE_SHARED),
+                (Writer::Device(device), BOX_CHANGED),
+            ] {
+                let pty = after_send(device, "hello");
+                let pull_id = pulled(pull(&hub, device, &pty, &["hello"]));
+                pty.write(writer, "x\r");
+                assert_eq!(
+                    clear(&hub, device, &pty, &pull_id),
+                    Takeback::Refused(refusal),
+                    "{writer:?}"
+                );
+                assert_eq!(pty.typed.text(), "\x1b[Ax\r");
+            }
+        }
+
+        #[test]
+        fn a_clear_after_the_pull_sends_the_burst_once() {
+            let (hub, device) = RemoteHub::paired_for_test();
+            let pty = after_send(device, "hello");
+            let pull_id = pulled(pull(&hub, device, &pty, &["hello"]));
+            // An xterm focus reply is nobody's input.
+            pty.write(Writer::Desktop, "\x1b[I");
+            assert_eq!(clear(&hub, device, &pty, &pull_id), Takeback::Cleared);
+            let cleared = format!("\x1b[A\x1b[I{}", burst());
+            assert_eq!(pty.typed.text(), cleared);
+            assert_eq!(
+                clear(&hub, device, &pty, &pull_id),
+                Takeback::Refused(BOX_CHANGED)
+            );
+            assert_eq!(pty.typed.text(), cleared);
+        }
+
+        #[test]
+        fn desktop_typing_waits_for_the_clear_burst() {
+            let (hub, device) = RemoteHub::paired_for_test();
+            let pty = after_send(device, "hello");
+            let pull_id = pulled(pull(&hub, device, &pty, &["hello"]));
+            let (out, ledger) = (Arc::clone(&pty.out), Arc::clone(&pty.ledger));
+            let (done_tx, done_rx) = mpsc::channel();
+            hub.on_hook("clear_checked", move || {
+                let (started_tx, started_rx) = mpsc::channel();
+                std::thread::spawn(move || {
+                    started_tx.send(()).unwrap();
+                    // What `write_input` does for `write_pty` once it found the PTY.
+                    let mut ledger = ledger.lock().unwrap();
+                    write_counted(&mut ledger, &out, Writer::Desktop, "typed").unwrap();
+                    done_tx.send(()).unwrap();
+                });
+                started_rx.recv().unwrap();
+                std::thread::sleep(Duration::from_millis(50));
+            });
+            assert_eq!(clear(&hub, device, &pty, &pull_id), Takeback::Cleared);
+            done_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+            assert_eq!(pty.typed.text(), format!("\x1b[A{}typed", burst()));
+        }
+
+        /// A phone message whose photos' paths double as their upload ids.
+        fn message(hub: &RemoteHub, device: usize, pty: &Pty, photos: &[&str], text: &str) -> Sent {
+            let photos: Vec<String> = photos.iter().map(|photo| photo.to_string()).collect();
+            let send = RemoteSend {
+                device,
+                start: 0,
+                text: text.into(),
+                photos: photos.clone(),
+                sent_ms: 0,
+            };
+            send_message(
+                hub,
+                GENERATION,
+                &pty.out,
+                &pty.ledger,
+                &photos,
+                text,
+                send,
+                Duration::ZERO,
+            )
+            .unwrap()
+        }
+
+        #[test]
+        fn a_message_is_remembered_from_its_first_photo_on() {
+            let (hub, device) = RemoteHub::paired_for_test();
+            let pty = after_send(device, "earlier");
+            pty.write(Writer::Desktop, "d");
+            assert!(matches!(
+                message(&hub, device, &pty, &["p1.jpg"], "look"),
+                Sent::Written { .. }
+            ));
+            assert_eq!(pty.typed.text(), "d\x1b[200~p1.jpg\x1b[201~ look\r");
+            let ledger = pty.ledger.lock().unwrap();
+            let send = ledger.sends().last().unwrap();
+            // The send, the desktop's "d", then the photo (3) and the text (4).
+            assert_eq!(send.start, 3);
+            assert_eq!(
+                (send.text.as_str(), &send.photos[..]),
+                ("look", &["p1.jpg".to_string()][..])
+            );
+        }
+
+        #[test]
+        fn an_unwritten_message_is_not_remembered() {
+            let (hub, device) = RemoteHub::paired_for_test();
+            let pty = after_send(device, "earlier");
+            hub.shutdown();
+            assert_eq!(
+                message(&hub, device, &pty, &["p1.jpg"], "late"),
+                Sent::Inactive
+            );
+            assert_eq!(pty.typed.text(), "");
+            assert_eq!(pty.ledger.lock().unwrap().sends().count(), 1);
+        }
+
+        #[test]
+        fn a_message_onto_pulled_text_waits_for_the_box_to_be_cleared() {
+            let (hub, device) = RemoteHub::paired_for_test();
+            let pty = after_send(device, "hello");
+            let pull_id = pulled(pull(&hub, device, &pty, &["hello"]));
+            // Claude Code would get "hello" and "hello world" joined. The
+            // refusal names the pull, so a tab that lost it can clear it.
+            assert_eq!(
+                message(&hub, device, &pty, &["p1.jpg"], "hello world"),
+                Sent::BoxPending(pull_id.clone())
+            );
+            let body: serde_json::Value =
+                serde_json::from_str(&box_pending_body(&pull_id)).unwrap();
+            assert_eq!(body["code"], "box_pending");
+            assert_eq!(body["pullId"], pull_id.as_str());
+            assert_eq!(pty.typed.text(), "\x1b[A");
+            assert_eq!(pty.ledger.lock().unwrap().sends().count(), 0);
+            assert_eq!(clear(&hub, device, &pty, &pull_id), Takeback::Cleared);
+            assert!(matches!(
+                message(&hub, device, &pty, &[], "hello world"),
+                Sent::Written { .. }
+            ));
+            assert!(pty.typed.text().ends_with("hello world\r"));
+        }
+
+        #[test]
+        fn another_devices_message_is_not_held_and_learns_no_pull_id() {
+            let (hub, device) = RemoteHub::paired_for_test();
+            let pty = after_send(device, "hello");
+            let pull_id = pulled(pull(&hub, device, &pty, &["hello"]));
+            // Past the box check, only the session check stops it: the test
+            // hub pairs one device.
+            assert_eq!(
+                message(&hub, device + 1, &pty, &[], "theirs"),
+                Sent::Inactive
+            );
+            assert_eq!(pty.ledger.lock().unwrap().pending_pull(device + 1), None);
+            assert_eq!(
+                pty.ledger.lock().unwrap().pending_pull(device),
+                Some(pull_id.as_str())
+            );
+        }
+
+        #[test]
+        fn once_anyone_else_wrote_since_the_pull_a_message_goes() {
+            // The pull no longer proves what the box holds.
+            let (hub, device) = RemoteHub::paired_for_test();
+            for writer in [Writer::Desktop, Writer::Device(device + 1)] {
+                let pty = after_send(device, "hello");
+                pulled(pull(&hub, device, &pty, &["hello"]));
+                pty.write(writer, "x");
+                assert!(matches!(
+                    message(&hub, device, &pty, &[], "next"),
+                    Sent::Written { .. }
+                ));
+                assert_eq!(pty.typed.text(), "\x1b[Axnext\r");
+            }
+        }
+
+        #[test]
+        fn send_now_onto_pulled_text_is_refused() {
+            let (hub, device) = RemoteHub::paired_for_test();
+            let pty = after_send(device, "hello");
+            pulled(pull(&hub, device, &pty, &["hello"]));
+            // ctrl+x ctrl+s would submit the pulled text at once.
+            let (keys, _, guarded) = control_keys("send_now", "claude").unwrap();
+            assert!(guarded);
+            let sent = write_sequence(
+                &hub,
+                GENERATION,
+                device,
+                &pty.out,
+                &pty.ledger,
+                keys,
+                Duration::ZERO,
+                guarded,
+            )
+            .unwrap();
+            assert!(matches!(sent, Sent::BoxPending(_)));
+            assert_eq!(pty.typed.text(), "\x1b[A");
+            // Stopping the agent stays possible.
+            assert!(!control_keys("interrupt", "claude").unwrap().2);
+        }
+
+        #[test]
+        fn the_queue_actions_pass_every_agent_control_gate() {
+            for action in ["edit_queued", "clear_box"] {
+                let (hub, device) = RemoteHub::paired_for_test();
+                // A new hub starts read-only.
+                hub.set_read_only(false);
+                let body = serde_json::json!({ "ptyId": "t", "action": action }).to_string();
+                let gate = |agent: Option<&str>| match agent_control_gate(
+                    &hub,
+                    device,
+                    body.as_bytes(),
+                    |pty_id| {
+                        assert_eq!(pty_id, "t");
+                        agent.map(str::to_string)
+                    },
+                )
+                .unwrap()
+                {
+                    Gate::Pass(payload, agent) => {
+                        assert_eq!(payload.action, action);
+                        (200, agent)
+                    }
+                    Gate::Refuse(status, error) => (status, error.to_string()),
+                };
+                assert_eq!(gate(Some("claude")), (200, "claude".into()), "{action}");
+                for (agent, status, error) in [
+                    (None, 403, "This terminal is not available remotely"),
+                    (Some("codex"), 409, "Only Claude Code queues messages"),
+                    (
+                        Some("shell"),
+                        409,
+                        "Only Codex and Claude Code can be controlled remotely",
+                    ),
+                ] {
+                    assert_eq!(gate(agent), (status, error.into()), "{action} {agent:?}");
+                }
+                hub.set_read_only(true);
+                assert_eq!(
+                    gate(Some("claude")),
+                    (403, "Remote control is in read-only mode".into())
+                );
+                hub.set_read_only(false);
+                let limited = (0..=crate::remote::MESSAGE_RATE_LIMIT)
+                    .map(|_| gate(Some("claude")))
+                    .any(|outcome| outcome == (429, "Too many messages, slow down".into()));
+                assert!(limited, "{action}");
+            }
+        }
+
+        #[test]
+        fn only_an_explicit_clear_request_sends_the_clear_burst() {
+            let source = include_str!("http.rs");
+            let production = &source[..source.find("#[cfg(test)]").unwrap()];
+            // One call site, inside `clear_box`...
+            assert_eq!(production.matches("clear_box_keys(").count(), 1);
+            let body = &production[production.find("fn clear_box(").unwrap()..];
+            let body = &body[..body.find("\n}").unwrap()];
+            assert!(body.contains("clear_box_keys("));
+            // ...which only the `clear_box` action reaches.
+            assert_eq!(production.matches("clear_box(").count(), 2);
+            assert!(production.contains("\"clear_box\" => clear_box("));
+        }
+    }
 
     #[test]
     fn attachments_resolve_only_uploaded_ids() {

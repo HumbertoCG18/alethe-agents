@@ -841,6 +841,12 @@ svg {
   width: 0.85rem;
   height: 0.85rem;
 }
+.clear-box {
+  right: auto;
+  left: 0.75rem;
+  border-color: color-mix(in srgb, var(--status-offline) 45%, var(--border));
+  color: var(--status-offline);
+}
 
 .composer-wrap {
   flex: 0 0 auto;
@@ -985,6 +991,9 @@ svg {
   opacity: 1;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.msg-pending.is-queued {
+  cursor: pointer;
 }
 .msg-photos {
   display: flex;

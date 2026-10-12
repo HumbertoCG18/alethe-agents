@@ -44,6 +44,7 @@ function harness() {
     return { openChat, loadTranscript, setChatView, stopTranscriptPolling, renderHome,
       chatSession, setConnectionState, renderTranscript, renderMarkdown, messages,
       setReadOnly: (value) => { readOnly = value },
+      setLanguage: (value) => { appearance.language = value },
       setTranscript: (value) => { transcript = value; renderTranscript() },
       updateChatFeedback, connectSocket,
       setSocketSession: (base, token) => { wsBase = base; sessionToken = token },
@@ -591,13 +592,20 @@ describe('remote mobile conversations', () => {
     }
   })
 
-  describe('photos and pending messages', () => {
+  describe('photos and the queue', () => {
     const PHOTO_ID = 'abcdefghij012345.jpg'
+    let takeback: () => unknown
+    let clearBox: () => unknown
+    let messageReply: () => unknown
     const routeFetch = () =>
-      fetchMock.mockImplementation(async (path: string) => {
+      fetchMock.mockImplementation(async (path: string, init?: RequestInit) => {
         if (path.includes('/api/attachment')) return response({ id: PHOTO_ID })
-        if (path.endsWith('/api/message') || path.endsWith('/api/agent-control'))
-          return response(null, 204)
+        if (path.endsWith('/api/agent-control') && String(init?.body).includes('edit_queued'))
+          return takeback()
+        if (path.endsWith('/api/agent-control') && String(init?.body).includes('clear_box'))
+          return clearBox()
+        if (path.endsWith('/api/message')) return messageReply()
+        if (path.endsWith('/api/agent-control')) return response(null, 204)
         return response(snapshot())
       })
     const calls = (route: string) =>
@@ -621,8 +629,39 @@ describe('remote mobile conversations', () => {
         'URL',
         Object.assign(URL, { createObjectURL: () => 'blob:photo', revokeObjectURL: () => {} }),
       )
+      takeback = () =>
+        response({
+          texts: ['first line\nsecond line'],
+          photos: [PHOTO_ID],
+          pulled: true,
+          pullId: 'pull-0',
+        })
+      clearBox = () => response({ cleared: true })
+      messageReply = () => response(null, 204)
       routeFetch()
     })
+    const queueWhileBusy = async (text: string) => {
+      ui.openChat('claude')
+      await settle()
+      // A turn is running, so Claude Code queues what the phone sends now.
+      ui.chatSession().waitingSince = Date.now()
+      type(text)
+      send()
+      await settle()
+    }
+    const tapQueued = async () => {
+      document.querySelector<HTMLElement>('.msg-pending.is-queued')!.click()
+      await settle()
+    }
+    const clearButton = () => document.querySelector<HTMLButtonElement>('#clear-box')!
+    const stored = () =>
+      Array.from({ length: sessionStorage.length }, (_, index) =>
+        sessionStorage.getItem(sessionStorage.key(index)!),
+      ).join(' ')
+    const pulled =
+      (texts: string[], pullId = 'pull-1') =>
+      () =>
+        response({ texts, photos: [], pulled: true, pullId })
 
     it('keeps a photo in the box and sends it with the text in one tap', async () => {
       ui.openChat('claude')
@@ -662,15 +701,324 @@ describe('remote mobile conversations', () => {
       await ui.loadTranscript('claude')
       await settle()
       expect(ui.chatSession().pending).toHaveLength(0)
+      expect(ui.chatSession().queued).toHaveLength(0)
+    })
+
+    it('takes a queued message back into the box, photo included', async () => {
+      ui.openChat('claude')
+      await settle()
+      ui.chatSession().waitingSince = Date.now()
+      await pickPhoto()
+      type('first line\nsecond line')
+      send()
+      await settle()
+      const bubble = document.querySelector<HTMLElement>('.msg-pending.is-queued')!
+      expect(bubble).not.toBeNull()
+      bubble.click()
+      await settle()
+      // The server works out what to clear; the phone names the photos it still has.
+      expect(calls('/api/agent-control')).toEqual([
+        { ptyId: 'claude', action: 'edit_queued', photos: [PHOTO_ID] },
+      ])
+      expect(document.querySelector<HTMLTextAreaElement>('#message')!.value).toBe(
+        'first line\nsecond line',
+      )
+      expect(document.querySelectorAll('.composer-photo')).toHaveLength(1)
+      expect(ui.chatSession().queued).toHaveLength(0)
+      ui.setChatView('terminal')
+      clearButton().click()
+      await settle()
+      send()
+      await settle()
+      expect(calls('/api/message').at(-1)).toEqual({
+        ptyId: 'claude',
+        text: 'first line\nsecond line',
+        attachments: [PHOTO_ID],
+      })
+    })
+
+    it('puts back every text the server took out, also one sent from another tab', async () => {
+      takeback = pulled(['from the other tab', 'mine'])
+      await queueWhileBusy('mine')
+      await tapQueued()
+      expect(calls('/api/agent-control')).toEqual([
+        { ptyId: 'claude', action: 'edit_queued', photos: [] },
+      ])
+      expect(document.querySelector<HTMLTextAreaElement>('#message')!.value).toBe(
+        'from the other tab\nmine',
+      )
+      expect(document.querySelector('.msg-pending')).toBeNull()
+    })
+
+    it.each([
+      ['queue_shared', 'chat.queueEditShared'],
+      ['queue_unknown', 'chat.queueEditUnknown'],
+      ['queue_too_long', 'chat.queueEditTooLong'],
+      ['queue_photo_missing', 'chat.queueEditPhoto'],
+    ] as const)('explains a %s refusal in the page language', async (code, key) => {
+      takeback = () => response({ error: 'Refused', code }, 409)
+      ui.setLanguage('pt-BR')
+      await queueWhileBusy('mine')
+      await tapQueued()
+      for (const language of ['en', 'pt-BR', 'zh-CN'] as const)
+        expect(ui.messages[language][key]).toBeTruthy()
+      expect(ui.messages['pt-BR'][key]).not.toBe(ui.messages.en[key])
+      expect(document.querySelector('#composer-error')).toHaveTextContent(ui.messages['pt-BR'][key])
+      // Nothing was taken: the message stays queued and offered.
+      expect(ui.chatSession().queued).toHaveLength(1)
+      expect(document.querySelector<HTMLTextAreaElement>('#message')!.value).toBe('')
+      // Nothing was pulled, so there is nothing to clear.
+      ui.setChatView('terminal')
+      expect(clearButton().hidden).toBe(true)
+    })
+
+    it('pulls first, and clears the terminal box only when asked to, beside the terminal', async () => {
+      takeback = pulled(['mine'])
+      await queueWhileBusy('mine')
+      ui.setChatView('terminal')
+      expect(clearButton().hidden).toBe(true)
+      ui.setChatView('messages')
+      await settle()
+      await tapQueued()
+      // The pull asks for no clear.
+      expect(calls('/api/agent-control')).toEqual([
+        { ptyId: 'claude', action: 'edit_queued', photos: [] },
+      ])
+      expect(document.querySelector<HTMLTextAreaElement>('#message')!.value).toBe('mine')
+      expect(document.querySelector('#chat-feedback')).toHaveTextContent(
+        ui.messages.en['chat.queueEditing'],
+      )
+      // The box is only on the terminal: the notice leads there.
+      expect(document.querySelector<HTMLElement>('[data-open-terminal]')!.hidden).toBe(false)
+      ui.setChatView('terminal')
+      expect(clearButton().hidden).toBe(false)
+      expect(clearButton()).toHaveTextContent(ui.messages.en['chat.clearBox'])
+      expect(document.querySelector('#composer-error')).toHaveTextContent(
+        ui.messages.en['chat.queueEditing'],
+      )
+      clearButton().click()
+      await settle()
+      // The clear names the pull this tab confirmed.
+      expect(calls('/api/agent-control').at(-1)).toEqual({
+        ptyId: 'claude',
+        action: 'clear_box',
+        pullId: 'pull-1',
+      })
+      expect(clearButton().hidden).toBe(true)
+      expect(document.querySelector('#composer-error')).toHaveTextContent(
+        ui.messages.en['chat.boxCleared'],
+      )
+      // The pulled text stays on the phone to edit.
+      expect(document.querySelector<HTMLTextAreaElement>('#message')!.value).toBe('mine')
+    })
+
+    it('words the pull notice and the clear in every language', async () => {
+      for (const key of [
+        'chat.queueEditing',
+        'chat.clearBox',
+        'chat.boxCleared',
+        'chat.clearBoxShared',
+        'chat.clearBoxChanged',
+        'chat.clearBoxError',
+        'chat.boxPending',
+        'chat.boxPendingError',
+      ] as const) {
+        for (const language of ['en', 'pt-BR', 'zh-CN'] as const)
+          expect(ui.messages[language][key]).toBeTruthy()
+        expect(ui.messages['pt-BR'][key]).not.toBe(ui.messages.en[key])
+        expect(ui.messages['zh-CN'][key]).not.toBe(ui.messages.en[key])
+      }
+      takeback = pulled(['mine'])
+      ui.setLanguage('pt-BR')
+      await queueWhileBusy('mine')
+      await tapQueued()
+      ui.setChatView('terminal')
+      expect(clearButton()).toHaveTextContent('Limpar a caixa')
+    })
+
+    it.each([
+      ['queue_shared', 'chat.clearBoxShared'],
+      ['box_changed', 'chat.clearBoxChanged'],
+    ] as const)('explains a %s refusal to clear, which used the pull up', async (code, key) => {
+      takeback = pulled(['mine'])
+      clearBox = () => response({ error: 'Refused', code }, 409)
+      ui.setLanguage('zh-CN')
+      await queueWhileBusy('mine')
+      await tapQueued()
+      expect(stored()).toContain('pull-1')
+      ui.setChatView('terminal')
+      clearButton().click()
+      await settle()
+      expect(document.querySelector('#composer-error')).toHaveTextContent(ui.messages['zh-CN'][key])
+      expect(clearButton().hidden).toBe(true)
+      expect(stored()).not.toContain('pull-1')
+    })
+
+    it('names only its own latest pull when it clears', async () => {
+      takeback = pulled(['mine'], 'pull-A')
+      clearBox = () => response({ error: 'Refused', code: 'box_changed' }, 409)
+      await queueWhileBusy('mine')
+      await tapQueued()
+      ui.setChatView('terminal')
+      clearButton().click()
+      await settle()
+      // The refusal used pull-A up; the next clear names the next pull.
+      expect(clearButton().hidden).toBe(true)
+      ui.setChatView('messages')
+      await settle()
+      takeback = pulled(['again'], 'pull-B')
+      clearBox = () => response({ cleared: true })
+      ui.chatSession().waitingSince = Date.now()
+      type('again')
+      send()
+      await settle()
+      await tapQueued()
+      ui.setChatView('terminal')
+      clearButton().click()
+      await settle()
+      expect(calls('/api/agent-control').filter((body) => body.action === 'clear_box')).toEqual([
+        { ptyId: 'claude', action: 'clear_box', pullId: 'pull-A' },
+        { ptyId: 'claude', action: 'clear_box', pullId: 'pull-B' },
+      ])
+    })
+
+    it('holds sending while the pulled text sits in the terminal box, past a refresh', async () => {
+      takeback = pulled(['mine'])
+      await queueWhileBusy('mine')
+      await tapQueued()
+      type('mine, edited')
+      const sent = calls('/api/message').length
+      // Sent now, Claude Code would get "mine" and "mine, edited" joined.
+      send()
+      await settle()
+      expect(calls('/api/message')).toHaveLength(sent)
+      expect(document.querySelector('.send-button')).toBeDisabled()
+      fetchMock.mockResolvedValueOnce(response(snapshot([{ role: 'user', text: 'other' }], 2)))
+      await ui.loadTranscript('claude')
+      await settle()
+      // A refresh does not hide why, nor the way to the terminal.
+      expect(document.querySelector('#composer-error')).toHaveTextContent(
+        ui.messages.en['chat.boxPending'],
+      )
+      expect(document.querySelector<HTMLElement>('[data-open-terminal]')!.hidden).toBe(false)
+      ui.setChatView('terminal')
+      expect(clearButton().hidden).toBe(false)
+      clearButton().click()
+      await settle()
+      send()
+      await settle()
+      expect(calls('/api/message').at(-1)).toEqual({
+        ptyId: 'claude',
+        text: 'mine, edited',
+        attachments: [],
+      })
+    })
+
+    it('offers to clear a pull another tab left, which the refusal names', async () => {
+      messageReply = () =>
+        response({ error: 'Refused', code: 'box_pending', pullId: 'pull-9' }, 409)
+      ui.setLanguage('pt-BR')
+      ui.openChat('claude')
+      await settle()
+      type('hello')
+      send()
+      await settle()
+      expect(document.querySelector('#composer-error')).toHaveTextContent(
+        ui.messages['pt-BR']['chat.boxPendingError'],
+      )
+      // This tab can act on it: no pointing at another tab.
+      for (const language of ['en', 'pt-BR', 'zh-CN'] as const)
+        expect(ui.messages[language]['chat.boxPendingError']).not.toBe(
+          ui.messages[language]['chat.boxPending'],
+        )
+      expect(ui.messages.en['chat.boxPendingError']).not.toMatch(/tab/i)
+      expect(document.querySelector<HTMLTextAreaElement>('#message')!.value).toBe('hello')
+      ui.setChatView('terminal')
+      expect(clearButton().hidden).toBe(false)
+      clearButton().click()
+      await settle()
+      expect(calls('/api/agent-control').at(-1)).toEqual({
+        ptyId: 'claude',
+        action: 'clear_box',
+        pullId: 'pull-9',
+      })
+    })
+
+    it('keeps a pending pull across a reload, and forgets it once cleared', async () => {
+      takeback = pulled(['mine'], 'pull-7')
+      await queueWhileBusy('mine')
+      await tapQueued()
+      // The browser reloads the page before the box is cleared.
+      ui.stopTranscriptPolling()
+      ui = harness()
+      ui.openChat('claude')
+      await settle()
+      expect(document.querySelector('#composer-error')).toHaveTextContent(
+        ui.messages.en['chat.boxPending'],
+      )
+      // The terminal stays one tap away, busy or not.
+      expect(document.querySelector<HTMLElement>('[data-open-terminal]')!.hidden).toBe(false)
+      ui.setChatView('terminal')
+      expect(clearButton().hidden).toBe(false)
+      clearButton().click()
+      await settle()
+      expect(calls('/api/agent-control').at(-1)).toEqual({
+        ptyId: 'claude',
+        action: 'clear_box',
+        pullId: 'pull-7',
+      })
+      expect(stored()).not.toContain('pull-7')
+    })
+
+    it('forgets a stored pull once a send goes through', async () => {
+      ui.openChat('claude')
+      await settle()
+      sessionStorage.setItem('alethe.remote.pulls.v1', JSON.stringify({ claude: 'pull-old' }))
+      type('hello')
+      send()
+      await settle()
+      expect(calls('/api/message')).toHaveLength(1)
+      expect(stored()).not.toContain('pull-old')
+    })
+
+    it('refuses up front when the queued photos would not fit in the box', async () => {
+      ui.openChat('claude')
+      await settle()
+      ui.chatSession().waitingSince = Date.now()
+      await pickPhoto()
+      type('with a photo')
+      send()
+      await settle()
+      for (let photo = 0; photo < 6; photo += 1) await pickPhoto()
+      expect(document.querySelectorAll('.composer-photo')).toHaveLength(6)
+      await tapQueued()
+      // Asking would clear the queue with no room to put its photo back.
+      expect(calls('/api/agent-control')).toHaveLength(0)
+      expect(document.querySelector('#composer-error')).toHaveTextContent(
+        ui.messages.en['chat.queueEditTooManyPhotos'],
+      )
+      expect(ui.chatSession().queued).toHaveLength(1)
+      expect(document.querySelectorAll('.composer-photo')).toHaveLength(6)
+    })
+
+    it('does not offer to take back a message sent while Claude Code was idle', async () => {
+      ui.openChat('claude')
+      await settle()
+      type('hello')
+      send()
+      await settle()
+      expect(ui.chatSession().queued).toHaveLength(0)
+      expect(document.querySelector('.msg-pending.is-queued')).toBeNull()
     })
 
     it('confirms a multi-line message the server flattened to one line', async () => {
       ui.openChat('claude')
       await settle()
+      ui.chatSession().waitingSince = Date.now()
       type('first line\nsecond line')
       send()
       await settle()
-      expect(ui.chatSession().pending).toHaveLength(1)
+      expect(ui.chatSession().queued).toHaveLength(1)
       fetchMock.mockResolvedValueOnce(
         response(
           snapshot([
@@ -682,6 +1030,17 @@ describe('remote mobile conversations', () => {
       await ui.loadTranscript('claude')
       await settle()
       expect(ui.chatSession().pending).toHaveLength(0)
+      expect(ui.chatSession().queued).toHaveLength(0)
+    })
+
+    it('does not offer to take back a Codex message', async () => {
+      ui.openChat('codex')
+      await settle()
+      type('hello')
+      send()
+      await settle()
+      expect(document.querySelector('.msg-pending.is-queued')).toBeNull()
+      expect(ui.chatSession('codex').queued).toHaveLength(0)
     })
   })
 })

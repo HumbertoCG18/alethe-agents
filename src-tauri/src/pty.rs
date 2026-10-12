@@ -5,7 +5,7 @@ use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
-use std::sync::{Arc, Condvar, Mutex, OnceLock};
+use std::sync::{Arc, Condvar, Mutex, OnceLock, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, State};
@@ -152,6 +152,8 @@ pub struct PtySession {
     pub master: Arc<Mutex<Box<dyn MasterPty + Send>>>,
 
     pub writer: Arc<Mutex<Box<dyn Write + Send>>>,
+    /// Who wrote to this PTY; every write goes through [`write_input`].
+    pub input: Arc<Mutex<InputLedger>>,
     pub child: Arc<Mutex<Box<dyn portable_pty::Child + Send + Sync>>>,
     pub scrollback: Arc<Mutex<ScrollbackBuffer>>,
 
@@ -186,6 +188,220 @@ fn try_claim_opencode_nudge(lock: &AtomicU64) -> bool {
 }
 
 pub type PtySessions = Arc<Mutex<HashMap<String, PtySession>>>;
+
+/// Who wrote a piece of terminal input.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Writer {
+    /// Anything from the desktop webview (`write_pty`).
+    Desktop,
+    /// A paired remote device, by its session id.
+    Device(usize),
+}
+
+/// One `/api/message` from a remote device, kept so a takeback can tell which
+/// of Claude Code's queued messages are that device's own.
+#[derive(Clone, Debug)]
+pub struct RemoteSend {
+    pub device: usize,
+    /// Ledger sequence the send's first write took.
+    pub start: u64,
+    /// The text as the device sent it.
+    pub text: String,
+    /// Photo upload ids pasted before the text.
+    pub photos: Vec<String>,
+    /// Unix ms just before the Enter went out: its enqueue cannot be older.
+    pub sent_ms: u64,
+}
+
+const MAX_REMOTE_SENDS: usize = 32;
+
+/// What a device's up arrow pulled from Claude Code's queue into its input
+/// box, until that device clears the box.
+#[derive(Debug)]
+pub struct Pull {
+    /// Names this pull to the tab that asked for it: its clear must quote it.
+    /// The ledger dies with the PTY, so a restarted PTY knows no old id.
+    id: String,
+    /// The sequence the first write after the pull takes: any write from
+    /// there on may have changed the box.
+    pub next: u64,
+    /// The queued texts the up arrow moved into the box.
+    pub texts: Vec<String>,
+}
+
+/// Who wrote to one PTY, in write order. It lives and dies with the PTY's
+/// process, like Claude Code's own input queue.
+pub struct InputLedger {
+    /// Unix ms when the PTY started: queue entries older than this belong to
+    /// an earlier process.
+    pub started_ms: u64,
+    seq: u64,
+    last: HashMap<Writer, u64>,
+    sends: VecDeque<RemoteSend>,
+    pulls: HashMap<usize, Pull>,
+}
+
+impl InputLedger {
+    pub fn new(started_ms: u64) -> Self {
+        Self {
+            started_ms,
+            seq: 0,
+            last: HashMap::new(),
+            sends: VecDeque::new(),
+            pulls: HashMap::new(),
+        }
+    }
+
+    /// Notes that `device` just pulled `texts` into the input box, as `id`.
+    pub fn mark_pull(&mut self, device: usize, id: String, texts: Vec<String>) {
+        let next = self.next_seq();
+        self.pulls.insert(device, Pull { id, next, texts });
+    }
+
+    /// The id of `device`'s pull while its text still sits untouched in the
+    /// input box: nobody wrote to the PTY since the pull.
+    pub fn pending_pull(&self, device: usize) -> Option<&str> {
+        self.pulls
+            .get(&device)
+            .filter(|pull| pull.next == self.next_seq())
+            .map(|pull| pull.id.as_str())
+    }
+
+    /// `device`'s pull named `id`, used up. Any other id leaves it be.
+    pub fn take_pull(&mut self, device: usize, id: &str) -> Option<Pull> {
+        if self.pulls.get(&device)?.id != id {
+            return None;
+        }
+        self.pulls.remove(&device)
+    }
+
+    /// Counts one write. A pure xterm auto-reply is nobody's input.
+    pub fn record(&mut self, writer: Writer, data: &str) {
+        if !is_terminal_reply(data) {
+            self.seq += 1;
+            self.last.insert(writer, self.seq);
+        }
+    }
+
+    /// The sequence the next counted write will take.
+    pub fn next_seq(&self) -> u64 {
+        self.seq + 1
+    }
+
+    /// Whether anyone but `device` wrote at or after sequence `since`.
+    pub fn foreign_since(&self, device: usize, since: u64) -> bool {
+        self.last
+            .iter()
+            .any(|(writer, seq)| *writer != Writer::Device(device) && *seq >= since)
+    }
+
+    pub fn remember_send(&mut self, send: RemoteSend) {
+        if self.sends.len() == MAX_REMOTE_SENDS {
+            self.sends.pop_front();
+        }
+        self.sends.push_back(send);
+    }
+
+    pub fn sends(&self) -> impl DoubleEndedIterator<Item = &RemoteSend> {
+        self.sends.iter()
+    }
+
+    /// Drops `device`'s sends from sequence `since` on, once taken back.
+    pub fn forget_sends(&mut self, device: usize, since: u64) {
+        self.sends
+            .retain(|send| send.device != device || send.start < since);
+    }
+}
+
+/// A PTY's writer and input ledger.
+pub fn pty_input(
+    sessions: &PtySessions,
+    id: &str,
+) -> Result<(Arc<Mutex<Box<dyn Write + Send>>>, Arc<Mutex<InputLedger>>), String> {
+    let sessions = sessions
+        .lock()
+        .map_err(|_| "PTY sessions lock poisoned".to_string())?;
+    let session = sessions
+        .get(id)
+        .ok_or_else(|| format!("PTY not found: {id}"))?;
+    Ok((Arc::clone(&session.writer), Arc::clone(&session.input)))
+}
+
+/// The one way input reaches a PTY, from the desktop and from remote
+/// devices alike: each write is counted under the ledger lock, so the
+/// ledger's order is the order the PTY received the writes in.
+pub fn write_input(
+    sessions: &PtySessions,
+    id: &str,
+    writer: Writer,
+    data: &str,
+) -> Result<(), String> {
+    let (out, ledger) = pty_input(sessions, id)?;
+    let mut ledger = ledger.lock().unwrap_or_else(PoisonError::into_inner);
+    write_counted(&mut ledger, &out, writer, data)
+}
+
+/// Writes `data` while the caller holds the PTY's ledger.
+pub fn write_counted(
+    ledger: &mut InputLedger,
+    out: &Mutex<Box<dyn Write + Send>>,
+    writer: Writer,
+    data: &str,
+) -> Result<(), String> {
+    ledger.record(writer, data);
+    let mut out = out
+        .lock()
+        .map_err(|_| "PTY writer lock poisoned".to_string())?;
+    out.write_all(data.as_bytes())
+        .map_err(|error| error.to_string())?;
+    out.flush().map_err(|error| error.to_string())
+}
+
+/// Whether `data` is only replies xterm sends on its own (focus, device
+/// attributes, cursor position, status, mode reports, OSC and DCS answers),
+/// not anything a person typed. Mouse reports count as typing. A cursor
+/// position report looks like Shift+F3, which never deletes text.
+pub fn is_terminal_reply(data: &str) -> bool {
+    let mut rest = data.as_bytes();
+    while !rest.is_empty() {
+        match terminal_reply_len(rest) {
+            Some(len) => rest = &rest[len..],
+            None => return false,
+        }
+    }
+    true
+}
+
+/// Length of the xterm reply `data` starts with, if it starts with one.
+fn terminal_reply_len(data: &[u8]) -> Option<usize> {
+    if data.starts_with(b"\x1b[I") || data.starts_with(b"\x1b[O") {
+        return Some(3);
+    }
+    if let Some(body) = data.strip_prefix(b"\x1b[") {
+        let mut end = usize::from(matches!(body.first(), Some(b'?' | b'>')));
+        while body
+            .get(end)
+            .is_some_and(|byte| byte.is_ascii_digit() || *byte == b';')
+        {
+            end += 1;
+        }
+        return match &body[end..] {
+            [b'c' | b'n' | b'R', ..] => Some(2 + end + 1),
+            [b'$', b'y', ..] => Some(2 + end + 2),
+            _ => None,
+        };
+    }
+    // OSC ends with BEL or ST, DCS with ST.
+    let osc = data.starts_with(b"\x1b]");
+    if !osc && !data.starts_with(b"\x1bP") {
+        return None;
+    }
+    (2..data.len()).find_map(|index| match data[index] {
+        0x07 if osc => Some(index + 1),
+        0x1b if data.get(index + 1) == Some(&b'\\') => Some(index + 2),
+        _ => None,
+    })
+}
 
 #[cfg(windows)]
 static PTY_JOB_HANDLE: OnceLock<isize> = OnceLock::new();
@@ -786,6 +1002,7 @@ pub async fn spawn_pty(
             pty_id: id.clone(),
             master: Arc::new(Mutex::new(pair.master)),
             writer,
+            input: Arc::new(Mutex::new(InputLedger::new(now_ms()))),
             child,
             scrollback,
             reader_done,
@@ -1055,29 +1272,12 @@ pub async fn write_pty(
     id: String,
     data: String,
 ) -> Result<(), String> {
-    // lock, qualquer attach/resize/kill/spawn em outro PTY ficaria parado.
-
+    // Blocking: a write held up by the PTY (or by a remote takeback holding
+    // the ledger) must not stall attach/resize/kill/spawn on other PTYs.
     let sessions: PtySessions = Arc::clone(sessions.inner());
-    tokio::task::spawn_blocking(move || {
-        let writer = {
-            let sessions = sessions
-                .lock()
-                .map_err(|_| "PTY sessions lock poisoned".to_string())?;
-            let session = sessions
-                .get(&id)
-                .ok_or_else(|| format!("PTY not found: {id}"))?;
-            Arc::clone(&session.writer)
-        };
-        let mut writer = writer
-            .lock()
-            .map_err(|_| "PTY writer lock poisoned".to_string())?;
-        writer
-            .write_all(data.as_bytes())
-            .map_err(|error| error.to_string())?;
-        writer.flush().map_err(|error| error.to_string())
-    })
-    .await
-    .map_err(|error| format!("write_pty: falha na task bloqueante: {error}"))?
+    tokio::task::spawn_blocking(move || write_input(&sessions, &id, Writer::Desktop, &data))
+        .await
+        .map_err(|error| format!("write_pty: blocking task failed: {error}"))?
 }
 
 #[tauri::command]
@@ -1958,6 +2158,102 @@ fn cwd_error(folder: &Path, error: &std::io::Error) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_pure_xterm_replies_are_nobodys_input() {
+        for reply in [
+            "\x1b[I",
+            "\x1b[O",
+            "\x1b[?1;2c",
+            "\x1b[>0;276;0c",
+            "\x1b[12;40R",
+            "\x1b[0n",
+            "\x1b[?2004;1$y",
+            "\x1b]11;rgb:1e1e/1e1e/1e1e\x07",
+            "\x1b]10;rgb:ffff/ffff/ffff\x1b\\",
+            "\x1bP1$r0m\x1b\\",
+            "\x1b[I\x1b[?1;2c",
+        ] {
+            assert!(is_terminal_reply(reply), "{reply:?}");
+        }
+        for typed in [
+            "a",
+            "\r",
+            "\x1b[A",
+            "\x1b[Ia",
+            "x\x1b[O",
+            "\x1b[<0;10;5M",
+            "\x1b[200~text\x1b[201~",
+            "\x1b]11;unterminated",
+            "\x1b",
+        ] {
+            assert!(!is_terminal_reply(typed), "{typed:?}");
+        }
+    }
+
+    fn send(device: usize, start: u64) -> RemoteSend {
+        RemoteSend {
+            device,
+            start,
+            text: format!("from {device}"),
+            photos: vec![],
+            sent_ms: start * 10,
+        }
+    }
+
+    #[test]
+    fn the_ledger_tells_who_wrote_since_a_send() {
+        let mut ledger = InputLedger::new(0);
+        ledger.record(Writer::Desktop, "draft");
+        let start = ledger.next_seq();
+        ledger.record(Writer::Device(1), "hello\r");
+        assert!(!ledger.foreign_since(1, start));
+        // Focus and cursor replies from the desktop are not typing.
+        ledger.record(Writer::Desktop, "\x1b[I\x1b[3;1R");
+        assert!(!ledger.foreign_since(1, start));
+        ledger.record(Writer::Desktop, "x");
+        assert!(ledger.foreign_since(1, start));
+
+        let mut two = InputLedger::new(0);
+        let start = two.next_seq();
+        two.record(Writer::Device(1), "mine\r");
+        two.record(Writer::Device(2), "theirs\r");
+        assert!(two.foreign_since(1, start));
+        assert!(two.foreign_since(2, start));
+    }
+
+    #[test]
+    fn a_pull_marker_is_kept_per_device_and_used_up_once() {
+        let mut ledger = InputLedger::new(0);
+        ledger.record(Writer::Device(1), "\x1b[A");
+        ledger.mark_pull(1, "p1".into(), vec!["hello".into()]);
+        assert!(ledger.take_pull(2, "p1").is_none());
+        // A stale or missing id is not this pull's, and leaves it be.
+        assert!(ledger.take_pull(1, "p0").is_none());
+        assert!(ledger.take_pull(1, "").is_none());
+        let pull = ledger.take_pull(1, "p1").unwrap();
+        assert_eq!(pull.next, ledger.next_seq());
+        assert_eq!(pull.texts, ["hello"]);
+        assert!(ledger.take_pull(1, "p1").is_none());
+    }
+
+    #[test]
+    fn the_ledger_keeps_the_latest_sends_and_forgets_taken_ones() {
+        let mut ledger = InputLedger::new(0);
+        for start in 1..=40 {
+            ledger.remember_send(send(1 + (start as usize % 2), start));
+        }
+        assert_eq!(ledger.sends().count(), MAX_REMOTE_SENDS);
+        assert_eq!(ledger.sends().next().unwrap().start, 9);
+        // Device 1 sent the even starts: only its own from 35 on go.
+        ledger.forget_sends(1, 35);
+        let starts: Vec<_> = ledger
+            .sends()
+            .filter(|s| s.start >= 33)
+            .map(|s| s.start)
+            .collect();
+        assert_eq!(starts, vec![33, 34, 35, 37, 39]);
+    }
 
     fn scratch_dir(tag: &str) -> PathBuf {
         let nanos = std::time::SystemTime::now()

@@ -18,6 +18,7 @@ mod commands;
 mod http;
 mod pty_bridge;
 mod state;
+mod takeback;
 mod util;
 mod websocket;
 mod workspace;

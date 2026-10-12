@@ -8,6 +8,7 @@ const SESSION_KEY = 'alethe.remote.session'
 const FONT_SIZE_KEY = 'alethe.remote.fontSize'
 const CHAT_VIEW_KEY = 'alethe.remote.chatView'
 const DRAFTS_KEY = 'alethe.remote.drafts.v1'
+const PULLS_KEY = 'alethe.remote.pulls.v1'
 const ONBOARDING_KEY = 'alethe.remote.onboarding.v1'
 const TRANSCRIPT_POLL_MS = 1500
 const APPEARANCE_SYNC_MS = 10_000
@@ -111,13 +112,36 @@ let transcriptRequest = null
 let transcriptError = ''
 const chatSessions = new Map()
 
-function savedDrafts() {
+function savedObject(key) {
   try {
-    const value = JSON.parse(sessionStorage.getItem(DRAFTS_KEY) || '{}')
+    const value = JSON.parse(sessionStorage.getItem(key) || '{}')
     return value && typeof value === 'object' && !Array.isArray(value) ? value : {}
   } catch {
     return {}
   }
+}
+
+function savedDrafts() {
+  return savedObject(DRAFTS_KEY)
+}
+
+/** Keeps a pull's id across a reload: without it nothing on the phone could
+ *  clear the box it filled, and the server holds this device's sends until
+ *  then. A stale id only gets a refusal that writes nothing. */
+function persistPull(ptyId, pullId) {
+  const pulls = Object.assign(Object.create(null), savedObject(PULLS_KEY))
+  delete pulls[ptyId]
+  if (pullId) pulls[ptyId] = String(pullId)
+  try {
+    sessionStorage.setItem(PULLS_KEY, JSON.stringify(pulls))
+  } catch {
+    // The in-memory id still serves this page.
+  }
+}
+
+function setPull(ptyId, session, pullId) {
+  session.pullId = pullId || ''
+  persistPull(ptyId, session.pullId)
 }
 
 function persistDraft(ptyId, draft) {
@@ -143,6 +167,11 @@ function chatSession(ptyId = selected) {
       sending: false,
       error: '',
       photos: [],
+      queued: [],
+      // The server's id for this tab's last pull, which put text in the
+      // terminal's input box; only an explicit "clear the box" naming it
+      // erases that text.
+      pullId: String(savedObject(PULLS_KEY)[ptyId] || ''),
       pending: [],
       waitingSince: 0,
       waitingForAssistantAfter: null,
@@ -227,7 +256,14 @@ async function api(path, options = {}) {
   })
   if (response.status === 401) throw new SessionError(await readError(response))
   if (response.status === 423) throw new PinRequiredError()
-  if (!response.ok) throw new Error(await readError(response))
+  if (!response.ok) {
+    // A refusal may carry a `code` the page explains in its own language.
+    const body = await response.json().catch(() => null)
+    throw Object.assign(new Error(body?.error || response.statusText), {
+      code: body?.code,
+      pullId: body?.pullId,
+    })
+  }
   return response.status === 204 ? null : response.json()
 }
 
@@ -752,6 +788,180 @@ function bindTerminalGestures() {
   viewport.addEventListener('touchend', () => {
     pinchStart = 0
   })
+  viewport.addEventListener('click', (event) => {
+    const session = chatSession()
+    if (!session.queued.length || !terminal) return
+    const screen = viewport.querySelector('.xterm-screen')
+    const metrics = cellMetrics()
+    if (!screen || !metrics) return
+    const row = Math.floor((event.clientY - screen.getBoundingClientRect().top) / metrics.height)
+    const buffer = terminal.buffer.active
+    const line = buffer.getLine(buffer.viewportY + row)?.translateToString(true) || ''
+    if (isQueuedLine(line, session)) void editQueued(selected, session)
+  })
+}
+
+const QUEUE_MARKERS = ['to edit queued messages', 'to send now']
+
+/** The queued block Claude Code draws: its hint lines, or a line of the
+ *  text this phone queued. */
+function isQueuedLine(line, session) {
+  // Older prompts in the history look the same; only while a queue is up.
+  if (!terminalShowsQueue()) return false
+  const text = withoutImageTags(line).toLowerCase()
+  if (QUEUE_MARKERS.some((marker) => text.includes(marker))) return true
+  if (text.length < 8) return false
+  // The queued text as Claude Code draws it, possibly wrapped: a tapped row
+  // is a slice of it.
+  return session.queued.some((item) => withoutImageTags(item.text).toLowerCase().includes(text))
+}
+
+function terminalShowsQueue() {
+  if (!terminal) return false
+  const buffer = terminal.buffer.active
+  for (let row = 0; row < terminal.rows; row += 1) {
+    const line =
+      buffer
+        .getLine(buffer.baseY + row)
+        ?.translateToString(true)
+        .toLowerCase() || ''
+    if (QUEUE_MARKERS.some((marker) => line.includes(marker))) return true
+  }
+  return false
+}
+
+/** Messages leave Claude Code's queue once its turn ends; after that a tap
+ *  has nothing to take back. */
+function forgetConsumedQueue(session) {
+  if (!session.queued.length || terminalShowsQueue()) return
+  const settled = Date.now() - 1_500
+  session.queued = session.queued.filter((item) => item.sentAt > settled)
+}
+
+/** Why the server would not take the queue back, by its refusal `code`. */
+const QUEUE_REFUSALS = new Map([
+  ['queue_shared', 'chat.queueEditShared'],
+  ['queue_unknown', 'chat.queueEditUnknown'],
+  ['queue_too_long', 'chat.queueEditTooLong'],
+  ['queue_photo_missing', 'chat.queueEditPhoto'],
+])
+
+/** Pulls the messages this phone queued in Claude Code back into the box,
+ *  photos included, with the up arrow on the computer. The server sends it
+ *  only when the whole queue is this device's and nobody else typed since,
+ *  and hands back its texts; otherwise it refuses and nothing changes. The
+ *  text then also sits in the terminal's input box until the user clears it
+ *  there (`clearPulledBox`). */
+async function editQueued(ptyId, session) {
+  if (session.sending || connectionState !== 'live' || !session.queued.length) return
+  const items = session.queued.slice()
+  const held = items.flatMap((item) => item.photos)
+  // The server only returns photos this tab holds; if they and the box's own
+  // could not all fit, ask nothing rather than drop any after the clear.
+  if (held.length + session.photos.length > MAX_PHOTOS) {
+    session.error = t('chat.queueEditTooManyPhotos')
+    updateComposer()
+    return
+  }
+  let restored = false
+  session.sending = true
+  session.error = ''
+  updateComposer()
+  try {
+    const taken = await api('/api/agent-control', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ptyId,
+        action: 'edit_queued',
+        photos: held.map((photo) => photo.id),
+      }),
+    })
+    session.queued = session.queued.filter((item) => !items.includes(item))
+    session.pending = session.pending.filter(
+      (item) => !items.some((queued) => queued.pending === item),
+    )
+    // The server's texts: the queue may also hold what this device sent
+    // from another tab.
+    const draft = session.draft.trim()
+    session.draft = [...taken.texts, draft].filter(Boolean).join('\n')
+    persistDraft(ptyId, session.draft)
+    session.photos = [
+      ...held
+        .filter((photo) => taken.photos.includes(photo.id))
+        .map((photo) => ({ ...photo, uploading: false })),
+      ...session.photos,
+    ]
+    session.controlNotice = 'chat.queueEditing'
+    setPull(ptyId, session, taken.pullId)
+    restored = true
+  } catch (error) {
+    if (error instanceof SessionError) {
+      renderSessionLost(error.message)
+      return
+    }
+    const refusal = QUEUE_REFUSALS.get(error.code)
+    session.error = refusal
+      ? t(refusal)
+      : t('chat.queueEditError', { message: error.message || error })
+  } finally {
+    session.sending = false
+    if (selected === ptyId) {
+      const input = document.querySelector('#message')
+      // Only a restored box: the input event clears a refusal's message.
+      if (input && restored) {
+        input.value = session.draft
+        input.dispatchEvent(new Event('input'))
+        input.focus()
+      }
+      updateComposer()
+      updateChatFeedback()
+      if (chatView === 'messages') renderTranscript()
+    }
+  }
+}
+
+/** Why the server would not clear the box, by its refusal `code`. */
+const CLEAR_REFUSALS = new Map([
+  ['queue_shared', 'chat.clearBoxShared'],
+  ['box_changed', 'chat.clearBoxChanged'],
+])
+
+/** Erases what the last pull put in the terminal's input box, which the user
+ *  can see in the Terminal view. The server refuses if anyone wrote to the
+ *  terminal since the pull. */
+async function clearPulledBox(ptyId, session) {
+  if (session.sending || connectionState !== 'live' || !session.pullId) return
+  session.sending = true
+  session.error = ''
+  session.controlNotice = ''
+  updateComposer()
+  try {
+    await api('/api/agent-control', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ptyId, action: 'clear_box', pullId: session.pullId }),
+    })
+    setPull(ptyId, session, '')
+    session.controlNotice = 'chat.boxCleared'
+  } catch (error) {
+    if (error instanceof SessionError) {
+      renderSessionLost(error.message)
+      return
+    }
+    // A refusal used the pull up; a network error may be tried again.
+    if (error.code) setPull(ptyId, session, '')
+    const refusal = CLEAR_REFUSALS.get(error.code)
+    session.error = refusal
+      ? t(refusal)
+      : t('chat.clearBoxError', { message: error.message || error })
+  } finally {
+    session.sending = false
+    if (selected === ptyId) {
+      updateComposer()
+      updateChatFeedback()
+    }
+  }
 }
 
 function subscribeSocket(ptyId) {
@@ -936,7 +1146,7 @@ function pendingMarkup() {
     .pending.filter((item) => !item.confirmed)
     .map(
       (item) =>
-        `<article class="msg msg-pending" data-role="user"><span class="msg-role">${t('role.user')} · ${t(item.sending ? 'chat.sending' : 'chat.sent')}</span>${item.photos?.length ? `<div class="msg-photos">${item.photos.map((url) => `<img src="${escapeHtml(url)}" alt="">`).join('')}</div>` : ''}${item.text ? `<div class="msg-body">${renderMarkdown(item.text)}</div>` : ''}</article>`,
+        `<article class="msg msg-pending${chatSession().queued.some((queued) => queued.pending === item) ? ' is-queued' : ''}" data-role="user"><span class="msg-role">${t('role.user')} · ${t(item.sending ? 'chat.sending' : 'chat.sent')}</span>${item.photos?.length ? `<div class="msg-photos">${item.photos.map((url) => `<img src="${escapeHtml(url)}" alt="">`).join('')}</div>` : ''}${item.text ? `<div class="msg-body">${renderMarkdown(item.text)}</div>` : ''}</article>`,
     )
     .join('')
 }
@@ -1032,6 +1242,7 @@ async function loadTranscript(ptyId) {
         )
       const match = matches[pending.occurrence]
       if (match) {
+        session.queued = session.queued.filter((item) => item.pending !== pending)
         pending.confirmed = true
         pending.answered = data.messages
           .slice(match.index + 1)
@@ -1095,7 +1306,7 @@ function updateChatFeedback() {
   retry.hidden = !transcriptError
   retry.disabled = !!transcriptRequest
   feedback.querySelector('[data-open-terminal]').hidden =
-    !slow && !session.ended && transcript?.supported !== false
+    !slow && !session.ended && transcript?.supported !== false && !session.pullId
   const interrupt = feedback.querySelector('[data-interrupt]')
   interrupt.hidden =
     !session.waitingSince ||
@@ -1306,6 +1517,7 @@ function terminalPaneMarkup() {
     </div>
   </header>
   <div class="terminal-viewport" id="terminal-viewport"><div class="terminal-host" id="terminal-host"></div></div>
+  <button class="jump-latest clear-box" id="clear-box" type="button" hidden>${icons.close}<span>${t('chat.clearBox')}</span></button>
   <button class="jump-latest" id="latest" type="button" hidden>${icons.arrowDown}<span>${t('chat.jumpLatest')}</span></button>`
 }
 
@@ -1348,6 +1560,9 @@ function renderChat() {
   if (showTerminal) {
     document.querySelector('#latest').addEventListener('click', () => scrollTerminalToEnd())
     document
+      .querySelector('#clear-box')
+      .addEventListener('click', () => void clearPulledBox(selected, chatSession()))
+    document
       .querySelector('#font-smaller')
       .addEventListener('click', () => setFontSize((fontSize || 12) - 1))
     document
@@ -1364,6 +1579,10 @@ function renderChat() {
   document
     .querySelector('#messages')
     .addEventListener('scroll', updateMessagesJump, { passive: true })
+  document.querySelector('#messages').addEventListener('click', (event) => {
+    const bubble = event.target.closest('.msg-pending.is-queued')
+    if (bubble && chatSession().waitingSince) void editQueued(selected, chatSession())
+  })
   document.querySelector('#messages-latest').addEventListener('click', () => {
     const list = document.querySelector('#messages')
     list.scrollTop = list.scrollHeight
@@ -1423,6 +1642,8 @@ function updateComposer() {
     session.ended ||
     connectionState !== 'live' ||
     session.photos.some((photo) => photo.uploading) ||
+    // Pulled text still in the terminal's box would join whatever goes now.
+    !!session.pullId ||
     (!input.value.trim() && !hasPhotos && !sendNow) ||
     (chatView === 'messages' && supportsMessages() && !transcript && !sendNow)
   button.classList.toggle('is-loading', session.sending)
@@ -1441,12 +1662,24 @@ function updateComposer() {
     photos.innerHTML = composerPhotosMarkup(session)
   }
   form.setAttribute('aria-busy', String(session.sending))
-  // The Terminal view has no feedback line, so its "tap again" hint goes here.
-  const armed = chatView === 'terminal' && session.controlNotice === 'chat.sendNowArmed'
+  // The Terminal view has no feedback line, so its hints go here.
+  const hint =
+    chatView === 'terminal' && TERMINAL_HINTS.includes(session.controlNotice)
+      ? session.controlNotice
+      : ''
   const notice = form.querySelector('#composer-error')
-  notice.textContent = session.error || (armed ? t('chat.sendNowArmed') : '')
-  notice.classList.toggle('is-hint', !session.error && armed)
+  // Worked out from the pull itself, so no transcript refresh hides it.
+  const pending = session.pullId ? 'chat.boxPending' : ''
+  notice.textContent = session.error || t(hint || pending)
+  notice.classList.toggle('is-hint', !session.error && !!(hint || pending))
+  const clearBox = document.querySelector('#clear-box')
+  if (clearBox) {
+    clearBox.hidden = !session.pullId
+    clearBox.disabled = session.sending || connectionState !== 'live'
+  }
 }
+
+const TERMINAL_HINTS = ['chat.sendNowArmed', 'chat.queueEditing', 'chat.boxCleared']
 
 const SEND_NOW_DOUBLE_TAP_MS = 2_000
 const PHOTO_MAX_EDGE = 1600
@@ -1549,7 +1782,12 @@ async function sendQueuedNow(ptyId, session) {
       renderSessionLost(error.message)
       return
     }
-    session.error = t('chat.sendNowError', { message: error.message || error })
+    // The refusal names this device's pull: offer to clear it from here.
+    if (error.code === 'box_pending') setPull(ptyId, session, error.pullId)
+    session.error =
+      error.code === 'box_pending'
+        ? t('chat.boxPendingError')
+        : t('chat.sendNowError', { message: error.message || error })
   } finally {
     session.sending = false
     if (selected === ptyId) {
@@ -1622,6 +1860,7 @@ function bindComposer() {
   })
   form.addEventListener('submit', async (event) => {
     event.preventDefault()
+    if (session.pullId) return
     const text = input.value.trim()
     const photos = session.photos.slice()
     if (
@@ -1646,6 +1885,8 @@ function bindComposer() {
     session.sending = true
     session.error = ''
     const key = withoutImageTags(text)
+    // A message sent while a turn runs is the one Claude Code queues.
+    const busy = !!session.waitingSince
     const pending = {
       text,
       photos: photos.map((photo) => photo.url),
@@ -1674,8 +1915,12 @@ function bindComposer() {
       session.waitingSince = session.pending.length ? Date.now() : 0
       session.draft = ''
       persistDraft(ptyId, '')
+      // A send went through, so no pull holds the box any more.
+      persistPull(ptyId, '')
       // Their object URLs stay alive: the pending bubble still shows them.
       session.photos = session.photos.filter((photo) => !photos.includes(photo))
+      if (canSendNow(ptyId) && (busy || chatView === 'terminal'))
+        session.queued.push({ text, photos, pending, sentAt: Date.now() })
       if (selected === ptyId) {
         const currentInput = document.querySelector('#message')
         if (currentInput) {
@@ -1690,10 +1935,14 @@ function bindComposer() {
         renderSessionLost(error.message)
         return
       }
+      // The refusal names this device's pull: offer to clear it from here.
+      if (error.code === 'box_pending') setPull(ptyId, session, error.pullId)
       session.error =
-        error.name === 'AbortError' || error instanceof TypeError
-          ? t('chat.sendUncertain')
-          : t('chat.sendError', { message: error.message || error })
+        error.code === 'box_pending'
+          ? t('chat.boxPendingError')
+          : error.name === 'AbortError' || error instanceof TypeError
+            ? t('chat.sendUncertain')
+            : t('chat.sendError', { message: error.message || error })
     } finally {
       window.clearTimeout(timeout)
       session.sending = false
@@ -1809,6 +2058,8 @@ function connectSocket() {
       writeTerminal(message.text || '')
       if (stick) scrollTerminalToEnd()
       else updateJumpButton()
+      if (chatSession().queued.length)
+        window.setTimeout(() => forgetConsumedQueue(chatSession()), 300)
       return
     }
     if (message.type === 'pty_exit') {

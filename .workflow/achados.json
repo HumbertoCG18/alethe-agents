@@ -152,7 +152,8 @@
       "titulo": "Aba Noturno lista campanha assistida inteira por causa de uma tarefa noturna",
       "origem": "",
       "detalhe": "Visto em 11/10 no GPT Tutor: MOTOR (7/11) e VOCAB (2/5) são campanhas de janela assistida com 1 tarefa de janela noite cada; a aba Noturno lista a campanha inteira, com todas as tarefas no progresso. Dono: só deveriam aparecer se tiverem checkpoints/passos ou algo que o agente noturno possa rodar; e então só com as tarefas noturnas. REPLAY-NOTURNO e AUDITORIA (janela noite) estão certas.",
-      "estado": "novo"
+      "estado": "descartado",
+      "motivo": "corrigido pela #178 (PR #180, 767b99e)"
     },
     {
       "id": "ACH-0017",

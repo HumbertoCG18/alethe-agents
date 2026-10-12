@@ -38,12 +38,14 @@ pub fn remote_control_close_pairing() -> RemoteInfo {
     remote.info()
 }
 
+/// An `Err` means the revocation could not be saved; the devices are signed
+/// out anyway and none come back after a restart.
 #[tauri::command]
-pub fn remote_control_revoke() -> RemoteInfo {
+pub fn remote_control_revoke() -> Result<RemoteInfo, String> {
     let remote = hub();
-    remote.revoke_all();
+    let saved = remote.revoke_all();
     remote.close_pairing_window();
-    remote.info()
+    saved.map(|()| remote.info())
 }
 
 #[tauri::command]
@@ -120,10 +122,10 @@ pub fn remote_control_set_reach_mode(
 }
 
 #[tauri::command]
-pub fn remote_control_revoke_device(device_id: usize) -> RemoteInfo {
+pub fn remote_control_revoke_device(device_id: usize) -> Result<RemoteInfo, String> {
     let remote = hub();
-    remote.revoke_device(device_id);
-    remote.info()
+    remote.revoke_device(device_id)?;
+    Ok(remote.info())
 }
 
 /// `request_id` orders enable/disable requests: the newest id recorded is

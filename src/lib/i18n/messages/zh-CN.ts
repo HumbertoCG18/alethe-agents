@@ -219,6 +219,8 @@ export const zhCN: Record<MessageKey, string> = {
   'remote.confirmAccessAgentInput': '当前访问权限允许向代理发送消息；Shell 输入被禁止。',
   'remote.confirmAccessShellInput': '当前访问权限允许向代理发送消息和 Shell 输入。',
   'remote.sessionSeconds': '{seconds} 秒',
+  'remote.confirmPermanent':
+    '永久：远程控制会随 Alethe 启动，已记住的手机在 7 天未使用后才需要输入 PIN。远程控制开启时，可在设备列表中撤销手机。',
   'remote.enableFailedTitle': '无法启动远程控制',
   'remote.enableFailedBody': 'Alethe 已保持远程控制关闭。{error}',
   'remote.disableFailedTitle': '无法停止远程控制',
@@ -413,7 +415,8 @@ export const zhCN: Record<MessageKey, string> = {
   'remote.autoDisabledToastBody': '设备长时间未连接，因此Alethe自动关闭了监听器。',
   'remote.startFailedToastTitle': '遥控器无法启动',
   'remote.startFailedToastBody': 'Alethe无法打开监听器——请检查所选的连接模式并重试。',
-  'remote.startupNote': '遥控器从不会自动启动。只有在此设置开启时，Alethe 才会打开 LAN 监听器。',
+  'remote.startupNote':
+    '只有会话时长为“永久”时，远程控制才会随 Alethe 启动；否则它从不会自动启动。只有在此设置开启时，Alethe 才会打开 LAN 监听器。',
   'remote.reachTitle': '达到',
   'remote.reachDesc': '选择配对设备可以从哪个网络访问此侦听器。',
   'remote.reachLan': '本地网络',
@@ -462,7 +465,7 @@ export const zhCN: Record<MessageKey, string> = {
   'remote.sessionPermanent': '永久（直到撤销）',
   'remote.pinTitle': '为永久会话设置 PIN',
   'remote.pinDescription':
-    '永久会话会在 Alethe 重启后保持手机配对。重新连接时必须输入此 PIN。输错五次将遗忘该设备，需要重新配对。',
+    '永久会话会在 Alethe 重启后保持手机配对，远程控制也会随 Alethe 启动。手机在最后一次使用后 7 天内无需输入此 PIN，之后会再次要求输入；输错五次将遗忘该设备。远程控制开启时，可在设备列表中撤销手机。清除或更改 PIN 会让所有手机退出。',
   'remote.pinLabel': 'PIN（4 到 8 位数字）',
   'remote.pinConfirmLabel': '再次输入 PIN',
   'remote.pinInvalid': '请使用 4 到 8 位数字。',

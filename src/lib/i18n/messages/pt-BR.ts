@@ -344,6 +344,8 @@ export const ptBR: Record<MessageKey, string> = {
   'remote.confirmAccessShellInput':
     'O acesso atual permite mensagens para agentes e entrada de shell.',
   'remote.sessionSeconds': '{seconds} segundos',
+  'remote.confirmPermanent':
+    'Permanente: o controle remoto liga junto com o Alethe, e um celular lembrado só pede o PIN depois de 7 dias sem uso. Revogue celulares na lista de dispositivos com o controle remoto ligado.',
   'remote.enableFailedTitle': 'Não foi possível iniciar o controle remoto',
   'remote.enableFailedBody': 'O Alethe manteve o controle remoto desligado. {error}',
   'remote.disableFailedTitle': 'Não foi possível desligar o controle remoto',
@@ -558,7 +560,7 @@ export const ptBR: Record<MessageKey, string> = {
   'remote.startFailedToastBody':
     'O Alethe não conseguiu abrir o listener — confira o reach mode selecionado e tente de novo.',
   'remote.startupNote':
-    'O controle remoto nunca liga sozinho. O Alethe só abre o listener LAN enquanto esta opção estiver ativa.',
+    'O controle remoto só liga junto com o Alethe quando a duração da sessão é Permanente; fora isso, nunca liga sozinho. O Alethe só abre o listener LAN enquanto esta opção estiver ativa.',
   'remote.reachTitle': 'Alcance',
   'remote.reachDesc': 'Escolha de qual rede os dispositivos pareados podem alcançar este listener.',
   'remote.reachLan': 'Rede local',
@@ -613,7 +615,7 @@ export const ptBR: Record<MessageKey, string> = {
   'remote.sessionPermanent': 'Permanente (até revogar)',
   'remote.pinTitle': 'Defina um PIN para sessões permanentes',
   'remote.pinDescription':
-    'Uma sessão permanente mantém o celular pareado depois que o Alethe reinicia. Quando ele reconectar, vai precisar digitar este PIN. Cinco erros esquecem o aparelho e é preciso parear de novo.',
+    'Uma sessão permanente mantém o celular pareado depois que o Alethe reinicia, e o controle remoto liga junto com o Alethe. O celular fica sem pedir este PIN por 7 dias depois do último uso e então volta a pedir; cinco erros esquecem o aparelho. Revogue um celular na lista de dispositivos com o controle remoto ligado. Remover ou trocar o PIN desconecta todos os celulares.',
   'remote.pinLabel': 'PIN (4 a 8 dígitos)',
   'remote.pinConfirmLabel': 'Repita o PIN',
   'remote.pinInvalid': 'Use de 4 a 8 dígitos.',

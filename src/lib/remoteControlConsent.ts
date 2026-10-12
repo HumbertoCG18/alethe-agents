@@ -15,11 +15,13 @@ type Confirm = (message: string) => boolean | Promise<boolean>
 
 type SetPreferences = (patch: Partial<Preferences>) => void
 
+const SESSION_PERMANENT = 315_360_000
+
 function sessionExpiryLabel(t: TFunction, seconds: number): string {
   if (seconds === 900) return t('remote.session900')
   if (seconds === 3_600) return t('remote.session3600')
   if (seconds === 86_400) return t('remote.session86400')
-  if (seconds === 315_360_000) return t('remote.sessionPermanent')
+  if (seconds === SESSION_PERMANENT) return t('remote.sessionPermanent')
   return t('remote.sessionSeconds', { seconds })
 }
 
@@ -34,13 +36,16 @@ export function remoteControlEnableConfirmation(
       ? t('remote.confirmAccessShellInput')
       : t('remote.confirmAccessAgentInput')
 
-  return t(
+  const message = t(
     preferences.remoteUseTailscale ? 'remote.confirmEnableTailscale' : 'remote.confirmEnable',
     {
       access,
       expiry: sessionExpiryLabel(t, preferences.remoteSessionExpirySecs),
     },
   )
+  return preferences.remoteSessionExpirySecs === SESSION_PERMANENT
+    ? `${message}\n\n${t('remote.confirmPermanent')}`
+    : message
 }
 
 /**

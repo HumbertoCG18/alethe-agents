@@ -1045,6 +1045,9 @@ svg {
 .composer-error:empty {
   display: none;
 }
+.composer-error.is-hint {
+  color: var(--fg-muted);
+}
 .read-only-notice {
   display: flex;
   align-items: flex-start;

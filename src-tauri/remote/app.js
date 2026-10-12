@@ -162,6 +162,9 @@ let socket = null
 let socketAuthenticated = false
 let reconnectTimer = null
 let reconnectAttempt = 0
+// While the PIN form waits, reconnecting would only get `pin_required` again
+// and rebuild the form under the user's fingers; the unlock reloads the page.
+let awaitingPin = false
 let workspaceSyncing = false
 let connectionState = 'connecting'
 let currentFilter = ''
@@ -261,7 +264,7 @@ function reconnectDelay() {
 }
 
 function scheduleReconnect(immediate = false) {
-  if (!sessionToken || reconnectTimer) return
+  if (!sessionToken || reconnectTimer || awaitingPin) return
   const delay = immediate ? 0 : reconnectDelay()
   reconnectAttempt += 1
   reconnectTimer = window.setTimeout(() => {
@@ -1438,7 +1441,11 @@ function updateComposer() {
     photos.innerHTML = composerPhotosMarkup(session)
   }
   form.setAttribute('aria-busy', String(session.sending))
-  form.querySelector('#composer-error').textContent = session.error
+  // The Terminal view has no feedback line, so its "tap again" hint goes here.
+  const armed = chatView === 'terminal' && session.controlNotice === 'chat.sendNowArmed'
+  const notice = form.querySelector('#composer-error')
+  notice.textContent = session.error || (armed ? t('chat.sendNowArmed') : '')
+  notice.classList.toggle('is-hint', !session.error && armed)
 }
 
 const SEND_NOW_DOUBLE_TAP_MS = 2_000
@@ -1515,10 +1522,13 @@ async function sendQueuedNow(ptyId, session) {
     session.sendNowArmedAt = now
     session.controlNotice = 'chat.sendNowArmed'
     updateChatFeedback()
+    updateComposer()
     window.setTimeout(() => {
       if (session.controlNotice !== 'chat.sendNowArmed') return
       session.controlNotice = ''
-      if (selected === ptyId) updateChatFeedback()
+      if (selected !== ptyId) return
+      updateChatFeedback()
+      updateComposer()
     }, SEND_NOW_DOUBLE_TAP_MS)
     return
   }
@@ -1949,6 +1959,9 @@ async function boot() {
 }
 
 function renderPinPrompt(notice = '') {
+  awaitingPin = true
+  if (reconnectTimer) window.clearTimeout(reconnectTimer)
+  reconnectTimer = null
   stateView = null
   disposeTerminal()
   stopTranscriptPolling()

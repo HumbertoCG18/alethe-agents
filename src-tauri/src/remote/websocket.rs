@@ -55,6 +55,44 @@ pub(crate) fn run_websocket(
     }
 }
 
+/// Sends what was queued for device `id`, checking before every send that
+/// the device may still receive. Once it may not, the queue is dropped unsent
+/// and only the reason goes out; returns false, as the socket has to close.
+fn flush_queue(
+    hub: &RemoteHub,
+    id: usize,
+    rx: &mpsc::Receiver<String>,
+    mut send: impl FnMut(String) -> bool,
+) -> bool {
+    loop {
+        if let Some(reason) = refusal(hub, id) {
+            while rx.try_recv().is_ok() {}
+            send(reason);
+            return false;
+        }
+        let Ok(payload) = rx.try_recv() else {
+            return true;
+        };
+        if !send(payload) {
+            return false;
+        }
+    }
+}
+
+/// Why device `id` may receive nothing right now: its session ended, or it
+/// must enter the PIN, which includes a PIN-free week that ran out.
+fn refusal(hub: &RemoteHub, id: usize) -> Option<String> {
+    if !hub.session_alive(id) {
+        return Some(
+            json!({ "type": "error", "reason": "expired", "message": "Remote session expired" })
+                .to_string(),
+        );
+    }
+    hub.session_locked(id).then(|| {
+        json!({ "type": "error", "reason": "pin_required", "message": "PIN required" }).to_string()
+    })
+}
+
 fn allowed_origin(hub: &RemoteHub) -> String {
     format!("http://{}:{}", hub.host(), hub.http_port())
 }
@@ -99,24 +137,11 @@ fn handle_websocket(
         if session_id.is_none() && opened_at.elapsed() > WS_AUTH_TIMEOUT {
             break;
         }
-        loop {
-            match rx.try_recv() {
-                Ok(payload) => {
-                    if socket.send(Message::Text(payload.into())).is_err() {
-                        break;
-                    }
-                }
-                Err(mpsc::TryRecvError::Empty) => break,
-                Err(mpsc::TryRecvError::Disconnected) => break,
-            }
-        }
         if let Some(id) = session_id {
-            if !hub.session_alive(id) {
-                let _ = socket.send(Message::Text(
-                    json!({ "type": "error", "reason": "expired", "message": "Remote session expired" })
-                        .to_string()
-                        .into(),
-                ));
+            let open = flush_queue(&hub, id, &rx, |payload| {
+                socket.send(Message::Text(payload.into())).is_ok()
+            });
+            if !open {
                 break;
             }
         }
@@ -145,6 +170,15 @@ fn handle_websocket(
                     ));
                     break;
                 };
+                if hub.session_locked(id) {
+                    let _ = socket.send(Message::Text(
+                        json!({ "type": "error", "reason": "pin_required", "message": "PIN required" })
+                            .to_string()
+                            .into(),
+                    ));
+                    break;
+                }
+                hub.refresh_trust(id);
                 if session_id.is_none() {
                     hub.clear_auth_failures(&address);
                     if let Some(name) = command.get("deviceName").and_then(Value::as_str) {
@@ -183,5 +217,30 @@ fn handle_websocket(
     }
     if let Some(session_id) = session_id {
         hub.detach_sender(session_id);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::flush_queue;
+    use crate::remote::RemoteHub;
+    use std::sync::mpsc;
+
+    #[test]
+    fn a_locked_socket_gets_only_pin_required() {
+        let (hub, id) = RemoteHub::paired_for_test();
+        let (tx, rx) = mpsc::channel();
+        tx.send("terminal output".to_string()).unwrap();
+        tx.send("more output".to_string()).unwrap();
+        hub.expire_trust_for_test(id);
+        let mut sent = Vec::new();
+        let open = flush_queue(&hub, id, &rx, |payload| {
+            sent.push(payload);
+            true
+        });
+        assert!(!open);
+        assert_eq!(sent.len(), 1, "{sent:?}");
+        assert!(sent[0].contains("pin_required"));
+        assert!(rx.try_recv().is_err());
     }
 }

@@ -113,6 +113,18 @@ describe('remote control consent details', () => {
     expect(message).toContain('allows agent messages and shell input')
   })
 
+  it('says a Permanent session starts with Alethe and skips the PIN for a week', () => {
+    const message = remoteControlEnableConfirmation(
+      preferences({ remoteSessionExpirySecs: 315_360_000 }),
+      t('en'),
+    )
+
+    expect(message).toContain('starts with Alethe')
+    expect(message).toContain('7 days')
+    expect(message).toContain('device list')
+    expect(remoteControlEnableConfirmation(preferences(), t('en'))).not.toContain('7 days')
+  })
+
   it('keeps the placeholders filled in the Simplified Chinese prompt', () => {
     const message = remoteControlEnableConfirmation(preferences(), t('zh-CN'))
 

@@ -332,6 +332,8 @@ export const en = {
   'remote.confirmAccessAgentInput': 'Current access allows agent messages; shell input is blocked.',
   'remote.confirmAccessShellInput': 'Current access allows agent messages and shell input.',
   'remote.sessionSeconds': '{seconds} seconds',
+  'remote.confirmPermanent':
+    'Permanent: remote control starts with Alethe, and a remembered phone asks for the PIN only after 7 days without use. Revoke phones from the device list while remote control is on.',
   'remote.enableFailedTitle': 'Remote control could not start',
   'remote.enableFailedBody': 'Alethe kept remote control off. {error}',
   'remote.disableFailedTitle': 'Remote control could not stop',
@@ -542,7 +544,7 @@ export const en = {
   'remote.startFailedToastBody':
     'Alethe was unable to open the listener — check the selected reach mode and try again.',
   'remote.startupNote':
-    'Remote control never starts on its own. Alethe only opens the LAN listener while this setting is on.',
+    'Remote control starts with Alethe only when the session length is Permanent; otherwise it never starts on its own. Alethe only opens the LAN listener while this setting is on.',
   'remote.reachTitle': 'Reach',
   'remote.reachDesc': 'Choose which network paired devices can reach this listener from.',
   'remote.reachLan': 'Local network',
@@ -595,6 +597,17 @@ export const en = {
   'remote.session900': '15 minutes',
   'remote.session3600': '1 hour',
   'remote.session86400': '24 hours',
+  'remote.sessionPermanent': 'Permanent (until revoked)',
+  'remote.pinTitle': 'Set a PIN for permanent sessions',
+  'remote.pinDescription':
+    'A permanent session keeps your phone paired after Alethe restarts, and remote control starts with Alethe. The phone skips this PIN for 7 days after its last use, then asks for it again; five wrong tries forget it. Revoke a phone from the device list while remote control is on. Clearing or changing the PIN signs every phone out.',
+  'remote.pinLabel': 'PIN (4 to 8 digits)',
+  'remote.pinConfirmLabel': 'Repeat the PIN',
+  'remote.pinInvalid': 'Use 4 to 8 digits.',
+  'remote.pinMismatch': 'The PINs do not match.',
+  'remote.pinSave': 'Save PIN',
+  'remote.pinCancel': 'Cancel',
+  'remote.pinSaveError': 'Could not save the PIN: {message}',
   'remote.revokeDevice': 'Revoke',
   'remote.revokeAll': 'Revoke all devices',
   'remote.noDevices': 'No devices are currently connected.',

@@ -45,7 +45,8 @@ function harness() {
       chatSession, setConnectionState, renderTranscript, renderMarkdown, messages,
       setReadOnly: (value) => { readOnly = value },
       setTranscript: (value) => { transcript = value; renderTranscript() },
-      updateChatFeedback,
+      updateChatFeedback, connectSocket,
+      setSocketSession: (base, token) => { wsBase = base; sessionToken = token },
     };
   `)()
 }
@@ -195,6 +196,42 @@ describe('remote mobile conversations', () => {
     expect(document.querySelector('#message')).toHaveValue('Claude draft')
     ui.openChat('codex')
     expect(document.querySelector('#message')).toHaveValue('')
+  })
+
+  it('asks for a second tap on send-now in the Terminal view too', async () => {
+    ui.openChat('claude')
+    await settle()
+    ui.setChatView('terminal')
+    send()
+    await settle()
+    expect(document.querySelector('#composer-error')).toHaveTextContent(
+      'Tap send again to send the queued message now',
+    )
+    vi.advanceTimersByTime(2_100)
+    expect(document.querySelector('#composer-error')).toHaveTextContent('')
+  })
+
+  it('keeps the PIN form and stops reconnecting while the phone is locked', () => {
+    const sockets: { onmessage: (event: { data: string }) => void; onclose: () => void }[] = []
+    vi.stubGlobal(
+      'WebSocket',
+      Object.assign(
+        function FakeSocket(this: (typeof sockets)[number]) {
+          sockets.push(this)
+        },
+        { CONNECTING: 0, OPEN: 1 },
+      ),
+    )
+    ui.setSocketSession('ws://desktop:1', 'token')
+    ui.connectSocket()
+    sockets[0].onmessage({ data: JSON.stringify({ type: 'error', reason: 'pin_required' }) })
+    const input = document.querySelector<HTMLInputElement>('#pin-input')!
+    input.value = '48'
+    sockets[0].onclose()
+    vi.advanceTimersByTime(60_000)
+    expect(sockets).toHaveLength(1)
+    expect(document.querySelector('#pin-input')).toBe(input)
+    expect(input).toHaveValue('48')
   })
 
   it('ignores old transcript requests and does not overlap refreshes', async () => {

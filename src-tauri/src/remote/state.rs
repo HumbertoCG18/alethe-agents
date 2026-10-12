@@ -4,7 +4,9 @@ use qrcode::{render::svg, QrCode};
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashMap;
+use std::io::Write;
 use std::net::IpAddr;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc, LockResult, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -32,6 +34,7 @@ pub struct RemoteInfo {
     pub online_devices: usize,
     pub max_devices: usize,
     pub session_expiry_secs: u64,
+    pub has_pin: bool,
     pub read_only: bool,
     pub allow_shell_input: bool,
     pub reach_mode: String,
@@ -55,7 +58,14 @@ pub struct TailscaleStatus {
 
 struct RemoteSession {
     id: usize,
-    token: String,
+    /// SHA-256 of the bearer token: what is kept in memory and on disk.
+    token_hash: String,
+    /// A device restored from disk must enter the PIN before anything else.
+    locked: bool,
+    /// Unix time until which a restored device skips the PIN. Slides forward
+    /// while the device is used, so only a long absence asks for it again.
+    trusted_until: u64,
+    pin_failures: u32,
     name: String,
     address: String,
     connected_at: SystemTime,
@@ -103,10 +113,21 @@ pub struct RemoteHub {
     pty_input: Mutex<HashMap<String, Arc<Mutex<()>>>>,
     qr_cache: Mutex<Option<(String, String)>>,
     last_active_unix: AtomicU64,
+    /// `(salt, sha256(salt:pin))` guarding remembered devices.
+    pin: Mutex<Option<(String, String)>>,
+    /// Where remembered devices and the PIN live; `None` keeps them in memory.
+    store_dir: Option<PathBuf>,
+    /// Test-only seams that let a test run code at a named step.
+    #[cfg(test)]
+    test_hooks: Mutex<HashMap<&'static str, Box<dyn FnOnce() + Send>>>,
 }
 
 impl RemoteHub {
     pub(crate) fn new() -> Self {
+        Self::with_store(default_store_dir())
+    }
+
+    fn with_store(store_dir: Option<PathBuf>) -> Self {
         Self {
             lifecycle: Mutex::new(()),
             pairing_token: Mutex::new(nanoid::nanoid!(32)),
@@ -131,6 +152,63 @@ impl RemoteHub {
             pty_input: Mutex::new(HashMap::new()),
             qr_cache: Mutex::new(None),
             last_active_unix: AtomicU64::new(unix_now()),
+            pin: Mutex::new(store_dir.as_deref().and_then(load_pin)),
+            store_dir,
+            #[cfg(test)]
+            test_hooks: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Runs the test hook installed under `name`, outside the hooks' own lock.
+    #[cfg(test)]
+    fn hook(&self, name: &str) {
+        let hook = self.test_hooks.lock().unwrap().remove(name);
+        if let Some(hook) = hook {
+            hook();
+        }
+    }
+
+    #[cfg(not(test))]
+    fn hook(&self, _name: &str) {}
+
+    #[cfg(test)]
+    pub(crate) fn on_hook(&self, name: &'static str, hook: impl FnOnce() + Send + 'static) {
+        self.test_hooks.lock().unwrap().insert(name, Box::new(hook));
+    }
+
+    #[cfg(test)]
+    pub(crate) fn paired_for_test() -> (Self, usize) {
+        let hub = Self::new();
+        hub.activate(9340, 9341);
+        hub.open_pairing_window();
+        let token = hub.pairing_token.lock().unwrap().clone();
+        let (id, _) = hub
+            .pair(&token, "Phone".into(), "100.64.0.2".into())
+            .expect("pair");
+        (hub, id)
+    }
+
+    /// Writes the devices file as it stands, the way a renewed week would.
+    #[cfg(test)]
+    pub(crate) fn refresh_trust_for_test(&self, id: usize) {
+        let mut sessions = self.lock_sessions();
+        if let Some(session) = sessions.iter_mut().find(|session| session.id == id) {
+            session.trusted_until = unix_now() + PIN_TRUST_SECS;
+        }
+        let _ = self.persist(&sessions);
+    }
+
+    /// As if the device's last use was more than a week ago.
+    #[cfg(test)]
+    pub(crate) fn expire_trust_for_test(&self, id: usize) {
+        if let Some(session) = self
+            .sessions
+            .lock()
+            .unwrap()
+            .iter_mut()
+            .find(|session| session.id == id)
+        {
+            session.trusted_until = 0;
         }
     }
 
@@ -164,6 +242,7 @@ impl RemoteHub {
         self.http_port.store(http_port, Ordering::SeqCst);
         self.ws_port.store(ws_port, Ordering::SeqCst);
         self.touch_activity();
+        self.restore_sessions();
         self.running.store(true, Ordering::SeqCst);
         generation
     }
@@ -174,7 +253,7 @@ impl RemoteHub {
         self.generation.fetch_add(1, Ordering::SeqCst);
         self.http_port.store(0, Ordering::SeqCst);
         self.ws_port.store(0, Ordering::SeqCst);
-        self.revoke_all();
+        self.drop_live_sessions();
         self.close_pairing_window();
     }
 
@@ -197,7 +276,7 @@ impl RemoteHub {
         let was_running = self.running.swap(false, Ordering::SeqCst);
         self.http_port.store(0, Ordering::SeqCst);
         self.ws_port.store(0, Ordering::SeqCst);
-        self.revoke_all();
+        self.drop_live_sessions();
         self.close_pairing_window();
         was_running
     }
@@ -381,6 +460,7 @@ impl RemoteHub {
             online_devices: devices.iter().filter(|device| device.online).count(),
             max_devices: self.max_devices.load(Ordering::Relaxed),
             session_expiry_secs: self.session_expiry_secs.load(Ordering::Relaxed),
+            has_pin: self.has_pin(),
             read_only: self.read_only.load(Ordering::Relaxed),
             allow_shell_input: self.allow_shell_input.load(Ordering::Relaxed),
             reach_mode: if self.use_tailscale() {
@@ -427,8 +507,11 @@ impl RemoteHub {
 
     fn prune_expired(&self) {
         let now = Instant::now();
-        if let Ok(mut sessions) = self.sessions.lock() {
-            sessions.retain(|session| session.expires_at > now);
+        let mut sessions = self.lock_sessions();
+        let before = sessions.len();
+        sessions.retain(|session| session.expires_at > now);
+        if sessions.len() != before {
+            let _ = self.persist(&sessions);
         }
     }
 
@@ -460,7 +543,10 @@ impl RemoteHub {
         let now = SystemTime::now();
         sessions.push(RemoteSession {
             id,
-            token: token.clone(),
+            token_hash: hash_token(&token),
+            locked: false,
+            trusted_until: unix_now() + PIN_TRUST_SECS,
+            pin_failures: 0,
             name,
             address,
             connected_at: now,
@@ -470,6 +556,7 @@ impl RemoteHub {
             subscription: None,
             sender: None,
         });
+        let _ = self.persist(&sessions);
         drop(sessions);
         self.close_pairing_window();
         self.touch_activity();
@@ -527,7 +614,7 @@ impl RemoteHub {
         let sessions = self.sessions.lock().ok()?;
         sessions
             .iter()
-            .find(|session| tokens_equal(token, &session.token))
+            .find(|session| tokens_equal(&hash_token(token), &session.token_hash))
             .map(|session| session.id)
     }
 
@@ -621,15 +708,263 @@ impl RemoteHub {
         }
     }
 
-    pub(crate) fn revoke_all(&self) {
-        if let Ok(mut sessions) = self.sessions.lock() {
+    /// Revoking is permanent: it also forgets remembered devices on disk.
+    pub(crate) fn revoke_all(&self) -> Result<(), String> {
+        let mut sessions = self.lock_sessions();
+        sessions.clear();
+        self.persist(&sessions)
+    }
+
+    pub(crate) fn revoke_device(&self, id: usize) -> Result<(), String> {
+        let mut sessions = self.lock_sessions();
+        sessions.retain(|session| session.id != id);
+        self.persist(&sessions)
+    }
+
+    pub(crate) fn has_pin(&self) -> bool {
+        self.pin.lock().map(|pin| pin.is_some()).unwrap_or(false)
+    }
+
+    /// Sets (or with `None` clears) the PIN that guards remembered devices.
+    /// Clearing or replacing it signs every device out: no session outlives
+    /// the PIN it was trusted with, and leaving "Permanent" cannot keep a
+    /// ten-year session alive in memory.
+    pub(crate) fn set_pin(&self, pin: Option<&str>) -> Result<(), String> {
+        let record = match pin {
+            Some(pin) => {
+                if !valid_pin(pin) {
+                    return Err("The PIN must be 4 to 8 digits".into());
+                }
+                let salt = nanoid::nanoid!(16);
+                let hash = hash_token(&format!("{salt}:{pin}"));
+                Some((salt, hash))
+            }
+            None => None,
+        };
+        let mut sessions = self.lock_sessions();
+        if record.is_none() || self.has_pin() {
+            // Memory and the devices file first: whatever happens to the PIN
+            // file next, every device is already signed out.
             sessions.clear();
+            if record.is_none() {
+                *self.lock_pin() = None;
+            }
+            self.persist(&sessions)?;
+        }
+        let pin_file = self.store_path(PIN_FILE);
+        let Some((salt, hash)) = &record else {
+            return pin_file
+                .map_or(Ok(()), |path| remove_if_present(&path))
+                .map_err(|error| format!("The PIN could not be removed ({error})"));
+        };
+        if let Some(path) = pin_file {
+            write_atomically(&path, format!("{salt}:{hash}").as_bytes())
+                .map_err(|error| format!("The PIN could not be saved ({error})"))?;
+        }
+        *self.lock_pin() = record;
+        self.persist(&sessions)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn lock_session_for_test(&self, id: usize) {
+        if let Ok(mut sessions) = self.sessions.lock() {
+            if let Some(session) = sessions.iter_mut().find(|session| session.id == id) {
+                session.locked = true;
+            }
         }
     }
 
-    pub(crate) fn revoke_device(&self, id: usize) {
-        if let Ok(mut sessions) = self.sessions.lock() {
-            sessions.retain(|session| session.id != id);
+    /// Whether the device must enter the PIN before anything else: one
+    /// restored from disk, or one whose PIN-free week ran out, even while the
+    /// desktop kept running.
+    pub(crate) fn session_locked(&self, id: usize) -> bool {
+        let now = unix_now();
+        let Ok(mut sessions) = self.sessions.lock() else {
+            return true;
+        };
+        sessions
+            .iter_mut()
+            .find(|session| session.id == id)
+            .is_some_and(|session| {
+                if session.trusted_until <= now {
+                    session.locked = true;
+                }
+                session.locked
+            })
+    }
+
+    /// Checks the PIN for a remembered device. After `PIN_MAX_ATTEMPTS` wrong
+    /// tries the device is forgotten for good and has to pair again. The
+    /// count, the revoke and their write are one step under the sessions lock,
+    /// so neither a restart nor another request runs in between.
+    pub(crate) fn unlock(&self, id: usize, pin: &str) -> PinOutcome {
+        let mut sessions = self.lock_sessions();
+        let correct = self
+            .lock_pin()
+            .as_ref()
+            .is_some_and(|(salt, hash)| tokens_equal(&hash_token(&format!("{salt}:{pin}")), hash));
+        let Some(index) = sessions.iter().position(|session| session.id == id) else {
+            return PinOutcome::LockedOut;
+        };
+        let session = &mut sessions[index];
+        let outcome = if session.pin_failures >= PIN_MAX_ATTEMPTS {
+            PinOutcome::LockedOut
+        } else if correct {
+            session.locked = false;
+            session.trusted_until = unix_now() + PIN_TRUST_SECS;
+            session.pin_failures = 0;
+            PinOutcome::Unlocked
+        } else {
+            session.pin_failures += 1;
+            if session.pin_failures >= PIN_MAX_ATTEMPTS {
+                PinOutcome::LockedOut
+            } else {
+                PinOutcome::Wrong {
+                    remaining: PIN_MAX_ATTEMPTS - session.pin_failures,
+                }
+            }
+        };
+        if outcome == PinOutcome::LockedOut {
+            sessions.remove(index);
+        }
+        self.hook("after_pin_check");
+        // A failed write fails safe inside: the PIN is dropped with it.
+        let _ = self.persist(&sessions);
+        outcome
+    }
+
+    /// Pushes the PIN-free window of an unlocked device forward as it is
+    /// used; written to disk at most once an hour per device. A window that
+    /// already ran out is never renewed: the PIN has to reopen it.
+    pub(crate) fn refresh_trust(&self, id: usize) {
+        let now = unix_now();
+        let mut sessions = self.lock_sessions();
+        let renewed = sessions
+            .iter_mut()
+            .find(|session| session.id == id && !session.locked && session.trusted_until > now)
+            .filter(|session| session.trusted_until + 3600 < now + PIN_TRUST_SECS)
+            .map(|session| session.trusted_until = now + PIN_TRUST_SECS)
+            .is_some();
+        if renewed {
+            let _ = self.persist(&sessions);
+        }
+    }
+
+    /// Turning remote control off (or quitting) only clears memory; the
+    /// devices on disk come back the next time it is turned on.
+    fn drop_live_sessions(&self) {
+        self.lock_sessions().clear();
+    }
+
+    /// The one lock for session state. Every security change (a wrong PIN,
+    /// a lockout, a revoke, a PIN change, a restore) holds it across the
+    /// change, its snapshot and its write. Lock order: sessions, then pin.
+    fn lock_sessions(&self) -> MutexGuard<'_, Vec<RemoteSession>> {
+        self.sessions.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn lock_pin(&self) -> MutexGuard<'_, Option<(String, String)>> {
+        self.pin.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn store_path(&self, name: &str) -> Option<PathBuf> {
+        self.store_dir.as_ref().map(|dir| dir.join(name))
+    }
+
+    /// Writes the remembered devices exactly as `sessions` holds them. Taking
+    /// the guarded list means the caller still holds the sessions lock, so the
+    /// file always matches the newest state. On failure the PIN is dropped as
+    /// well: every restore needs it, so whatever the old file still says (a
+    /// revoked device, fewer wrong PINs) never comes back.
+    fn persist(&self, sessions: &[RemoteSession]) -> Result<(), String> {
+        let Some(path) = self.store_path(SESSIONS_FILE) else {
+            return Ok(());
+        };
+        let written = if self.has_pin() {
+            let saved = saved_sessions(sessions);
+            self.hook("before_persist");
+            serde_json::to_vec(&saved)
+                .map_err(std::io::Error::other)
+                .and_then(|json| write_atomically(&path, &json))
+        } else {
+            // Remembering devices across restarts is only allowed behind a PIN.
+            remove_if_present(&path)
+        };
+        written.map_err(|error| self.forget_pin(&error))
+    }
+
+    fn forget_pin(&self, error: &std::io::Error) -> String {
+        *self.lock_pin() = None;
+        let removed = self
+            .store_path(PIN_FILE)
+            .map_or(Ok(()), |path| remove_if_present(&path));
+        let message = match removed {
+            Ok(()) => format!(
+                "Remembered devices could not be saved ({error}). The PIN was removed, so none come back after a restart."
+            ),
+            Err(second) => format!(
+                "Remembered devices could not be saved ({error}), and the PIN could not be removed ({second}). None come back while that folder refuses writes."
+            ),
+        };
+        eprintln!("[remote] {message}");
+        message
+    }
+
+    fn restore_sessions(&self) {
+        let mut sessions = self.lock_sessions();
+        let Some(path) = self.store_path(SESSIONS_FILE) else {
+            return;
+        };
+        if !self.has_pin() {
+            return;
+        }
+        let Ok(raw) = std::fs::read(&path) else {
+            return;
+        };
+        let Ok(saved) = serde_json::from_slice::<Vec<SavedSession>>(&raw) else {
+            return;
+        };
+        let live = sessions.len();
+        self.restore_saved(&mut sessions, saved);
+        // A folder that refuses this rewrite would also refuse the next revoke
+        // or wrong PIN, so nothing is restored from it.
+        if self.persist(&sessions).is_err() {
+            sessions.truncate(live);
+        }
+    }
+
+    fn restore_saved(&self, sessions: &mut Vec<RemoteSession>, saved: Vec<SavedSession>) {
+        let now = unix_now();
+        for entry in saved.into_iter().filter(|entry| entry.expires_at > now) {
+            if sessions
+                .iter()
+                .any(|session| session.token_hash == entry.token_hash)
+            {
+                continue;
+            }
+            // A device keeps its id across restarts, so a request that began
+            // before one still acts on the same device after it.
+            let id = if entry.id == 0 || sessions.iter().any(|session| session.id == entry.id) {
+                self.next_session_id.fetch_add(1, Ordering::Relaxed)
+            } else {
+                entry.id
+            };
+            self.next_session_id.fetch_max(id + 1, Ordering::Relaxed);
+            let remaining = Duration::from_secs(entry.expires_at - now);
+            sessions.push(RemoteSession {
+                id,
+                token_hash: entry.token_hash,
+                locked: entry.trusted_until <= now,
+                trusted_until: entry.trusted_until,
+                pin_failures: entry.pin_failures,
+                name: entry.name,
+                address: "remembered".into(),
+                connected_at: SystemTime::now(),
+                expires_at: Instant::now() + remaining,
+                expires_at_unix: entry.expires_at,
+                subscription: None,
+                sender: None,
+            });
         }
     }
 
@@ -701,6 +1036,112 @@ fn allow_rate(rates: &Mutex<HashMap<usize, MessageRate>>, session_id: usize, lim
     entry.count <= limit
 }
 
+pub(crate) const PIN_MAX_ATTEMPTS: u32 = 5;
+/// A remembered device asks for the PIN again only after a week unused.
+const PIN_TRUST_SECS: u64 = 7 * 24 * 60 * 60;
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum PinOutcome {
+    Unlocked,
+    Wrong { remaining: u32 },
+    LockedOut,
+}
+
+fn valid_pin(pin: &str) -> bool {
+    (4..=8).contains(&pin.len()) && pin.bytes().all(|byte| byte.is_ascii_digit())
+}
+
+const PIN_FILE: &str = "remote-pin";
+const SESSIONS_FILE: &str = "remote-sessions.json";
+
+/// `(salt, sha256(salt:pin))`, or `None` when no PIN is set.
+fn load_pin(dir: &Path) -> Option<(String, String)> {
+    let raw = std::fs::read_to_string(dir.join(PIN_FILE)).ok()?;
+    let (salt, hash) = raw.trim().split_once(':')?;
+    Some((salt.to_string(), hash.to_string()))
+}
+
+/// What the devices file holds for each session: every unexpired one, token
+/// hash only.
+fn saved_sessions(sessions: &[RemoteSession]) -> Vec<SavedSession> {
+    let now = unix_now();
+    sessions
+        .iter()
+        .filter(|session| session.expires_at_unix > now)
+        .map(|session| SavedSession {
+            id: session.id,
+            token_hash: session.token_hash.clone(),
+            name: session.name.clone(),
+            expires_at: session.expires_at_unix,
+            trusted_until: session.trusted_until,
+            pin_failures: session.pin_failures,
+        })
+        .collect()
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct SavedSession {
+    #[serde(default)]
+    id: usize,
+    token_hash: String,
+    name: String,
+    expires_at: u64,
+    #[serde(default)]
+    trusted_until: u64,
+    /// Wrong PINs survive a restart, so restarting never grants new tries.
+    #[serde(default)]
+    pin_failures: u32,
+}
+
+fn hash_token(token: &str) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(token.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+/// Replaces `path` in one step: a temp file that is only ever new (a stale
+/// one, or a link, goes first), then a rename over the old file.
+fn write_atomically(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let temp = path.with_extension("tmp");
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    remove_if_present(&temp)?;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let written = options
+        .open(&temp)
+        .and_then(|mut file| file.write_all(bytes).and_then(|()| file.sync_all()))
+        .and_then(|()| std::fs::rename(&temp, path));
+    if written.is_err() {
+        let _ = std::fs::remove_file(&temp);
+    }
+    written
+}
+
+fn remove_if_present(path: &Path) -> std::io::Result<()> {
+    match std::fs::remove_file(path) {
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error),
+        _ => Ok(()),
+    }
+}
+
+/// Remembered devices (token hashes only) and the PIN, next to the app's
+/// other state. Tests never touch the real files.
+fn default_store_dir() -> Option<PathBuf> {
+    if cfg!(test) {
+        return None;
+    }
+    Some(dirs_next::data_dir()?.join("com.kc1t.alethe"))
+}
+
 fn unix_now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -714,10 +1155,14 @@ fn idle_expired(now_secs: u64, last_active_secs: u64, threshold_secs: u64) -> bo
 
 #[cfg(test)]
 mod tests {
-    use super::{idle_expired, RemoteHub};
+    use super::{
+        idle_expired, saved_sessions, unix_now, PinOutcome, RemoteHub, PIN_MAX_ATTEMPTS,
+        PIN_TRUST_SECS, SESSIONS_FILE,
+    };
     use std::cell::Cell;
+    use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::{mpsc, Arc};
+    use std::sync::{mpsc, Arc, Mutex};
     use std::thread;
     use std::time::Duration;
 
@@ -948,7 +1393,7 @@ mod tests {
             .pair(&token, "Phone".into(), "127.0.0.1:1".into())
             .expect("pairing should succeed");
 
-        hub.revoke_device(id);
+        hub.revoke_device(id).unwrap();
 
         assert!(hub.session_id_for(&session_token).is_none());
     }
@@ -1044,5 +1489,282 @@ mod tests {
 
         assert!(!hub.is_idle(0));
         assert!(!hub.is_idle(3600));
+    }
+
+    fn paired_hub() -> (RemoteHub, usize) {
+        RemoteHub::paired_for_test()
+    }
+
+    #[test]
+    fn a_pin_must_be_four_to_eight_digits() {
+        let hub = RemoteHub::new();
+        assert!(hub.set_pin(Some("123")).is_err());
+        assert!(hub.set_pin(Some("12a4")).is_err());
+        assert!(hub.set_pin(Some("123456789")).is_err());
+        assert!(hub.set_pin(Some("4821")).is_ok());
+        assert!(hub.has_pin());
+        hub.set_pin(None).unwrap();
+        assert!(!hub.has_pin());
+    }
+
+    #[test]
+    fn a_freshly_paired_device_is_not_locked() {
+        let (hub, id) = paired_hub();
+        assert!(!hub.session_locked(id));
+    }
+
+    #[test]
+    fn the_right_pin_unlocks_a_remembered_device() {
+        let (hub, id) = paired_hub();
+        hub.set_pin(Some("4821")).unwrap();
+        hub.lock_session_for_test(id);
+        assert!(hub.session_locked(id));
+        assert_eq!(hub.unlock(id, "1111"), PinOutcome::Wrong { remaining: 4 });
+        assert_eq!(hub.unlock(id, "4821"), PinOutcome::Unlocked);
+        assert!(!hub.session_locked(id));
+    }
+
+    #[test]
+    fn five_wrong_pins_forget_the_device() {
+        let (hub, id) = paired_hub();
+        hub.set_pin(Some("4821")).unwrap();
+        hub.lock_session_for_test(id);
+        for remaining in (1..PIN_MAX_ATTEMPTS).rev() {
+            assert_eq!(hub.unlock(id, "0000"), PinOutcome::Wrong { remaining });
+        }
+        assert_eq!(hub.unlock(id, "0000"), PinOutcome::LockedOut);
+        assert!(!hub.session_alive(id));
+        assert_eq!(hub.unlock(id, "4821"), PinOutcome::LockedOut);
+    }
+
+    #[test]
+    fn wrong_pins_still_count_after_a_restart() {
+        let (hub, id) = paired_hub();
+        hub.set_pin(Some("4821")).unwrap();
+        hub.lock_session_for_test(id);
+        hub.sessions.lock().unwrap()[0].trusted_until = 0;
+        for _ in 1..PIN_MAX_ATTEMPTS {
+            hub.unlock(id, "0000");
+        }
+        let saved = saved_sessions(&hub.sessions.lock().unwrap());
+        let restarted = RemoteHub::new();
+        restarted.set_pin(Some("4821")).unwrap();
+        restarted.restore_saved(&mut restarted.sessions.lock().unwrap(), saved);
+        let id = restarted.sessions.lock().unwrap()[0].id;
+        assert!(restarted.session_locked(id));
+        assert_eq!(restarted.unlock(id, "0000"), PinOutcome::LockedOut);
+        assert!(!restarted.session_alive(id));
+    }
+
+    #[test]
+    fn no_pin_is_checked_once_the_tries_are_spent() {
+        let (hub, id) = paired_hub();
+        hub.set_pin(Some("4821")).unwrap();
+        hub.lock_session_for_test(id);
+        // What a concurrent request sees before the fifth miss revokes the device.
+        hub.sessions.lock().unwrap()[0].pin_failures = PIN_MAX_ATTEMPTS;
+        assert_eq!(hub.unlock(id, "4821"), PinOutcome::LockedOut);
+        assert!(!hub.session_alive(id));
+    }
+
+    #[test]
+    fn clearing_the_pin_signs_out_every_device() {
+        let (hub, id) = paired_hub();
+        hub.set_pin(Some("4821")).unwrap();
+        hub.set_pin(None).unwrap();
+        assert!(!hub.session_alive(id));
+    }
+
+    #[test]
+    fn a_week_away_asks_for_the_pin_without_a_restart() {
+        let (hub, id) = paired_hub();
+        hub.set_pin(Some("4821")).unwrap();
+        // Seven days after the last use, with the desktop running all along.
+        let expired = unix_now() - 1;
+        hub.sessions.lock().unwrap()[0].trusted_until = expired;
+        hub.refresh_trust(id);
+        assert_eq!(trusted_until(&hub, id), expired);
+        assert!(hub.session_locked(id));
+        assert_eq!(hub.unlock(id, "4821"), PinOutcome::Unlocked);
+        assert!(!hub.session_locked(id));
+    }
+
+    fn scratch_store(tag: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("alethe-remote-{tag}-{nanos}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// A phone paired behind a PIN, remembered in `dir`.
+    fn remembered_hub(dir: &Path) -> (Arc<RemoteHub>, usize) {
+        let hub = RemoteHub::with_store(Some(dir.to_path_buf()));
+        hub.activate(9340, 9341);
+        hub.open_pairing_window();
+        let token = hub.pairing_token.lock().unwrap().clone();
+        let (id, _) = hub
+            .pair(&token, "Phone".into(), "100.64.0.2".into())
+            .expect("pair");
+        hub.set_pin(Some("4821")).unwrap();
+        (Arc::new(hub), id)
+    }
+
+    /// How many devices the next start of remote control brings back.
+    fn restored_from(dir: &Path) -> usize {
+        let hub = RemoteHub::with_store(Some(dir.to_path_buf()));
+        hub.activate(9340, 9341);
+        hub.connected_device_count()
+    }
+
+    /// Leaves `file` readable but refuses writing, replacing or removing it.
+    fn refuse_writes(file: &Path, refuse: bool) {
+        #[cfg(windows)]
+        {
+            let mut permissions = std::fs::metadata(file).unwrap().permissions();
+            permissions.set_readonly(refuse);
+            std::fs::set_permissions(file, permissions).unwrap();
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::Permissions::from_mode;
+            let dir = file.parent().unwrap();
+            std::fs::set_permissions(dir, mode(if refuse { 0o555 } else { 0o755 })).unwrap();
+            std::fs::set_permissions(file, mode(if refuse { 0o444 } else { 0o644 })).unwrap();
+        }
+    }
+
+    #[test]
+    fn remembered_devices_come_back_after_a_restart() {
+        let dir = scratch_store("restart");
+        let (hub, _) = remembered_hub(&dir);
+        drop(hub);
+        let restored = restored_from(&dir);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(restored, 1);
+    }
+
+    #[test]
+    fn a_revoke_during_an_older_write_stays_revoked_on_disk() {
+        let dir = scratch_store("stale");
+        let (hub, id) = remembered_hub(&dir);
+        let revoker = Arc::clone(&hub);
+        let revoking = Arc::new(Mutex::new(None));
+        let slot = Arc::clone(&revoking);
+        // Runs after this write took its snapshot, which still holds the device.
+        hub.on_hook("before_persist", move || {
+            let (done_tx, done_rx) = mpsc::channel();
+            *slot.lock().unwrap() = Some(thread::spawn(move || {
+                let _ = revoker.revoke_device(id);
+                let _ = done_tx.send(());
+            }));
+            // Let the revoke reach the disk first, if anything allows it.
+            let _ = done_rx.recv_timeout(Duration::from_millis(300));
+        });
+        hub.refresh_trust_for_test(id);
+        let revoke = revoking.lock().unwrap().take().unwrap();
+        revoke.join().unwrap();
+        let live = hub.connected_device_count();
+        let restored = restored_from(&dir);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(live, 0);
+        assert_eq!(restored, 0);
+    }
+
+    #[test]
+    fn a_fifth_wrong_pin_racing_a_restart_still_revokes() {
+        let dir = scratch_store("race");
+        let (hub, id) = remembered_hub(&dir);
+        hub.lock_session_for_test(id);
+        // Four misses are already on disk.
+        for _ in 1..PIN_MAX_ATTEMPTS {
+            hub.unlock(id, "0000");
+        }
+        let restarter = Arc::clone(&hub);
+        let restarting = Arc::new(Mutex::new(None));
+        let slot = Arc::clone(&restarting);
+        // Remote control restarts while the fifth miss is being handled:
+        // memory is cleared and the devices come back from disk.
+        hub.on_hook("after_pin_check", move || {
+            let (done_tx, done_rx) = mpsc::channel();
+            *slot.lock().unwrap() = Some(thread::spawn(move || {
+                restarter.shutdown();
+                restarter.activate(9340, 9341);
+                let _ = done_tx.send(());
+            }));
+            let _ = done_rx.recv_timeout(Duration::from_millis(300));
+        });
+        assert_eq!(hub.unlock(id, "0000"), PinOutcome::LockedOut);
+        let restart = restarting.lock().unwrap().take().unwrap();
+        restart.join().unwrap();
+        let live = hub.connected_device_count();
+        let restored = restored_from(&dir);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(live, 0);
+        assert_eq!(restored, 0);
+    }
+
+    #[test]
+    fn a_device_keeps_its_id_across_a_restart() {
+        let dir = scratch_store("same-id");
+        let (hub, id) = remembered_hub(&dir);
+        hub.shutdown();
+        hub.activate(9340, 9341);
+        let ids: Vec<usize> = hub.info().devices.iter().map(|device| device.id).collect();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(ids, vec![id]);
+    }
+
+    #[test]
+    fn replacing_the_pin_signs_every_device_out() {
+        let (hub, id) = paired_hub();
+        hub.set_pin(Some("4821")).unwrap();
+        hub.set_pin(Some("1357")).unwrap();
+        assert!(!hub.session_alive(id));
+    }
+
+    #[test]
+    fn a_revoke_the_disk_refuses_never_comes_back() {
+        let dir = scratch_store("refused");
+        let (hub, id) = remembered_hub(&dir);
+        let file = dir.join(SESSIONS_FILE);
+        refuse_writes(&file, true);
+        let revoked = hub.revoke_device(id);
+        let restored = restored_from(&dir);
+        refuse_writes(&file, false);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(revoked.is_err());
+        assert!(!hub.has_pin());
+        assert_eq!(restored, 0);
+    }
+
+    fn trusted_until(hub: &RemoteHub, id: usize) -> u64 {
+        hub.sessions
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|session| session.id == id)
+            .unwrap()
+            .trusted_until
+    }
+
+    #[test]
+    fn an_unlocked_device_skips_the_pin_for_a_week_while_in_use() {
+        let (hub, id) = paired_hub();
+        hub.set_pin(Some("4821")).unwrap();
+        assert!(trusted_until(&hub, id) + 5 >= unix_now() + PIN_TRUST_SECS);
+        hub.lock_session_for_test(id);
+        hub.sessions.lock().unwrap()[0].trusted_until = 0;
+        // A locked device earns nothing by knocking.
+        hub.refresh_trust(id);
+        assert_eq!(trusted_until(&hub, id), 0);
+        assert_eq!(hub.unlock(id, "4821"), PinOutcome::Unlocked);
+        assert!(trusted_until(&hub, id) + 5 >= unix_now() + PIN_TRUST_SECS);
+        hub.sessions.lock().unwrap()[0].trusted_until = unix_now() + 60;
+        hub.refresh_trust(id);
+        assert!(trusted_until(&hub, id) + 5 >= unix_now() + PIN_TRUST_SECS);
     }
 }

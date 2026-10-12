@@ -232,7 +232,8 @@
       "titulo": "Teardown do worker no Windows mata só o wrapper codex.cmd e deixa o Codex vivo",
       "origem": "ELO-09",
       "detalhe": "Issue #173. Job::teardown só chama child.kill(); no Windows o filho é o cmd.exe do codex.cmd e o Codex real segue vivo após cancel/release/timeout. kill_tree existe, mas #202 (lsass) exige medir antes de trocar. Achado da revisão r3 da #151, pré-existente na dev.",
-      "estado": "novo"
+      "estado": "descartado",
+      "motivo": "corrigido pela #173 (PR #183, 83a2069); lacuna sem processo em #182"
     },
     {
       "id": "ACH-0025",

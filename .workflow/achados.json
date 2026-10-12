@@ -232,6 +232,15 @@
       "origem": "ELO-09",
       "detalhe": "Issue #173. Job::teardown só chama child.kill(); no Windows o filho é o cmd.exe do codex.cmd e o Codex real segue vivo após cancel/release/timeout. kill_tree existe, mas #202 (lsass) exige medir antes de trocar. Achado da revisão r3 da #151, pré-existente na dev.",
       "estado": "novo"
+    },
+    {
+      "id": "ACH-0025",
+      "data": "2026-10-12",
+      "tipo": "risco",
+      "titulo": "Codex app-server: descoberta de modelos mata sem espera e stop mata só o wrapper",
+      "origem": "ELO-09",
+      "detalhe": "Issue #181. Fora do escopo da #173 (revisão r1): discover_models mata o Codex logo após soltar o stdin, sem espera (gatilho #202/lsass); stop_process mata só o wrapper codex.cmd. Corrigir com a sequência graciosa da #173.",
+      "estado": "novo"
     }
   ]
 }

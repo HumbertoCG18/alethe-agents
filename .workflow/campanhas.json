@@ -965,10 +965,12 @@
           "id": "REMOTO-06",
           "titulo": "Portar upstream #326: fotos, fila editável e terminal que cabe no celular (#169)",
           "nivel": "T2",
-          "estado": "proposta",
+          "estado": "concluída",
           "depende_de": [],
           "origem": "CODE",
-          "achado": "ACH-0019"
+          "achado": "ACH-0019",
+          "resultado": "Gate 2 por lote do dono em 11/10/2026: upstream #326 portada (7 commits do afthex) — fotos do celular, terminal na largura do celular, estáticos além do teto de 64 KB, correção do QR. Fork: teto de 64 MB nas fotos com lock, sem fallback em TEMP, lock de entrada por terminal, cores por tokens. Takeback retirado por decisão do dono (\"Tirar do port (Recomendado)\"); versão segura em REMOTO-08.",
+          "evidencia": "PR #175 (merge 89bffdd); revisões Astra 169 r1 (4/0) e r2 APPROVED"
         },
         {
           "id": "REMOTO-07",

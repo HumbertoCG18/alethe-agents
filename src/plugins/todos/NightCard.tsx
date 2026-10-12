@@ -117,7 +117,6 @@ export function NightCompleted({
         t('todo.night.code'),
         t('todo.night.title', { date }),
       )}
-      nightOnly={false}
       checkouts={registry.checkouts}
       active={false}
       workers={null}

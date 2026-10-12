@@ -33,6 +33,7 @@ import {
   campaignWorkers,
   type NightDiary,
   type NightEntry,
+  nightView,
   resumeTask,
   stepProgress,
   type TaskWorkers,
@@ -296,12 +297,12 @@ export function TodoSidebar() {
     tab === 'personal'
       ? []
       : campaigns
+          .flatMap((campaign) => (tab === 'night' ? (nightView(campaign) ?? []) : campaign))
           .filter(
             (campaign) =>
               campaign.id === view.activeId &&
               live.get(campaign.id) === 'working' &&
-              campaign.situation.kind !== 'done' &&
-              (tab !== 'night' || campaign.night),
+              campaign.situation.kind !== 'done',
           )
           .map((campaign) => ({
             name: campaign.id,

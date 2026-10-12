@@ -1632,6 +1632,29 @@ describe('Night card', () => {
     expect(findRepositoryFile).toHaveBeenCalledWith('C:\\repo', 'docs/motor.md')
   })
 
+  it('lists an assisted campaign in the Night tab only with its night tasks, counting only those', async () => {
+    fs.files.set(REGISTRY, JSON.stringify(exemplo))
+    render(<TodoSidebar />)
+    const section = await screen.findByRole('button', { name: /^Night campaigns/ })
+    if (section.getAttribute('aria-expanded') === 'false') fireEvent.click(section)
+    // OITO is assisted with one night task (OITO-08); ABERTA and DEPOIS have none.
+    await waitFor(() => expect(rowOrder()).toEqual(['OITO', 'NOTURNA']))
+    const oito = screen.getByRole('button', { name: /^OITO/ })
+    expect(oito).toHaveTextContent('0/1 · 0%')
+    // Readiness counts only the night task: OITO-08 is the one ready task the night agent can run.
+    expect(oito).toHaveTextContent('1 ready')
+    expect(oito).not.toHaveTextContent('3 ready')
+    fireEvent.click(oito)
+    expect(screen.getByText('OITO-08')).toBeInTheDocument()
+    expect(screen.queryByText('OITO-03')).toBeNull()
+    // The night-window campaign lists and counts only its night task; NOTURNA-02 is assisted.
+    const noturna = screen.getByRole('button', { name: /^NOTURNA/ })
+    expect(noturna).toHaveTextContent('0/1 · 0%')
+    fireEvent.click(noturna)
+    expect(screen.getByText('NOTURNA-01')).toBeInTheDocument()
+    expect(screen.queryByText('NOTURNA-02')).toBeNull()
+  })
+
   it('lists a fully concluded night in the Completed section, collapsed, with no zero count on top', async () => {
     fs.files.set(REGISTRY, JSON.stringify(exemplo))
     fs.files.set(
@@ -3704,7 +3727,7 @@ describe('Active campaign step', () => {
     useTodosStore.setState({ tab: 'night', activeCampaigns: { [id]: 'OITO' } })
     orchestrator.jobs = [{ id: 'o', task: 'OITO-03', status: 'running', cwd: 'C:\\repo' }]
     render(<TodoSidebar />)
-    await waitFor(() => expect(screen.getByRole('progressbar')).toHaveTextContent('1 / 8'))
+    await waitFor(() => expect(screen.getByRole('progressbar')).toHaveTextContent('0 / 1'))
   })
 
   it('shows no Night tab bar when no night campaign is running', async () => {
@@ -4452,7 +4475,7 @@ it('shows selected live night campaign progress and keeps it out of Personal', a
   useTodosStore.setState({ tab: 'night', activeCampaigns: { [id]: 'OITO' } })
   orchestrator.jobs = [{ id: 'night-job', task: 'OITO-08', status: 'running', cwd: 'C:\\repo' }]
   render(<TodoSidebar />)
-  expect(await screen.findByRole('progressbar')).toHaveTextContent('1 / 8')
+  expect(await screen.findByRole('progressbar')).toHaveTextContent('0 / 1')
   fireEvent.click(screen.getByRole('tab', { name: /^Personal/ }))
   expect(screen.queryByRole('progressbar')).toBeNull()
 })

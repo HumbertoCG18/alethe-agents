@@ -1268,6 +1268,15 @@ pub struct Planner {
     pub agent: String,
 }
 
+/// A job's live worker process and the input that feeds it, kept as one value: whatever is about
+/// to write to a worker holds the process it writes to, so a write meant for one process never
+/// lands in the one a revive started after it, and its failure never ends that run (#173).
+#[derive(Clone)]
+struct Worker {
+    process: Arc<Mutex<Child>>,
+    stdin: Arc<Mutex<Option<ChildStdin>>>,
+}
+
 struct Job {
     id: String,
     planner_id: Option<String>,
@@ -1310,8 +1319,7 @@ struct Job {
     effort: Option<String>,
     /// The request the worker is stopped on, kept with the rpc id it must be answered with.
     pending: Option<Value>,
-    child: Option<Arc<Mutex<Child>>>,
-    stdin: Option<Arc<Mutex<ChildStdin>>>,
+    worker: Option<Worker>,
     /// Held by a worker process's reader from finding an event current until it is applied, and by
     /// a revive while it queues the next run, so such an event never lands in the run after it.
     /// Always taken before `Core::inner`, never while holding it.
@@ -1477,8 +1485,7 @@ impl Job {
             model: text("model"),
             effort: text("effort"),
             pending: None,
-            child: None,
-            stdin: None,
+            worker: None,
             gate: Arc::default(),
             inbox: VecDeque::new(),
             routing: None,
@@ -1500,20 +1507,34 @@ impl Job {
 
     /// Whether `process` is the worker process this job runs now.
     fn runs(&self, process: &Arc<Mutex<Child>>) -> bool {
-        self.child
+        self.worker
             .as_ref()
-            .is_some_and(|child| Arc::ptr_eq(child, process))
+            .is_some_and(|worker| Arc::ptr_eq(&worker.process, process))
     }
 
+    /// Ends the worker process the way the Codex model probe does: its input closes, it gets
+    /// `WORKER_EXIT_GRACE` to leave on its own, and only then is its tree killed. On Windows the
+    /// process is often the `cmd.exe` running `codex.cmd`, so killing just that would leave Codex
+    /// running (#173), and killing Codex mid-call is tied to lsass crashes (#202). Callers hold
+    /// `inner`, so the wait runs on a thread of its own.
     fn teardown(&mut self) {
-        if let Some(child) = self.child.take() {
-            if let Ok(mut child) = child.lock() {
-                let _ = child.kill();
-                // Without the wait the killed worker is never reaped and stays as a zombie.
-                let _ = child.wait();
+        let Some(Worker { process, stdin }) = self.worker.take() else {
+            return;
+        };
+        thread::spawn(move || {
+            // Other handles to the input stay alive, so the pipe closes only once taken out. A
+            // handler stuck writing holds it until the kill below frees it, so this waits on a
+            // thread of its own.
+            thread::spawn(move || drop(guard(&stdin).take()));
+            let mut child = guard(&process);
+            #[cfg(test)]
+            log_process(child.id(), "teardown");
+            if !exited_within(&mut child, WORKER_EXIT_GRACE) {
+                kill_tree(&mut child);
             }
-        }
-        self.stdin = None;
+            // Without the wait the worker is never reaped and stays as a zombie.
+            let _ = child.wait();
+        });
     }
 }
 
@@ -1631,12 +1652,19 @@ pub struct Core {
     agy_agent: Arc<Mutex<Option<AgyAgent>>>,
     #[cfg(test)]
     reader_hook: Arc<Mutex<Option<ReaderHook>>>,
+    #[cfg(test)]
+    cancel_hook: Arc<Mutex<Option<CancelHook>>>,
 }
 
 /// Called by a worker's reader with each event it found current, just before applying it. Tests
 /// use it to hold an event in that spot.
 #[cfg(test)]
 pub type ReaderHook = Arc<dyn Fn(&Value) + Send + Sync>;
+
+/// Called by a cancel with the job's id once it has read the run it ends, just before it writes
+/// that run its interrupt. Tests use it to end and revive the job in that spot.
+#[cfg(test)]
+pub type CancelHook = Arc<dyn Fn(&str) + Send + Sync>;
 
 impl Default for Core {
     fn default() -> Self {
@@ -1660,6 +1688,8 @@ impl Default for Core {
             agy_agent: Arc::new(Mutex::new(None)),
             #[cfg(test)]
             reader_hook: Arc::new(Mutex::new(None)),
+            #[cfg(test)]
+            cancel_hook: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -1760,6 +1790,11 @@ fn thread_resume_params(
     params
 }
 
+/// How long a worker whose input closed gets to exit before its tree is killed. Measured with
+/// Codex 0.160 on Windows, after `initialize`, 5 runs each: `codex.cmd` and its tree left
+/// 106-322 ms after the close, the standalone `codex.exe` 57-532 ms, and no run took over 1.4 s.
+pub(crate) const WORKER_EXIT_GRACE: Duration = Duration::from_secs(5);
+
 /// Whether the process ended within `limit`. Never waits past it, even when the OS cannot say.
 fn exited_within(child: &mut Child, limit: Duration) -> bool {
     let deadline = Instant::now() + limit;
@@ -1772,20 +1807,48 @@ fn exited_within(child: &mut Child, limit: Duration) -> bool {
     }
 }
 
+/// What happened to which process and when: `teardown` as a worker's teardown starts its wait,
+/// `kill_tree` as a process is killed. Tests tell from it a worker that left on its own from one
+/// that was killed, and how long it was given.
+#[cfg(test)]
+static PROCESS_LOG: Mutex<Vec<(u32, &'static str, Instant)>> = Mutex::new(Vec::new());
+
+#[cfg(test)]
+fn log_process(pid: u32, event: &'static str) {
+    guard(&PROCESS_LOG).push((pid, event, Instant::now()));
+}
+
+/// When `event` last happened to process `pid`. A pid can be reused, so callers compare the time
+/// with when their own process started.
+#[cfg(test)]
+pub fn process_event(pid: u32, event: &str) -> Option<Instant> {
+    guard(&PROCESS_LOG)
+        .iter()
+        .rev()
+        .find(|(logged, name, _)| *logged == pid && *name == event)
+        .map(|(_, _, at)| *at)
+}
+
 /// Kills a process and what it started. On Windows the child is often the `cmd.exe` running
-/// `codex.cmd`, and killing only that would leave Codex running. `taskkill` is started, not waited
-/// on, so a slow one cannot hold the caller.
+/// `codex.cmd`, and killing only that would leave Codex running. `taskkill /T` finds the tree
+/// through its root, so the root is killed only after `taskkill` is done; a slow one holds the
+/// caller for `WORKER_EXIT_GRACE` at most.
 fn kill_tree(child: &mut Child) {
+    #[cfg(test)]
+    log_process(child.id(), "kill_tree");
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        let _ = Command::new("taskkill")
+        let killer = Command::new("taskkill")
             .args(["/T", "/F", "/PID", &child.id().to_string()])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .creation_flags(CREATE_NO_WINDOW)
             .spawn();
+        if let Ok(mut killer) = killer {
+            let _ = exited_within(&mut killer, WORKER_EXIT_GRACE);
+        }
     }
     let _ = child.kill();
 }
@@ -2056,8 +2119,9 @@ fn claude_worker_args(
     args
 }
 
-fn send_rpc(stdin: &Arc<Mutex<ChildStdin>>, value: &Value) -> Result<(), String> {
+fn send_rpc(stdin: &Arc<Mutex<Option<ChildStdin>>>, value: &Value) -> Result<(), String> {
     let mut stdin = guard(stdin);
+    let stdin = stdin.as_mut().ok_or("the worker's input is closed")?;
     serde_json::to_writer(&mut *stdin, value).map_err(|error| error.to_string())?;
     stdin.write_all(b"\n").map_err(|error| error.to_string())?;
     stdin.flush().map_err(|error| error.to_string())
@@ -2065,25 +2129,25 @@ fn send_rpc(stdin: &Arc<Mutex<ChildStdin>>, value: &Value) -> Result<(), String>
 
 /// Builds a request without sending it. Writing to a worker's stdin blocks once that pipe fills, so
 /// doing it under the orchestrator lock would let one stuck worker freeze every other job. Callers
-/// stage the request, release the lock, and only then hand it to `send_rpc`.
+/// stage the request, release the lock, and only then write it to the worker this returns.
 fn stage_rpc(
     inner: &mut Inner,
     job_id: &str,
     method: &str,
     params: Value,
-) -> Result<(Arc<Mutex<ChildStdin>>, Value), String> {
+) -> Result<(Worker, Value), String> {
     let job = inner
         .jobs
         .get_mut(job_id)
         .ok_or_else(|| format!("unknown job {job_id}"))?;
-    let stdin = job
-        .stdin
+    let worker = job
+        .worker
         .clone()
         .ok_or_else(|| format!("job {job_id} has no live worker"))?;
     job.next_request_id += 1;
     let id = job.next_request_id;
     Ok((
-        stdin,
+        worker,
         json!({ "id": id, "method": method, "params": params }),
     ))
 }
@@ -2104,14 +2168,14 @@ fn take_next_turn(job: &mut Job) -> Option<String> {
 
 /// Pops the next queued message for a worker and turns it into a fresh turn on its own thread, so
 /// the follow-up keeps everything the worker already read.
-fn next_from_inbox(inner: &mut Inner, job_id: &str) -> Option<(Arc<Mutex<ChildStdin>>, Value)> {
+fn next_from_inbox(inner: &mut Inner, job_id: &str) -> Option<(Worker, Value)> {
     let job = inner.jobs.get_mut(job_id)?;
-    let stdin = job.stdin.clone()?;
+    let worker = job.worker.clone()?;
     let thread_id = job.thread_id.clone()?;
     let agent = job.agent.clone();
     let message = take_next_turn(job)?;
     if is_stream_worker(&agent) {
-        return Some((stdin, user_turn(&agent, &message)));
+        return Some((worker, user_turn(&agent, &message)));
     }
     stage_rpc(
         inner,
@@ -2137,7 +2201,7 @@ fn release_oldest_parked(inner: &mut Inner) {
                 inner
                     .jobs
                     .get(*id)
-                    .is_some_and(|job| job.settled() && job.stdin.is_some())
+                    .is_some_and(|job| job.settled() && job.worker.is_some())
             })
             .cloned()
             .collect();
@@ -2291,6 +2355,11 @@ impl Core {
     #[cfg(test)]
     pub fn set_reader_hook(&self, hook: ReaderHook) {
         *guard(&self.reader_hook) = Some(hook);
+    }
+
+    #[cfg(test)]
+    pub fn set_cancel_hook(&self, hook: CancelHook) {
+        *guard(&self.cancel_hook) = Some(hook);
     }
 
     pub fn set_launcher(&self, launcher: Launcher) {
@@ -2731,7 +2800,7 @@ impl Core {
         // crashes on Windows (#202), so that is only the fallback. Both waits are bounded, so the
         // settings page never hangs on a Codex that will not go.
         drop(stdin);
-        if !exited_within(&mut child, Duration::from_secs(5)) {
+        if !exited_within(&mut child, WORKER_EXIT_GRACE) {
             kill_tree(&mut child);
             let _ = exited_within(&mut child, Duration::from_secs(5));
         }
@@ -3007,7 +3076,7 @@ impl Core {
         };
 
         let stdin = match child.stdin.take() {
-            Some(stdin) => Arc::new(Mutex::new(stdin)),
+            Some(stdin) => Arc::new(Mutex::new(Some(stdin))),
             None => {
                 let _ = child.kill();
                 self.settle(job_id, STATUS_FAILED, "failed", "worker has no stdin");
@@ -3020,8 +3089,10 @@ impl Core {
         {
             let mut inner = guard(&self.inner);
             if let Some(job) = inner.jobs.get_mut(job_id) {
-                job.child = Some(Arc::clone(&child));
-                job.stdin = Some(Arc::clone(&stdin));
+                job.worker = Some(Worker {
+                    process: Arc::clone(&child),
+                    stdin: Arc::clone(&stdin),
+                });
             }
             self.notify(&inner);
         }
@@ -3087,9 +3158,9 @@ impl Core {
                 &json!({ "id": CONFIG_READ_ID, "method": "config/read", "params": { "cwd": cwd } }),
             );
             if asked.is_err() {
-                self.settle(
+                self.settle_from(
                     job_id,
-                    STATUS_FAILED,
+                    &child,
                     "start-failed",
                     "codex did not start the worker: it did not take the request for its config",
                 );
@@ -3131,7 +3202,8 @@ impl Core {
                     // worker's turn must not take its words. The gate keeps a revive from starting
                     // that run while an event found current here is still being applied, AGY log
                     // waits and diffs included. A release does not wait for it: it only ends this
-                    // run, and it kills a process whose input this handler may be stuck writing.
+                    // run, and `WORKER_EXIT_GRACE` later its teardown kills a process whose
+                    // input this handler may be stuck writing.
                     let _applying = guard(&gate);
                     let current = guard(&core.inner)
                         .jobs
@@ -3213,14 +3285,17 @@ impl Core {
             .and_then(|job| job.started_at);
         thread::spawn(move || {
             thread::sleep(Duration::from_millis(timeout_ms));
-            let (payload, written) = {
-                let inner = guard(&core.inner);
+            // The run, its worker and the interrupt for it are read under one lock, so neither the
+            // interrupt nor the stop reaches a run revived after this one ended.
+            let (worker, interrupt, written) = {
+                let mut inner = guard(&core.inner);
                 let Some(job) = inner.jobs.get(&job_id) else {
                     return;
                 };
                 if job.settled() || job.started_at != run {
                     return;
                 }
+                let worker = job.worker.clone();
                 let payload = match (job.thread_id.clone(), job.active_turn_id.clone()) {
                     (Some(thread_id), Some(turn_id)) => {
                         Some(json!({ "threadId": thread_id, "turnId": turn_id }))
@@ -3238,26 +3313,25 @@ impl Core {
                 } else {
                     tail(&format!("{report}\n\n{reply}"), REPLY_LIMIT)
                 };
-                (payload, written)
+                let interrupt = payload
+                    .and_then(|payload| {
+                        stage_rpc(&mut inner, &job_id, "turn/interrupt", payload).ok()
+                    })
+                    .map(|(_, request)| request);
+                (worker, interrupt, written)
             };
-            if let Some(payload) = payload {
-                let staged = {
-                    let mut inner = guard(&core.inner);
-                    stage_rpc(&mut inner, &job_id, "turn/interrupt", payload)
-                };
-                if let Ok((stdin, request)) = staged {
-                    // Detached: a worker that stopped reading its input can hold the write, and
-                    // the stop below still has to happen on time. The teardown closes the pipe.
-                    thread::spawn(move || {
-                        let _ = send_rpc(&stdin, &request);
-                    });
-                }
+            if let (Some(worker), Some(request)) = (worker.clone(), interrupt) {
+                // Detached: a worker that stopped reading its input can hold the write, and the
+                // stop below still has to happen on time. The teardown closes the pipe.
+                thread::spawn(move || {
+                    let _ = send_rpc(&worker.stdin, &request);
+                });
             }
             let stopped = format!(
                 "worker passed its {}s budget and was stopped",
                 timeout_ms / 1000
             );
-            core.finish(
+            core.finish_turn(
                 &job_id,
                 STATUS_FAILED,
                 Some("timeout".into()),
@@ -3267,6 +3341,8 @@ impl Core {
                     format!("{stopped}. What it had written by then:\n\n{written}")
                 },
                 true,
+                true,
+                worker.as_ref().map(|worker| &worker.process),
             );
         });
     }
@@ -3337,19 +3413,15 @@ impl Core {
         })
     }
 
-    /// Writes a turn to a live worker. A failed check or write ends the job, process and all.
-    fn send_turn(
-        &self,
-        job_id: &str,
-        stdin: &Arc<Mutex<ChildStdin>>,
-        request: &Value,
-    ) -> Result<(), String> {
+    /// Writes a turn to `worker`. A failed check or write ends the job, process and all, while
+    /// that worker is still the job's.
+    fn send_turn(&self, job_id: &str, worker: &Worker, request: &Value) -> Result<(), String> {
         if let Err(error) = self.verify_agy_agent(job_id) {
-            self.settle(job_id, STATUS_FAILED, "failed", &error);
+            self.settle_from(job_id, &worker.process, "failed", &error);
             return Err(error);
         }
-        if let Err(error) = send_rpc(stdin, request) {
-            self.settle(job_id, STATUS_FAILED, "send-failed", &error);
+        if let Err(error) = send_rpc(&worker.stdin, request) {
+            self.settle_from(job_id, &worker.process, "send-failed", &error);
             return Err(error);
         }
         Ok(())
@@ -3365,12 +3437,27 @@ impl Core {
         );
     }
 
+    /// Fails the job over something that went wrong with `process`, unless that process stopped
+    /// being the job's meanwhile. A write blocked on a worker fails only once its teardown kills
+    /// it, which can be after the job was revived: that must not end the run that followed.
+    fn settle_from(&self, job_id: &str, process: &Arc<Mutex<Child>>, outcome: &str, text: &str) {
+        self.finish_turn(
+            job_id,
+            STATUS_FAILED,
+            Some(outcome.to_string()),
+            text.to_string(),
+            true,
+            true,
+            Some(process),
+        );
+    }
+
     /// A worker stops on these until someone answers. Anything we do not recognise is refused
     /// rather than left pending, because an unanswered request hangs that worker for good.
     fn on_worker_request(
         &self,
         job_id: &str,
-        stdin: &Arc<Mutex<ChildStdin>>,
+        stdin: &Arc<Mutex<Option<ChildStdin>>>,
         rpc_id: &Value,
         method: &str,
         params: &Value,
@@ -3416,7 +3503,7 @@ impl Core {
         if !DECISIONS.contains(&decision) {
             return Err(format!("decision must be one of {}", DECISIONS.join(", ")));
         }
-        let (stdin, rpc_id) = {
+        let (worker, rpc_id) = {
             let mut inner = guard(&self.inner);
             let job = inner
                 .jobs
@@ -3430,16 +3517,16 @@ impl Core {
                 .get("rpcId")
                 .cloned()
                 .ok_or_else(|| "the pending request has no id to answer".to_string())?;
-            let stdin = job
-                .stdin
+            let worker = job
+                .worker
                 .clone()
                 .ok_or_else(|| format!("job {job_id} has no live worker"))?;
             job.status = STATUS_RUNNING.to_string();
             self.notify(&inner);
-            (stdin, rpc_id)
+            (worker, rpc_id)
         };
         send_rpc(
-            &stdin,
+            &worker.stdin,
             &json!({ "id": rpc_id, "result": { "decision": decision } }),
         )?;
         Ok(json!({ "answered": job_id, "decision": decision }))
@@ -3461,70 +3548,57 @@ impl Core {
     pub fn cancel_jobs(&self, job_ids: &[String]) -> Vec<String> {
         let mut cancelled = Vec::new();
         for job_id in job_ids.iter().cloned() {
-            let claude = {
-                let inner = guard(&self.inner);
-                inner.jobs.get(&job_id).map(|job| job.agent == "claude")
-            };
-            if claude == Some(true) {
-                // `cancel_queued` clears the CLI's own queue in the same round trip, so nothing
-                // it was holding starts a turn between the abort and the teardown below.
-                let staged = {
-                    let mut inner = guard(&self.inner);
-                    inner.jobs.get_mut(&job_id).and_then(|job| {
-                        job.awaiting_steer = false;
-                        job.next_request_id += 1;
-                        let request_id = format!("{job_id}-interrupt-{}", job.next_request_id);
-                        job.stdin.clone().map(|stdin| {
-                            (
-                                stdin,
-                                json!({
-                                    "type": "control_request",
-                                    "request_id": request_id,
-                                    "request": { "subtype": "interrupt", "cancel_queued": true }
-                                }),
-                            )
-                        })
-                    })
+            // The run there now, its worker and the interrupt for it are read under one lock, and
+            // the cancel acts on that run only. The interrupt can wait on a worker that stopped
+            // reading until its teardown kills it; a run revived meanwhile is a later request and
+            // neither gets the interrupt nor ends.
+            let (worker, interrupt) = {
+                let mut inner = guard(&self.inner);
+                let Some(job) = inner.jobs.get_mut(&job_id) else {
+                    cancelled.push(job_id);
+                    continue;
                 };
-                if let Some((stdin, request)) = staged {
-                    let _ = send_rpc(&stdin, &request);
-                }
-                self.finish(
-                    &job_id,
-                    STATUS_CANCELLED,
-                    Some("cancelled".into()),
-                    "cancelled by the lead".into(),
-                    true,
-                );
-                cancelled.push(job_id);
-                continue;
-            }
-            let payload = {
-                let inner = guard(&self.inner);
-                inner.jobs.get(&job_id).and_then(|job| {
+                let worker = job.worker.clone();
+                let interrupt = if job.agent == "claude" {
+                    // `cancel_queued` clears the CLI's own queue in the same round trip, so nothing
+                    // it was holding starts a turn between the abort and the teardown below.
+                    job.awaiting_steer = false;
+                    job.next_request_id += 1;
+                    Some(json!({
+                        "type": "control_request",
+                        "request_id": format!("{job_id}-interrupt-{}", job.next_request_id),
+                        "request": { "subtype": "interrupt", "cancel_queued": true }
+                    }))
+                } else {
                     match (job.thread_id.clone(), job.active_turn_id.clone()) {
-                        (Some(thread_id), Some(turn_id)) => {
-                            Some(json!({ "threadId": thread_id, "turnId": turn_id }))
-                        }
+                        (Some(thread_id), Some(turn_id)) => stage_rpc(
+                            &mut inner,
+                            &job_id,
+                            "turn/interrupt",
+                            json!({ "threadId": thread_id, "turnId": turn_id }),
+                        )
+                        .ok()
+                        .map(|(_, request)| request),
                         _ => None,
                     }
-                })
-            };
-            if let Some(payload) = payload {
-                let staged = {
-                    let mut inner = guard(&self.inner);
-                    stage_rpc(&mut inner, &job_id, "turn/interrupt", payload)
                 };
-                if let Ok((stdin, request)) = staged {
-                    let _ = send_rpc(&stdin, &request);
-                }
+                (worker, interrupt)
+            };
+            #[cfg(test)]
+            if let Some(hook) = guard(&self.cancel_hook).clone() {
+                hook(&job_id);
             }
-            self.finish(
+            if let (Some(worker), Some(interrupt)) = (&worker, &interrupt) {
+                let _ = send_rpc(&worker.stdin, interrupt);
+            }
+            self.finish_turn(
                 &job_id,
                 STATUS_CANCELLED,
                 Some("cancelled".into()),
                 "cancelled by the lead".into(),
                 true,
+                true,
+                worker.as_ref().map(|worker| &worker.process),
             );
             cancelled.push(job_id);
         }
@@ -3534,7 +3608,7 @@ impl Core {
     fn on_worker_message(
         &self,
         job_id: &str,
-        stdin: &Arc<Mutex<ChildStdin>>,
+        stdin: &Arc<Mutex<Option<ChildStdin>>>,
         spec: &str,
         message: &Value,
     ) {
@@ -4091,8 +4165,8 @@ impl Core {
             }
             self.notify(&inner);
         }
-        if let Some((stdin, request)) = staged {
-            if self.send_turn(job_id, &stdin, &request).is_err() {
+        if let Some((worker, request)) = staged {
+            if self.send_turn(job_id, &worker, &request).is_err() {
                 return;
             }
         }
@@ -5152,8 +5226,7 @@ fn dispatch_tool(
                             model: model.clone(),
                             effort: effort.clone(),
                             pending: None,
-                            child: None,
-                            stdin: None,
+                            worker: None,
                             gate: Arc::default(),
                             inbox: VecDeque::new(),
                             routing: fallback_note.clone(),
@@ -5342,9 +5415,9 @@ fn dispatch_tool(
                 // turn is `interrupt`. Queueing the correction first and aborting second gets the
                 // same result, because `finish_turn` hands the inbox straight back to the worker.
                 let live = job.status == STATUS_RUNNING;
-                let stdin = job.stdin.clone();
-                match (live, stdin) {
-                    (true, Some(stdin)) => {
+                let worker = job.worker.clone();
+                match (live, worker) {
+                    (true, Some(worker)) => {
                         job.inbox.push_front(message);
                         job.awaiting_steer = true;
                         job.next_request_id += 1;
@@ -5356,7 +5429,7 @@ fn dispatch_tool(
                             "request_id": request_id,
                             "request": { "subtype": "interrupt" }
                         });
-                        send_rpc(&stdin, &request)?;
+                        send_rpc(&worker.stdin, &request)?;
                         return Ok(json!({ "steered": job_id }));
                     }
                     _ => {
@@ -5373,7 +5446,7 @@ fn dispatch_tool(
             }
             let turn_id =
                 turn_id.ok_or_else(|| format!("job {job_id} has no running turn to steer"))?;
-            let (stdin, request) = stage_rpc(
+            let (worker, request) = stage_rpc(
                 &mut inner,
                 &job_id,
                 "turn/steer",
@@ -5384,7 +5457,7 @@ fn dispatch_tool(
                 }),
             )?;
             drop(inner);
-            send_rpc(&stdin, &request)?;
+            send_rpc(&worker.stdin, &request)?;
             Ok(json!({ "steered": job_id, "turnId": turn_id }))
         }
 
@@ -5402,7 +5475,7 @@ fn dispatch_tool(
                 .ok_or_else(|| format!("job {job_id} has no thread"))?;
             // A worker whose process is gone still has its thread on disk, so instead of refusing
             // the message it is started again and picks up where it left off.
-            if job.stdin.is_none() {
+            if job.worker.is_none() {
                 if job.agent == "antigravity" && job.git_pin.is_none() {
                     return Err("this Antigravity worker ran before Alethe pinned its worktree, so it is not run again; delegate the task again".into());
                 }
@@ -5459,12 +5532,12 @@ fn dispatch_tool(
             }
             // A stream worker's process is already sitting there, multi-turn — the next line written
             // on its stdin just is the next turn, no `turn/start` RPC to build like Codex needs.
-            let (stdin, request) = if is_stream_worker(&job.agent) {
-                let stdin = job
-                    .stdin
+            let (worker, request) = if is_stream_worker(&job.agent) {
+                let worker = job
+                    .worker
                     .clone()
                     .ok_or_else(|| format!("job {job_id} has no live worker"))?;
-                (stdin, user_turn(&job.agent, &message))
+                (worker, user_turn(&job.agent, &message))
             } else {
                 stage_rpc(
                     &mut inner,
@@ -5490,7 +5563,7 @@ fn dispatch_tool(
             drop(inner);
             // The slot was taken before the write, so a worker that never receives the turn has to
             // give it back rather than hold it until the process dies.
-            core.send_turn(&job_id, &stdin, &request)?;
+            core.send_turn(&job_id, &worker, &request)?;
             core.persist();
             Ok(json!({ "sent": job_id }))
         }
@@ -5671,8 +5744,7 @@ mod restart_tests {
             model: None,
             effort: None,
             pending: None,
-            child: None,
-            stdin: None,
+            worker: None,
             gate: Arc::default(),
             inbox: VecDeque::new(),
             routing: None,

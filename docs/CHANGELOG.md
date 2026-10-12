@@ -10,6 +10,7 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ## [Unreleased]
 
+- Stopping an orchestration worker (cancel, release, budget timeout, or a Codex thread that never opens) no longer leaves its agent running on Windows, where the process Alethe starts is often only a `codex.cmd` wrapper. The worker's input is closed first so it can exit on its own; only one still running 5 seconds later has its whole process tree killed.
 - Night tab: a campaign is listed only when it has night-window tasks, shows just those tasks, and its progress counts only them, whatever the campaign's own window.
 - Remote: a phone can stay paired across Alethe restarts with the new **Permanent** session length, which asks you to set a 4 to 8 digit PIN first. A remembered phone unused for a week must enter the PIN again, even if Alethe stayed open, and five wrong PINs, counted across restarts, forget it until you pair it again. With Permanent chosen, remote control starts with Alethe; revoke phones from the device list while it is on, and choosing another length removes the PIN and signs every phone out. If Alethe cannot save the remembered phones, it removes the PIN so none come back after a restart. Ported from upstream #327.
 - Remote: attach photos from the phone to Claude Code and Codex and send them with the text in one tap, and the terminal now fits the phone width without sideways panning. A reopened QR link falls back to the saved session, page zoom is blocked, and a first-visit guide explains sending. Ported from upstream #326.

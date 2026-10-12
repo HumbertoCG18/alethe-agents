@@ -978,6 +978,16 @@
           "depende_de": [],
           "origem": "CODE",
           "achado": "ACH-0020"
+        },
+        {
+          "id": "REMOTO-08",
+          "titulo": "Tomar de volta a mensagem enfileirada sem apagar a de outro aparelho ou do desktop (ocupado por terminal em Rust)",
+          "nivel": "T2",
+          "estado": "proposta",
+          "depende_de": [
+            "REMOTO-06"
+          ],
+          "origem": "DECISION"
         }
       ]
     }

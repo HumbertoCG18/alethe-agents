@@ -952,8 +952,8 @@ svg {
   padding: 0;
   border: 0;
   border-radius: 50%;
-  background: rgb(0 0 0 / 0.65);
-  color: #fff;
+  background: color-mix(in srgb, var(--bg) 70%, transparent);
+  color: var(--fg);
 }
 .composer-photo button svg {
   width: 13px;
@@ -985,9 +985,6 @@ svg {
   opacity: 1;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.msg-pending.is-queued {
-  cursor: pointer;
 }
 .msg-photos {
   display: flex;

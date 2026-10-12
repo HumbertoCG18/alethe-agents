@@ -554,7 +554,7 @@ describe('remote mobile conversations', () => {
     }
   })
 
-  describe('photos and the queue', () => {
+  describe('photos and pending messages', () => {
     const PHOTO_ID = 'abcdefghij012345.jpg'
     const routeFetch = () =>
       fetchMock.mockImplementation(async (path: string) => {
@@ -625,57 +625,15 @@ describe('remote mobile conversations', () => {
       await ui.loadTranscript('claude')
       await settle()
       expect(ui.chatSession().pending).toHaveLength(0)
-      expect(ui.chatSession().queued).toHaveLength(0)
-    })
-
-    it('takes a queued message back into the box, photo included', async () => {
-      ui.openChat('claude')
-      await settle()
-      // A turn is running, so Claude Code queues what the phone sends now.
-      ui.chatSession().waitingSince = Date.now()
-      await pickPhoto()
-      type('first line\nsecond line')
-      send()
-      await settle()
-      const bubble = document.querySelector<HTMLElement>('.msg-pending.is-queued')!
-      expect(bubble).not.toBeNull()
-      bubble.click()
-      await settle()
-      expect(calls('/api/agent-control')).toEqual([
-        { ptyId: 'claude', action: 'edit_queued', lines: 5 },
-      ])
-      expect(document.querySelector<HTMLTextAreaElement>('#message')!.value).toBe(
-        'first line\nsecond line',
-      )
-      expect(document.querySelectorAll('.composer-photo')).toHaveLength(1)
-      expect(ui.chatSession().queued).toHaveLength(0)
-      send()
-      await settle()
-      expect(calls('/api/message').at(-1)).toEqual({
-        ptyId: 'claude',
-        text: 'first line\nsecond line',
-        attachments: [PHOTO_ID],
-      })
-    })
-
-    it('does not offer to take back a message sent while Claude Code was idle', async () => {
-      ui.openChat('claude')
-      await settle()
-      type('hello')
-      send()
-      await settle()
-      expect(ui.chatSession().queued).toHaveLength(0)
-      expect(document.querySelector('.msg-pending.is-queued')).toBeNull()
     })
 
     it('confirms a multi-line message the server flattened to one line', async () => {
       ui.openChat('claude')
       await settle()
-      ui.chatSession().waitingSince = Date.now()
       type('first line\nsecond line')
       send()
       await settle()
-      expect(ui.chatSession().queued).toHaveLength(1)
+      expect(ui.chatSession().pending).toHaveLength(1)
       fetchMock.mockResolvedValueOnce(
         response(
           snapshot([
@@ -687,17 +645,6 @@ describe('remote mobile conversations', () => {
       await ui.loadTranscript('claude')
       await settle()
       expect(ui.chatSession().pending).toHaveLength(0)
-      expect(ui.chatSession().queued).toHaveLength(0)
-    })
-
-    it('does not offer to take back a Codex message', async () => {
-      ui.openChat('codex')
-      await settle()
-      type('hello')
-      send()
-      await settle()
-      expect(document.querySelector('.msg-pending.is-queued')).toBeNull()
-      expect(ui.chatSession('codex').queued).toHaveLength(0)
     })
   })
 })

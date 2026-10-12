@@ -5,7 +5,7 @@ use serde::Deserialize;
 use serde_json::json;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::sync::Arc;
+use std::sync::{Arc, PoisonError};
 use std::thread;
 use std::time::Duration;
 
@@ -464,9 +464,12 @@ fn handle_api(
                     )
                 }
             };
+        let input_lock = hub.pty_input_lock(&payload.pty_id);
+        let turn = input_lock.lock().unwrap_or_else(PoisonError::into_inner);
         let written = hub.with_active_session(generation, session_id, || {
             write_remote(sessions, &payload.pty_id, &input)
         })?;
+        drop(turn);
         if !written {
             return respond_session_inactive(stream);
         }
@@ -524,16 +527,9 @@ fn handle_api(
         // Claude Code queues a message typed while a turn is running and only
         // offers `ctrl+x ctrl+s` to send it now — a chord a phone keyboard
         // cannot type.
-        let (keys, preview): (Vec<String>, &str) = match payload.action.as_str() {
-            "interrupt" => (vec!["\x03".into()], "Interrupted the active agent turn"),
-            "send_now" if agent == "claude" => (
-                vec!["\x18".into(), "\x13".into()],
-                "Sent the queued message now",
-            ),
-            "edit_queued" if agent == "claude" => (
-                edit_queued_keys(payload.lines),
-                "Took the queued message back to edit",
-            ),
+        let (keys, preview): (&[&str], &str) = match payload.action.as_str() {
+            "interrupt" => (&["\x03"], "Interrupted the active agent turn"),
+            "send_now" if agent == "claude" => (&["\x18", "\x13"], "Sent the queued message now"),
             _ => {
                 return respond(
                     stream,
@@ -543,14 +539,13 @@ fn handle_api(
                 );
             }
         };
+        let input_lock = hub.pty_input_lock(&payload.pty_id);
+        let turn = input_lock.lock().unwrap_or_else(PoisonError::into_inner);
         let mut written = true;
         for (index, key) in keys.iter().enumerate() {
-            let key = key.as_str();
             if index > 0 {
-                // Each half of the chord must arrive as its own keypress; the
-                // up arrow also needs the queue moved into the box first.
-                let settle = index == 1 && payload.action == "edit_queued";
-                thread::sleep(Duration::from_millis(if settle { 250 } else { 60 }));
+                // Each half of the chord must arrive as its own keypress.
+                thread::sleep(Duration::from_millis(60));
             }
             written = hub.with_active_session(generation, session_id, || {
                 write_remote(sessions, &payload.pty_id, key)
@@ -559,6 +554,7 @@ fn handle_api(
                 break;
             }
         }
+        drop(turn);
         if !written {
             return respond_session_inactive(stream);
         }
@@ -616,10 +612,8 @@ fn handle_api(
         };
         // Only stored here: the photo reaches the agent together with the
         // text, in one send, so the phone can show it in the box until then.
-        let dir = attachment_dir();
-        prepare_attachment_dir(&dir)?;
-        let id = format!("{}.{extension}", nanoid::nanoid!(16));
-        std::fs::write(dir.join(&id), body).map_err(|error| error.to_string())?;
+        let dir = attachment_dir().ok_or("No cache folder to keep photos in")?;
+        let id = store_attachment(&dir, body, extension, MAX_ATTACHMENT_STORE)?;
         let device_name = hub.device_name(session_id);
         eprintln!("[remote] {device_name} (device {session_id}) uploaded a photo for {pty_id}");
         return respond(
@@ -690,6 +684,10 @@ fn handle_api(
                 r#"{"error":"Photos can only be sent to Codex and Claude Code"}"#,
             );
         }
+        // Photos, text and Enter go out as one sequence: no other remote
+        // write to this terminal can land between a paste and its Enter.
+        let input_lock = hub.pty_input_lock(&payload.pty_id);
+        let turn = input_lock.lock().unwrap_or_else(PoisonError::into_inner);
         for photo in &photos {
             // Bracketed paste is what makes both agents attach the image
             // (checked live: `[Image #1]`); typed as plain text it stays a path.
@@ -715,6 +713,7 @@ fn handle_api(
         let written = hub.with_active_session(generation, session_id, || {
             write_remote(sessions, &payload.pty_id, &line)
         })?;
+        drop(turn);
         if !written {
             return respond_session_inactive(stream);
         }
@@ -771,20 +770,42 @@ const MAX_ATTACHMENTS_PER_MESSAGE: usize = 6;
 const ATTACHMENT_SETTLE: Duration = Duration::from_millis(250);
 
 const ATTACHMENT_MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
+/// Ceiling for the whole upload folder (16 photos at the per-upload cap, far
+/// more at the few hundred KB the phone sends), so a paired device cannot
+/// fill the disk within the one-day retention.
+const MAX_ATTACHMENT_STORE: u64 = 16 * MAX_ATTACHMENT as u64;
 
 /// The user's own cache folder, not the shared temp dir: on Linux `/tmp` is
 /// open to every local user, who could read or swap a photo before it is
-/// pasted into the agent.
-fn attachment_dir() -> std::path::PathBuf {
-    dirs_next::cache_dir()
-        .map(|dir| dir.join("com.kc1t.alethe"))
-        .unwrap_or_else(std::env::temp_dir)
-        .join("remote-uploads")
+/// pasted into the agent. Without a cache folder, photos are refused.
+fn attachment_dir() -> Option<std::path::PathBuf> {
+    dirs_next::cache_dir().map(|dir| dir.join("com.kc1t.alethe").join("remote-uploads"))
 }
 
-/// Creates the folder owner-only and drops photos older than a day, which
-/// the agent has long since read.
-fn prepare_attachment_dir(dir: &std::path::Path) -> Result<(), String> {
+/// Held from the size check to the write, so two uploads cannot both see room
+/// under the cap and then overshoot it together.
+static ATTACHMENT_STORE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Stores one photo under a fresh id once it fits under `cap`.
+fn store_attachment(
+    dir: &std::path::Path,
+    body: &[u8],
+    extension: &str,
+    cap: u64,
+) -> Result<String, String> {
+    let _store = ATTACHMENT_STORE_LOCK
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    prepare_attachment_dir(dir, body.len(), cap)?;
+    let id = format!("{}.{extension}", nanoid::nanoid!(16));
+    std::fs::write(dir.join(&id), body).map_err(|error| error.to_string())?;
+    Ok(id)
+}
+
+/// Creates the folder owner-only, drops photos older than a day, which the
+/// agent has long since read, and then the oldest ones until `incoming` bytes
+/// fit under `cap`.
+fn prepare_attachment_dir(dir: &std::path::Path, incoming: usize, cap: u64) -> Result<(), String> {
     std::fs::create_dir_all(dir).map_err(|error| error.to_string())?;
     #[cfg(unix)]
     {
@@ -792,18 +813,35 @@ fn prepare_attachment_dir(dir: &std::path::Path) -> Result<(), String> {
         std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
             .map_err(|error| error.to_string())?;
     }
+    let mut kept = Vec::new();
     if let Ok(entries) = std::fs::read_dir(dir) {
         for entry in entries.flatten() {
-            let old = entry
-                .metadata()
-                .and_then(|meta| meta.modified())
-                .ok()
+            let Ok(meta) = entry.metadata() else {
+                continue;
+            };
+            let modified = meta.modified().ok();
+            let old = modified
                 .and_then(|modified| modified.elapsed().ok())
                 .is_some_and(|age| age > ATTACHMENT_MAX_AGE);
             if old {
                 let _ = std::fs::remove_file(entry.path());
+            } else {
+                kept.push((modified, meta.len(), entry.path()));
             }
         }
+    }
+    kept.sort_by_key(|(modified, ..)| *modified);
+    let mut total = incoming as u64 + kept.iter().map(|(_, len, _)| len).sum::<u64>();
+    for (_, len, path) in kept {
+        if total <= cap {
+            break;
+        }
+        if std::fs::remove_file(path).is_ok() {
+            total -= len;
+        }
+    }
+    if total > cap {
+        return Err("Photo storage is full".into());
     }
     Ok(())
 }
@@ -823,7 +861,7 @@ fn resolve_attachments(ids: &[String]) -> Option<Vec<String>> {
                     .bytes()
                     .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
                 && matches!(extension, "jpg" | "png" | "webp");
-            let file = dir.join(id);
+            let file = dir.as_ref()?.join(id);
             (valid && file.is_file()).then(|| file.to_string_lossy().to_string())
         })
         .collect()
@@ -845,23 +883,6 @@ struct RemoteAgentControl {
     #[serde(rename = "ptyId")]
     pty_id: String,
     action: String,
-    /// Lines of the queued text, for `edit_queued`.
-    #[serde(default)]
-    lines: usize,
-}
-
-/// Claude Code's up arrow moves the queued messages into its input box (they
-/// then no longer send by themselves); ctrl+u clears a line and backspace
-/// joins it to the one above, so the box ends up empty for the phone to
-/// take the text back. Checked live against Claude Code.
-fn edit_queued_keys(lines: usize) -> Vec<String> {
-    // One burst: ctrl+u clears a wrapped row at a time, so a long message
-    // needs many rounds (checked live: 689 chars cleared, not sent later).
-    let rounds = lines.clamp(1, 200);
-    vec![
-        "\x1b[A".into(),
-        format!("{}\x15", "\x15\x7f".repeat(rounds - 1)),
-    ]
 }
 
 fn question_answer_input(
@@ -1122,22 +1143,15 @@ fn respond_bytes_with_limit(
 #[cfg(test)]
 mod tests {
     use super::{
-        attachment_dir, attachment_extension, bearer_token, body_limit, edit_queued_keys,
-        find_headers_end, header_value, question_answer_input, resolve_attachments,
+        attachment_dir, attachment_extension, bearer_token, body_limit, find_headers_end,
+        header_value, prepare_attachment_dir, question_answer_input, resolve_attachments,
+        store_attachment,
     };
     use crate::remote::{MAX_ATTACHMENT, MAX_BODY};
 
     #[test]
-    fn edit_queued_clears_every_line_after_the_up_arrow() {
-        assert_eq!(edit_queued_keys(1), vec!["\x1b[A", "\x15"]);
-        assert_eq!(edit_queued_keys(3), vec!["\x1b[A", "\x15\x7f\x15\x7f\x15"]);
-        assert_eq!(edit_queued_keys(0), edit_queued_keys(1));
-        assert_eq!(edit_queued_keys(1_000)[1].len(), 199 * 2 + 1);
-    }
-
-    #[test]
     fn attachments_resolve_only_uploaded_ids() {
-        let dir = attachment_dir();
+        let dir = attachment_dir().unwrap();
         std::fs::create_dir_all(&dir).unwrap();
         let id = "testAttachment01.jpg";
         std::fs::write(dir.join(id), b"\xFF\xD8\xFF").unwrap();
@@ -1155,6 +1169,61 @@ mod tests {
         assert!(resolve_attachments(&vec![id.to_string(); 7]).is_none());
         assert_eq!(resolve_attachments(&[]), Some(vec![]));
         std::fs::remove_file(dir.join(id)).unwrap();
+    }
+
+    #[test]
+    fn the_upload_folder_evicts_the_oldest_photos_past_its_cap() {
+        let dir = std::env::temp_dir().join(format!("alethe-uploads-{}", nanoid::nanoid!(8)));
+        std::fs::create_dir_all(&dir).unwrap();
+        let now = std::time::SystemTime::now();
+        for (name, age) in [("old.jpg", 120), ("new.jpg", 60), ("stale.jpg", 2 * 86_400)] {
+            let path = dir.join(name);
+            std::fs::write(&path, [0_u8; 10]).unwrap();
+            std::fs::File::options()
+                .write(true)
+                .open(&path)
+                .unwrap()
+                .set_modified(now - std::time::Duration::from_secs(age))
+                .unwrap();
+        }
+        // 20 bytes kept + 10 incoming is 5 over the cap: only the oldest goes.
+        prepare_attachment_dir(&dir, 10, 25).unwrap();
+        assert!(!dir.join("stale.jpg").exists());
+        assert!(!dir.join("old.jpg").exists());
+        assert!(dir.join("new.jpg").exists());
+        assert!(prepare_attachment_dir(&dir, 26, 25).is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn concurrent_uploads_stay_under_the_folder_cap() {
+        let dir = std::env::temp_dir().join(format!("alethe-uploads-{}", nanoid::nanoid!(8)));
+        for _ in 0..200 {
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            // 30 + 40 fits for each upload alone; 30 + 40 + 40 does not.
+            std::fs::write(dir.join("seed.jpg"), [0_u8; 30]).unwrap();
+            let start = std::sync::Arc::new(std::sync::Barrier::new(2));
+            let uploads: Vec<_> = (0..2)
+                .map(|_| {
+                    let (dir, start) = (dir.clone(), start.clone());
+                    std::thread::spawn(move || {
+                        start.wait();
+                        store_attachment(&dir, &[0_u8; 40], "jpg", 100).unwrap();
+                    })
+                })
+                .collect();
+            for upload in uploads {
+                upload.join().unwrap();
+            }
+            let total: u64 = std::fs::read_dir(&dir)
+                .unwrap()
+                .flatten()
+                .map(|entry| entry.metadata().unwrap().len())
+                .sum();
+            assert!(total <= 100, "folder grew to {total} bytes");
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

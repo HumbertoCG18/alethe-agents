@@ -6,7 +6,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{mpsc, LockResult, Mutex, MutexGuard};
+use std::sync::{mpsc, Arc, LockResult, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use super::util::{local_ip, peer_ip, tailscale_ip, tokens_equal};
@@ -99,6 +99,8 @@ pub struct RemoteHub {
     failures: Mutex<HashMap<IpAddr, AuthFailures>>,
     message_rate: Mutex<HashMap<usize, MessageRate>>,
     attachment_rate: Mutex<HashMap<usize, MessageRate>>,
+    // ponytail: never pruned; one tiny entry per terminal written to remotely.
+    pty_input: Mutex<HashMap<String, Arc<Mutex<()>>>>,
     qr_cache: Mutex<Option<(String, String)>>,
     last_active_unix: AtomicU64,
 }
@@ -126,6 +128,7 @@ impl RemoteHub {
             failures: Mutex::new(HashMap::new()),
             message_rate: Mutex::new(HashMap::new()),
             attachment_rate: Mutex::new(HashMap::new()),
+            pty_input: Mutex::new(HashMap::new()),
             qr_cache: Mutex::new(None),
             last_active_unix: AtomicU64::new(unix_now()),
         }
@@ -505,6 +508,17 @@ impl RemoteHub {
         allow_rate(&self.attachment_rate, session_id, ATTACHMENT_RATE_LIMIT)
     }
 
+    /// Held across a whole remote input sequence on one terminal: a photo
+    /// paste waits for the agent to read it, and another device's Enter in
+    /// that gap would submit the photo with the wrong text.
+    pub(crate) fn pty_input_lock(&self, pty_id: &str) -> Arc<Mutex<()>> {
+        let mut locks = self
+            .pty_input
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        Arc::clone(locks.entry(pty_id.to_string()).or_default())
+    }
+
     pub(crate) fn session_id_for(&self, token: &str) -> Option<usize> {
         if token.is_empty() {
             return None;
@@ -706,6 +720,24 @@ mod tests {
     use std::sync::{mpsc, Arc};
     use std::thread;
     use std::time::Duration;
+
+    #[test]
+    fn writes_to_one_terminal_share_one_input_lock() {
+        let hub = RemoteHub::new();
+        assert!(Arc::ptr_eq(
+            &hub.pty_input_lock("a"),
+            &hub.pty_input_lock("a")
+        ));
+        assert!(!Arc::ptr_eq(
+            &hub.pty_input_lock("a"),
+            &hub.pty_input_lock("b")
+        ));
+        // A held sequence on "a" makes a second writer to "a" wait, not one to "b".
+        let held = hub.pty_input_lock("a");
+        let _turn = held.lock().unwrap();
+        assert!(hub.pty_input_lock("a").try_lock().is_err());
+        assert!(hub.pty_input_lock("b").try_lock().is_ok());
+    }
 
     #[test]
     fn activation_reports_enabled_only_with_both_ports() {

@@ -125,7 +125,6 @@ function chatSession(ptyId = selected) {
       sending: false,
       error: '',
       photos: [],
-      queued: [],
       pending: [],
       waitingSince: 0,
       waitingForAssistantAfter: null,
@@ -729,107 +728,6 @@ function bindTerminalGestures() {
   viewport.addEventListener('touchend', () => {
     pinchStart = 0
   })
-  viewport.addEventListener('click', (event) => {
-    const session = chatSession()
-    if (!session.queued.length || !terminal) return
-    const screen = viewport.querySelector('.xterm-screen')
-    const metrics = cellMetrics()
-    if (!screen || !metrics) return
-    const row = Math.floor((event.clientY - screen.getBoundingClientRect().top) / metrics.height)
-    const buffer = terminal.buffer.active
-    const line = buffer.getLine(buffer.viewportY + row)?.translateToString(true) || ''
-    if (isQueuedLine(line, session)) void editQueued(selected, session)
-  })
-}
-
-const QUEUE_MARKERS = ['to edit queued messages', 'to send now']
-
-/** The queued block Claude Code draws: its hint lines, or a line of the
- *  text this phone queued. */
-function isQueuedLine(line, session) {
-  // Older prompts in the history look the same; only while a queue is up.
-  if (!terminalShowsQueue()) return false
-  const text = withoutImageTags(line).toLowerCase()
-  if (QUEUE_MARKERS.some((marker) => text.includes(marker))) return true
-  if (text.length < 8) return false
-  // The queued text as Claude Code draws it, possibly wrapped: a tapped row
-  // is a slice of it.
-  return session.queued.some((item) => withoutImageTags(item.text).toLowerCase().includes(text))
-}
-
-function terminalShowsQueue() {
-  if (!terminal) return false
-  const buffer = terminal.buffer.active
-  for (let row = 0; row < terminal.rows; row += 1) {
-    const line =
-      buffer
-        .getLine(buffer.baseY + row)
-        ?.translateToString(true)
-        .toLowerCase() || ''
-    if (QUEUE_MARKERS.some((marker) => line.includes(marker))) return true
-  }
-  return false
-}
-
-/** Messages leave Claude Code's queue once its turn ends; after that a tap
- *  has nothing to take back. */
-function forgetConsumedQueue(session) {
-  if (!session.queued.length || terminalShowsQueue()) return
-  const settled = Date.now() - 1_500
-  session.queued = session.queued.filter((item) => item.sentAt > settled)
-}
-
-/** Takes the messages this phone queued in Claude Code back into the box,
- *  photos included, like the up arrow on the computer. */
-async function editQueued(ptyId, session) {
-  if (session.sending || connectionState !== 'live' || !session.queued.length) return
-  const items = session.queued.slice()
-  // ctrl+u clears one wrapped row at a time: count rows generously, extra
-  // rounds on an empty box do nothing.
-  const lines = items.reduce((total, item) => total + Math.ceil(item.text.length / 20) + 1, 0)
-  session.sending = true
-  session.error = ''
-  updateComposer()
-  try {
-    await api('/api/agent-control', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ptyId, action: 'edit_queued', lines: lines + 2 }),
-    })
-    session.queued = session.queued.filter((item) => !items.includes(item))
-    session.pending = session.pending.filter(
-      (item) => !items.some((queued) => queued.pending === item),
-    )
-    const draft = session.draft.trim()
-    session.draft = [...items.map((item) => item.text).filter(Boolean), draft]
-      .filter(Boolean)
-      .join('\n')
-    persistDraft(ptyId, session.draft)
-    session.photos = [
-      ...items.flatMap((item) => item.photos.map((photo) => ({ ...photo, uploading: false }))),
-      ...session.photos,
-    ].slice(0, MAX_PHOTOS)
-    session.controlNotice = 'chat.queueEditing'
-  } catch (error) {
-    if (error instanceof SessionError) {
-      renderSessionLost(error.message)
-      return
-    }
-    session.error = t('chat.queueEditError', { message: error.message || error })
-  } finally {
-    session.sending = false
-    if (selected === ptyId) {
-      const input = document.querySelector('#message')
-      if (input) {
-        input.value = session.draft
-        input.dispatchEvent(new Event('input'))
-        input.focus()
-      }
-      updateComposer()
-      updateChatFeedback()
-      if (chatView === 'messages') renderTranscript()
-    }
-  }
 }
 
 function subscribeSocket(ptyId) {
@@ -1014,7 +912,7 @@ function pendingMarkup() {
     .pending.filter((item) => !item.confirmed)
     .map(
       (item) =>
-        `<article class="msg msg-pending${chatSession().queued.some((queued) => queued.pending === item) ? ' is-queued' : ''}" data-role="user"><span class="msg-role">${t('role.user')} · ${t(item.sending ? 'chat.sending' : 'chat.sent')}</span>${item.photos?.length ? `<div class="msg-photos">${item.photos.map((url) => `<img src="${escapeHtml(url)}" alt="">`).join('')}</div>` : ''}${item.text ? `<div class="msg-body">${renderMarkdown(item.text)}</div>` : ''}</article>`,
+        `<article class="msg msg-pending" data-role="user"><span class="msg-role">${t('role.user')} · ${t(item.sending ? 'chat.sending' : 'chat.sent')}</span>${item.photos?.length ? `<div class="msg-photos">${item.photos.map((url) => `<img src="${escapeHtml(url)}" alt="">`).join('')}</div>` : ''}${item.text ? `<div class="msg-body">${renderMarkdown(item.text)}</div>` : ''}</article>`,
     )
     .join('')
 }
@@ -1110,7 +1008,6 @@ async function loadTranscript(ptyId) {
         )
       const match = matches[pending.occurrence]
       if (match) {
-        session.queued = session.queued.filter((item) => item.pending !== pending)
         pending.confirmed = true
         pending.answered = data.messages
           .slice(match.index + 1)
@@ -1443,10 +1340,6 @@ function renderChat() {
   document
     .querySelector('#messages')
     .addEventListener('scroll', updateMessagesJump, { passive: true })
-  document.querySelector('#messages').addEventListener('click', (event) => {
-    const bubble = event.target.closest('.msg-pending.is-queued')
-    if (bubble && chatSession().waitingSince) void editQueued(selected, chatSession())
-  })
   document.querySelector('#messages-latest').addEventListener('click', () => {
     const list = document.querySelector('#messages')
     list.scrollTop = list.scrollHeight
@@ -1722,8 +1615,6 @@ function bindComposer() {
     session.sending = true
     session.error = ''
     const key = withoutImageTags(text)
-    // A message sent while a turn runs is the one Claude Code queues.
-    const busy = !!session.waitingSince
     const pending = {
       text,
       photos: photos.map((photo) => photo.url),
@@ -1754,8 +1645,6 @@ function bindComposer() {
       persistDraft(ptyId, '')
       // Their object URLs stay alive: the pending bubble still shows them.
       session.photos = session.photos.filter((photo) => !photos.includes(photo))
-      if (canSendNow(ptyId) && (busy || chatView === 'terminal'))
-        session.queued.push({ text, photos, pending, sentAt: Date.now() })
       if (selected === ptyId) {
         const currentInput = document.querySelector('#message')
         if (currentInput) {
@@ -1885,8 +1774,6 @@ function connectSocket() {
       writeTerminal(message.text || '')
       if (stick) scrollTerminalToEnd()
       else updateJumpButton()
-      if (chatSession().queued.length)
-        window.setTimeout(() => forgetConsumedQueue(chatSession()), 300)
       return
     }
     if (message.type === 'pty_exit') {

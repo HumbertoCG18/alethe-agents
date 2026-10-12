@@ -24,6 +24,7 @@ import {
   liveTaskWorkers,
   nextTaskId,
   nightDiaryFiles,
+  nightView,
   parseCampaigns,
   parseFindings,
   parseNightDiary,
@@ -1199,5 +1200,96 @@ describe('task steps', () => {
     )!.campaigns
     expect(campaignStepTitle(campaign)).toBe('MOTOR-08 2/5')
     expect(campaignStepTitle({ ...campaign, tasks: campaign.tasks.slice(0, 4) })).toBeNull()
+  })
+})
+
+describe('nightView', () => {
+  const task = (id: string, estado: string, janela?: string) => ({
+    id,
+    titulo: id,
+    nivel: 'T1',
+    estado,
+    ...(janela ? { janela } : {}),
+  })
+  const campaigns = parse({
+    versao: 1,
+    projeto: 'x',
+    tronco: 'C:\repo',
+    campanhas: [
+      {
+        id: 'ASSIST',
+        prioridade: 1,
+        janela: 'assistida',
+        tarefas: [task('ASSIST-01', 'concluída'), task('ASSIST-02', 'pronta')],
+      },
+      {
+        id: 'MIXED',
+        prioridade: 2,
+        janela: 'assistida',
+        tarefas: [
+          task('MIXED-01', 'concluída'),
+          task('MIXED-02', 'concluída'),
+          task('MIXED-03', 'pronta', 'noite'),
+          task('MIXED-04', 'concluída', 'noite'),
+        ],
+      },
+      {
+        id: 'NIGHT',
+        prioridade: 3,
+        janela: 'noite',
+        tarefas: [task('NIGHT-01', 'concluída'), task('NIGHT-02', 'pronta', 'assistida')],
+      },
+    ],
+  })
+
+  const gated = parse({
+    versao: 1,
+    projeto: 'x',
+    tronco: 'C:\repo',
+    campanhas: [
+      {
+        id: 'GATED',
+        prioridade: 1,
+        janela: 'assistida',
+        tarefas: [
+          task('GATED-01', 'pronta'),
+          task('GATED-02', 'pronta'),
+          { ...task('GATED-03', 'pronta', 'noite'), depende_de: ['GATED-01'] },
+        ],
+      },
+    ],
+  })
+
+  it('drops an assisted campaign with no night task', () => {
+    expect(nightView(byId(campaigns, 'ASSIST'))).toBeNull()
+  })
+
+  it('keeps only the night tasks of an assisted campaign, and counts only those', () => {
+    const view = nightView(byId(campaigns, 'MIXED'))!
+    expect(view.tasks.map((item) => item.id)).toEqual(['MIXED-03', 'MIXED-04'])
+    expect([view.done, view.total, view.percent]).toEqual([1, 2, 50])
+    expect(view.situation.kind).not.toBe('done')
+  })
+
+  it('counts readiness from the night tasks only', () => {
+    const view = nightView(byId(campaigns, 'MIXED'))!
+    expect(view.situation).toEqual({ kind: 'ready', ready: 1, waits: [] })
+    const assisted = nightView(byId(gated, 'GATED'))!
+    // The night task waits on an unfinished assisted task of its campaign: not ready.
+    expect(assisted.tasks.map((item) => item.id)).toEqual(['GATED-03'])
+    expect(assisted.situation).toEqual({ kind: 'waits', ready: 0, waits: ['GATED-01'] })
+  })
+
+  it('is done once every night task is, whatever the rest of the campaign does', () => {
+    const mixed = byId(campaigns, 'MIXED')
+    const tasks = mixed.tasks.map((item) => ({ ...item, state: 'concluída' as const }))
+    expect(nightView({ ...mixed, tasks })!.situation.kind).toBe('done')
+  })
+
+  it('keeps only the night tasks of a night campaign: an assisted task in it is neither listed nor counted', () => {
+    const view = nightView(byId(campaigns, 'NIGHT'))!
+    expect(view.tasks.map((item) => item.id)).toEqual(['NIGHT-01'])
+    expect([view.done, view.total, view.percent]).toEqual([1, 1, 100])
+    expect(view.situation.kind).toBe('done')
   })
 })

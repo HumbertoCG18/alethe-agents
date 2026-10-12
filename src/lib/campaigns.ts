@@ -241,25 +241,11 @@ export function parseCampaigns(source: string): CampaignRegistry | null {
     for (const task of tasks) {
       task.unmet = [...campaign.dependsOn, ...task.dependsOn].filter((id) => !finished(id))
     }
-    const ready = tasks.filter(
-      (task) => task.state === 'pronta' && task.dependsOn.every(finished),
-    ).length
-    const waiting = campaign.dependsOn.filter((id) => !finished(id))
-    const taskWaits = [
-      ...new Set(
-        tasks
-          .filter((task) => task.state !== DONE)
-          .flatMap((task) => task.dependsOn.filter((id) => !finished(id))),
-      ),
-    ].sort()
-    let situation: CampaignSituation
-    if (campaignDone(campaign)) situation = { kind: 'done', ready: 0, waits: [] }
-    else if (waiting.length > 0) situation = { kind: 'waits', ready: 0, waits: waiting }
-    else if (tasks.some((task) => task.state === 'em execução'))
-      situation = { kind: 'running', ready, waits: [] }
-    else if (ready > 0) situation = { kind: 'ready', ready, waits: [] }
-    else if (taskWaits.length > 0) situation = { kind: 'waits', ready: 0, waits: taskWaits }
-    else situation = { kind: 'blocked', ready: 0, waits: [] }
+    const situation = situationOf(
+      tasks,
+      campaign.dependsOn.filter((id) => !finished(id)),
+      campaignDone(campaign),
+    )
     return {
       ...campaign,
       done,
@@ -270,6 +256,54 @@ export function parseCampaigns(source: string): CampaignRegistry | null {
     }
   })
   return { campaigns, errors: [] }
+}
+
+/**
+ * A campaign's situation from the given tasks, whose `unmet` already resolves dependencies against
+ * the whole registry; `waiting` is the campaign's own unfinished prerequisites.
+ */
+function situationOf(
+  tasks: readonly CampaignTask[],
+  waiting: string[],
+  complete: boolean,
+): CampaignSituation {
+  const ready = tasks.filter((task) => task.state === 'pronta' && task.unmet.length === 0).length
+  const taskWaits = [
+    ...new Set(
+      tasks
+        .filter((task) => task.state !== DONE)
+        .flatMap((task) => task.dependsOn.filter((id) => task.unmet.includes(id))),
+    ),
+  ].sort()
+  if (complete) return { kind: 'done', ready: 0, waits: [] }
+  if (waiting.length > 0) return { kind: 'waits', ready: 0, waits: waiting }
+  if (tasks.some((task) => task.state === 'em execução'))
+    return { kind: 'running', ready, waits: [] }
+  if (ready > 0) return { kind: 'ready', ready, waits: [] }
+  if (taskWaits.length > 0) return { kind: 'waits', ready: 0, waits: taskWaits }
+  return { kind: 'blocked', ready: 0, waits: [] }
+}
+
+/**
+ * A campaign as the Night tab sees it, whatever its own window: null when it has no night task,
+ * else its night tasks only and their progress.
+ */
+export function nightView(campaign: Campaign): Campaign | null {
+  const tasks = campaign.tasks.filter((task) => task.window === 'noite')
+  if (tasks.length === 0) return null
+  const done = tasks.filter((task) => task.state === DONE).length
+  return {
+    ...campaign,
+    tasks,
+    done,
+    total: tasks.length,
+    percent: Math.round((100 * done) / tasks.length),
+    situation: situationOf(
+      tasks,
+      campaign.dependsOn.filter((id) => campaign.tasks.some((task) => task.unmet.includes(id))),
+      done === tasks.length,
+    ),
+  }
 }
 
 /**

@@ -7,6 +7,7 @@ import {
   campaignPrerequisites,
   type CampaignSituation,
   campaignWorkers,
+  nightView,
   type RegistryError,
   type TaskState,
   type TaskWorkers,
@@ -105,10 +106,9 @@ export function CampaignsSection({
   const done = (campaign: Campaign) => campaign.situation.kind === 'done'
   // Stable sort: the active campaign first in its group, the rest in priority order.
   const campaigns = registry.campaigns
-    .filter(
-      (campaign) =>
-        (finished ? done(campaign) : !done(campaign) && (nightOnly || !live.has(campaign.id))) &&
-        (!nightOnly || campaign.night),
+    .flatMap((campaign) => (nightOnly ? (nightView(campaign) ?? []) : campaign))
+    .filter((campaign) =>
+      finished ? done(campaign) : !done(campaign) && (nightOnly || !live.has(campaign.id)),
     )
     .sort((a, b) => Number(b.id === activeId) - Number(a.id === activeId))
   if (finished && campaigns.length === 0 && !nightCompleted) return null
@@ -126,7 +126,6 @@ export function CampaignsSection({
     <CampaignRow
       key={campaign.id}
       campaign={campaign}
-      nightOnly={nightOnly}
       checkouts={registry.checkouts}
       pending={pending}
       active={campaign.id === activeId}
@@ -212,7 +211,6 @@ export function CampaignsSection({
 
 export function CampaignRow({
   campaign,
-  nightOnly,
   checkouts,
   pending = NO_TASKS,
   active,
@@ -225,7 +223,6 @@ export function CampaignRow({
   night,
 }: {
   campaign: Campaign
-  nightOnly: boolean
   checkouts: GitCheckouts
   pending?: ReadonlySet<string>
   active: boolean
@@ -324,7 +321,7 @@ export function CampaignRow({
           )}
           <ul className={styles.tasks}>
             {campaign.tasks
-              .filter((task) => !pending.has(task.id) && (!nightOnly || task.window === 'noite'))
+              .filter((task) => !pending.has(task.id))
               .map((task) => (
                 <li key={task.id} className={styles.task}>
                   <span

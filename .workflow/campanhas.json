@@ -555,11 +555,13 @@
           "id": "ELO-09",
           "titulo": "Isolar os workers Claude e Codex das instruções, hooks e plugins globais e rever o bypassPermissions do Claude",
           "nivel": "T3",
-          "estado": "proposta",
+          "estado": "concluída",
           "depende_de": [
             "AGY-04"
           ],
-          "origem": "USER"
+          "origem": "USER",
+          "resultado": "Desenho D aprovado pelo dono (\"aprovo a D, sem CODEX_HOME separado\"): worker Claude com --setting-sources project,local, --strict-mcp-config e settings por job (CLAUDE.md do usuário excluído, auto-memory off, model/effortLevel e PreToolUse do usuário mantidos, fail-closed em settings ilegível); worker Codex com features hooks/plugins/memories/apps off e MCP do usuário desligado por nome via config/read (erro ou 30 s sem abrir = falha). workerDisabledPlugins removida. Residual: ~/.codex/AGENTS.md; teardown no Windows em #173.",
+          "evidencia": "PR #174 (merge d1ffd8e); medição em .workflow/local/elo-09-medicao.md; revisões Astra 151 r1–r4 (r2 timeout) adjudicadas 6/1; Claude 60,7k→25,5k tokens, 17,5→3,6 s; Codex 33,3k→20,9k, 11,95→2,78 s"
         }
       ]
     },

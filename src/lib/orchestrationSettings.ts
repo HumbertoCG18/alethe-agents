@@ -96,9 +96,6 @@ export function normalizeOrchestrationSettings(raw: unknown): OrchestrationSetti
     }),
     maxConcurrent,
     defaultTimeoutSeconds,
-    workerDisabledPlugins: pluginIds(
-      Array.isArray(source.workerDisabledPlugins) ? source.workerDisabledPlugins : [],
-    ),
   }
 }
 
@@ -132,12 +129,4 @@ export function canFallBackToName(
       ]
     : named
   return reached.some((other) => canFallBackTo(role, other))
-}
-
-/** Codex plugin ids, each once; anything Codex could not take as an id is dropped. */
-export function pluginIds(values: readonly unknown[]): string[] {
-  const ids = values.filter(
-    (value): value is string => typeof value === 'string' && isOrchestrationName(value),
-  )
-  return [...new Set(ids)]
 }

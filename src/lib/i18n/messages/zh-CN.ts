@@ -750,9 +750,6 @@ export const zhCN: Record<MessageKey, string> = {
   'prefs.orchestrationConcurrencyIncrease': '增加同时运行的工作者',
   'prefs.orchestrationDefaultTimeout': '每个工作者的默认预算（秒）',
   'prefs.orchestrationTimeoutHint': '规划器未指定预算时使用。0 表示工作者不受时间限制。',
-  'prefs.orchestrationWorkerPlugins': '在工作者中关闭的 Codex 插件',
-  'prefs.orchestrationWorkerPluginsHint':
-    '每行或用逗号分隔填写一个插件 ID，例如 ecc@ecc。Codex 工作者启动时不加载这些插件的钩子和上下文；你自己的钩子和 MCP 服务器不受影响。',
   'prefs.orchestrationRoles': '角色',
   'prefs.orchestrationRolesDesc':
     '使用角色委派的规划器会严格获得该角色的设置：代理、模型、推理强度、只读和预算。它无法在调用中更改这些设置。',

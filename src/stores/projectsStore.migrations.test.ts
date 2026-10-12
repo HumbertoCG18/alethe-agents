@@ -119,24 +119,29 @@ describe('preference normalization', () => {
       roles: [],
       maxConcurrent: 4,
       defaultTimeoutSeconds: 900,
-      workerDisabledPlugins: [],
     })
   })
 
-  // Codex plugins turned off in worker threads (#266).
-  it('keeps the plugin ids a worker starts without and drops what Codex could not take', () => {
-    const preferences = normalizePreferences({
-      ...DEFAULT_PREFERENCES,
-      orchestration: {
-        ...DEFAULT_PREFERENCES.orchestration,
-        workerDisabledPlugins: ['ecc@ecc', 'ponytail@ponytail', 'ecc@ecc', 'two words', '', 7],
-      } as unknown as typeof DEFAULT_PREFERENCES.orchestration,
+  // Workers start without every plugin of the person's own (#151), so the list of Codex plugins
+  // they started without (#266) is dropped from a saved file.
+  it('drops the worker plugin list a file saved before #151 carries', () => {
+    const migrated = migrate({
+      ...EMPTY_PROJECTS_FILE,
+      preferences: {
+        ...DEFAULT_PREFERENCES,
+        orchestration: {
+          ...DEFAULT_PREFERENCES.orchestration,
+          maxConcurrent: 3,
+          workerDisabledPlugins: ['ecc@ecc', 'ponytail@ponytail'],
+        },
+      },
     })
 
-    expect(preferences.orchestration.workerDisabledPlugins).toEqual([
-      'ecc@ecc',
-      'ponytail@ponytail',
-    ])
+    expect(migrated.preferences.orchestration).toEqual({
+      roles: [],
+      maxConcurrent: 3,
+      defaultTimeoutSeconds: 900,
+    })
   })
 
   // A role's fallback while its provider is running out (#268).
@@ -299,7 +304,6 @@ describe('preference normalization', () => {
       maxConcurrent: 16,
       defaultTimeoutSeconds: 900,
       roles: [reviewer, writer, { ...writer, name: 'thinker', effort: 'high' }],
-      workerDisabledPlugins: [],
     })
   })
 

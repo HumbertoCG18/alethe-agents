@@ -18,17 +18,6 @@
   align-items: center;
 }
 
-.pluginList {
-  grid-column: 1 / -1;
-}
-
-.pluginList textarea {
-  min-height: 72px;
-  padding: 8px 10px;
-  resize: vertical;
-  font-family: var(--font-mono);
-}
-
 /* Scrolls sideways on a window too narrow for every column, instead of crushing them. */
 .roles {
   display: flex;

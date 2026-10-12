@@ -10,7 +10,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{channel, RecvTimeoutError, Sender};
+use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -67,6 +67,10 @@ pub struct Launcher {
     pub program: PathBuf,
     pub args: Vec<String>,
     pub env: Vec<(String, String)>,
+    /// Claude only: the person's Claude folder (`CLAUDE_CONFIG_DIR` or `~/.claude`), whose
+    /// `settings.json` is read each time a worker starts (#151). A Claude worker without one does
+    /// not start.
+    pub claude_home: Option<PathBuf>,
 }
 
 impl Launcher {
@@ -76,12 +80,15 @@ impl Launcher {
             program,
             args: vec!["app-server".into(), "--stdio".into()],
             env: Vec::new(),
+            claude_home: None,
         }
     }
 
     /// `bypassPermissions`: this stream has no interactive approval channel — a tool call needing
-    /// permission is auto-denied and reported, not paused for an answer.
-    pub fn claude_headless(program: PathBuf) -> Self {
+    /// permission is auto-denied and reported, not paused for an answer. The worker keeps its shell
+    /// so it can run tests and builds, and runs apart from the person's own setup: its isolation is
+    /// built from `home` each time it starts (`Core::claude_isolation`, #151).
+    pub fn claude_headless(program: PathBuf, home: PathBuf) -> Self {
         Self {
             kind: "claude".into(),
             program,
@@ -96,6 +103,7 @@ impl Launcher {
                 "bypassPermissions".into(),
             ],
             env: Vec::new(),
+            claude_home: Some(home),
         }
     }
 
@@ -122,6 +130,7 @@ impl Launcher {
             .map(String::from)
             .to_vec(),
             env: Vec::new(),
+            claude_home: None,
         }
     }
 }
@@ -378,9 +387,6 @@ pub struct OrchestrationSettings {
     pub max_concurrent: usize,
     /// 0 lets a worker run without a limit.
     pub default_timeout_seconds: u64,
-    /// Codex plugin ids turned off in worker threads (#266).
-    #[serde(default)]
-    pub worker_disabled_plugins: Vec<String>,
 }
 
 /// How long a Codex model list is reused; a Codex update shows up after this.
@@ -1549,9 +1555,9 @@ struct Inner {
     default_timeout_ms: Option<u64>,
     /// See `Core::set_agy_log_grace`; zero leaves `AGY_LOG_GRACE`.
     agy_log_grace: Duration,
+    /// See `Core::set_codex_open_timeout`; None leaves `CODEX_OPEN_TIMEOUT`.
+    codex_open_timeout: Option<Duration>,
     roles: Vec<Role>,
-    /// Codex plugins turned off in worker threads.
-    worker_disabled_plugins: Vec<String>,
     job_counter: u64,
     run_counter: u64,
     planners: HashMap<String, Planner>,
@@ -1695,13 +1701,47 @@ fn thread_start_params(
     params
 }
 
-/// Turns the given Codex plugins off for this thread only. Each one otherwise runs its hooks on
-/// every worker start and prompt and sends its context with every call, which a worker that only
-/// reads and reports has no use for. The person's own hooks and MCP servers are not plugins and stay.
-fn disable_plugins(params: &mut Value, plugins: &[String]) {
-    for plugin in plugins {
-        params["config"]["plugins"][plugin] = json!({ "enabled": false });
+/// The `config/read` a Codex worker sends before it opens its thread; ids 2 and 3 are the opening
+/// and the first turn.
+const CONFIG_READ_ID: i64 = 4;
+
+/// How long a Codex worker's app-server gets to answer its config read and open its thread,
+/// apart from the job's budget: one that never answers would otherwise hold its slot until the
+/// budget runs out, or for good without one (#151). A cold start opens in about a second.
+// ponytail: fixed; make it a setting if a slow machine ever needs longer.
+const CODEX_OPEN_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Runs a worker's thread apart from the person's own Codex setup (#151): no hooks, plugins,
+/// memories or apps, and none of the MCP servers their own config adds (`user_mcp`), for this
+/// thread only. A server has to be turned off by name: `mcp_servers = {}` is merged, not replaced.
+/// Their `~/.codex/AGENTS.md` still loads; no setting turns it off.
+fn isolate_thread(params: &mut Value, user_mcp: &[String]) {
+    params["config"]["features"] =
+        json!({ "hooks": false, "plugins": false, "memories": false, "apps": false });
+    for name in user_mcp {
+        params["config"]["mcp_servers"][name] = json!({ "enabled": false });
     }
+}
+
+/// The MCP servers the person's own config adds, from a `config/read` result: a server any of
+/// whose settings come from the user layer. A project's servers stay. Only names are read.
+fn user_mcp_names(config_read: &Value) -> Vec<String> {
+    let origins = config_read.get("origins").and_then(Value::as_object);
+    let from_user = |name: &str| {
+        let prefix = format!("mcp_servers.{name}.");
+        origins.into_iter().flatten().any(|(key, origin)| {
+            key.starts_with(&prefix) && origin.pointer("/name/type") == Some(&json!("user"))
+        })
+    };
+    config_read
+        .pointer("/config/mcp_servers")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flatten()
+        .map(|(name, _)| name)
+        .filter(|name| from_user(name))
+        .cloned()
+        .collect()
 }
 
 /// Picking a thread up again takes the same settings it started with. Without them the resumed
@@ -1921,6 +1961,79 @@ fn resolve_role(
         resolved.insert("timeoutSeconds".into(), json!(seconds));
     }
     Ok(Some((resolved, note)))
+}
+
+/// What a Claude worker's `--settings` file holds (#151). Only the project and local settings load
+/// (`claude_isolation_args`), so the person's hooks, plugins, skills and agents stay out. Their
+/// CLAUDE.md is excluded by path, because leaving out the user settings does not drop it, and
+/// auto-memory goes off again, because it was off through their settings' `env`. The project's
+/// CLAUDE.md still loads.
+///
+/// Of the person's `settings.json` (`user_settings`, None when there is none) only the `PreToolUse`
+/// hooks are carried, the tool guards a worker with a shell still needs, plus the model and effort
+/// a worker runs on when its role names none. Nothing else is copied: `env` can hold tokens. A file
+/// that cannot be read as settings is refused rather than read as having no guards; the reason
+/// never quotes it. `home` is the person's Claude folder.
+// ponytail: plugin-provided PreToolUse hooks, `modelSettings` and `language` are not carried; add
+// one here when a worker needs it.
+fn claude_worker_settings(home: &str, user_settings: Option<&[u8]>) -> Result<Value, String> {
+    let home = glob_literal(home.replace('\\', "/").trim_end_matches('/'));
+    let mut settings = json!({
+        "claudeMdExcludes": [format!("{home}/CLAUDE.md"), format!("{home}/rules/**")],
+        "autoMemoryEnabled": false
+    });
+    let Some(bytes) = user_settings else {
+        return Ok(settings);
+    };
+    let text = std::str::from_utf8(bytes).map_err(|_| "is not UTF-8 text".to_string())?;
+    let user: Value = serde_json::from_str(text.trim_start_matches('\u{feff}'))
+        .map_err(|_| "is not valid JSON".to_string())?;
+    if !user.is_object() {
+        return Err("does not hold a JSON object".into());
+    }
+    for key in ["model", "effortLevel"] {
+        if let Some(value) = user.get(key).filter(|value| value.is_string()) {
+            settings[key] = value.clone();
+        }
+    }
+    match user.pointer("/hooks/PreToolUse") {
+        None => {}
+        Some(Value::Array(guards)) if guards.is_empty() => {}
+        Some(guards @ Value::Array(_)) => settings["hooks"] = json!({ "PreToolUse": guards }),
+        Some(_) => return Err("has PreToolUse hooks that are not a list".into()),
+    }
+    Ok(settings)
+}
+
+/// `path` as a picomatch pattern that matches only itself: each character picomatch reads as
+/// syntax goes in a class of its own. Claude turns `\` into `/` before matching, so a backslash
+/// cannot escape anything. `!`, `+` and `@` are syntax only at the start or before `(`.
+fn glob_literal(path: &str) -> String {
+    path.chars()
+        .map(|c| {
+            if "[]*?{}()".contains(c) {
+                format!("[{c}]")
+            } else {
+                c.to_string()
+            }
+        })
+        .collect()
+}
+
+/// What keeps a Claude worker apart from the person's own Claude Code setup (#151): only the
+/// project and local settings, no MCP server, and the worker's own settings from a file Alethe
+/// wrote (`claude_worker_settings`). A file rather than JSON on the command line: the person's hook
+/// commands would show in the process list, and an npm `claude.cmd` shim mangles quotes.
+fn claude_isolation_args(settings_file: &str) -> Vec<String> {
+    [
+        "--setting-sources",
+        "project,local",
+        "--strict-mcp-config",
+        "--settings",
+        settings_file,
+    ]
+    .map(String::from)
+    .to_vec()
 }
 
 /// What a Claude worker's command line adds to its launcher: the session to resume, if any, and the
@@ -2166,6 +2279,13 @@ impl Core {
     /// past the production wait.
     pub fn set_agy_log_grace(&self, grace: Duration) {
         guard(&self.inner).agy_log_grace = grace;
+    }
+
+    /// Gives Codex workers started from now on `limit` instead of `CODEX_OPEN_TIMEOUT` to open
+    /// their thread, so a test of a server that never answers does not wait out the real one.
+    #[cfg(test)]
+    pub fn set_codex_open_timeout(&self, limit: Duration) {
+        guard(&self.inner).codex_open_timeout = Some(limit);
     }
 
     #[cfg(test)]
@@ -2531,7 +2651,6 @@ impl Core {
                 seconds => Some(seconds.saturating_mul(1000)),
             };
             inner.roles = settings.roles;
-            inner.worker_disabled_plugins = settings.worker_disabled_plugins;
             self.notify(&inner);
         }
         // A higher limit lets queued work start now instead of after the next worker finishes.
@@ -2668,6 +2787,70 @@ impl Core {
             .join(job_id)
     }
 
+    /// A Claude worker's isolation (#151), built each time it starts, so a fixed settings file or a
+    /// changed guard reaches the next worker without a restart. The person's guards are what keeps
+    /// a worker with a shell and bypass from reading secrets or running git, so a settings file
+    /// that exists but cannot be read stops the worker. The worker's settings go to a file in the
+    /// job's folder, next to the store and never in the worktree; it is rewritten at each start and
+    /// kept with the job, since Claude may read it again while it runs.
+    fn claude_isolation(
+        &self,
+        job_id: &str,
+        home: Option<&std::path::Path>,
+    ) -> Result<Vec<String>, String> {
+        let home = home.ok_or_else(|| {
+            "the Claude worker has no settings folder, so it does not start without its isolation"
+                .to_string()
+        })?;
+        let path = home.join("settings.json");
+        let refused = |reason: String| {
+            format!(
+                "the Claude worker did not start: {} {reason}. Fix it and delegate again",
+                path.display()
+            )
+        };
+        let missing = |error: &std::io::Error| error.kind() == std::io::ErrorKind::NotFound;
+        let user = match std::fs::read(&path) {
+            Ok(bytes) => Some(bytes),
+            // Only an entry that is not there at all means no settings: a link whose target is
+            // gone reads as missing too, and is refused like any file that cannot be read.
+            Err(error)
+                if missing(&error)
+                    && std::fs::symlink_metadata(&path).is_err_and(|error| missing(&error)) =>
+            {
+                None
+            }
+            Err(error) => return Err(refused(format!("could not be read ({error})"))),
+        };
+        let settings =
+            claude_worker_settings(&home.to_string_lossy(), user.as_deref()).map_err(refused)?;
+        let dir = self.job_dir(job_id);
+        let file = dir.join("claude-settings.json");
+        let temp = dir.join("claude-settings.json.tmp");
+        // Whatever was left at the temp path goes first, a link without what it points to, and the
+        // temp file is only ever new: a write through a link could replace the person's settings.
+        std::fs::create_dir_all(&dir)
+            .and_then(|()| match std::fs::remove_file(&temp) {
+                Err(error) if !missing(&error) => Err(error),
+                _ => Ok(()),
+            })
+            .and_then(|()| {
+                std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&temp)
+            })
+            .and_then(|mut staged| staged.write_all(settings.to_string().as_bytes()))
+            .and_then(|()| std::fs::rename(&temp, &file))
+            .map_err(|error| {
+                format!(
+                    "the Claude worker did not start: its settings could not be written to {} ({error})",
+                    file.display()
+                )
+            })?;
+        Ok(claude_isolation_args(&file.to_string_lossy()))
+    }
+
     fn spawn_worker(&self, job_id: &str) {
         // Read before `inner` is locked: `Core::rule_sets` takes its own lock, and holding both at
         // once is how this file deadlocks.
@@ -2738,6 +2921,15 @@ impl Core {
         // Claude keeps its own session on disk under this id — no separate resume RPC like Codex's
         // `thread/resume`, the CLI just needs the id up front.
         if agent == "claude" {
+            match self.claude_isolation(job_id, launcher.claude_home.as_deref()) {
+                Ok(args) => {
+                    command.args(args);
+                }
+                Err(error) => {
+                    self.settle(job_id, STATUS_FAILED, "failed", &error);
+                    return;
+                }
+            }
             command.args(claude_worker_args(
                 resume_thread.as_deref(),
                 model.as_deref(),
@@ -2834,6 +3026,10 @@ impl Core {
             self.notify(&inner);
         }
 
+        // A Codex thread opens only once the worker's own config is read (`isolate_thread`), and
+        // `opened` tells the open watchdog when its answer is in.
+        let mut opening = None;
+        let mut opened = None;
         if stream {
             if let Err(error) = self.verify_agy_agent(job_id) {
                 self.settle(job_id, STATUS_FAILED, "failed", &error);
@@ -2858,7 +3054,7 @@ impl Core {
             let _ = send_rpc(&stdin, &json!({ "method": "initialized" }));
             // Codex keeps threads on disk, so a worker whose process died can pick up its own history
             // instead of reading everything again.
-            let mut opening = match &resume_thread {
+            opening = Some(match &resume_thread {
                 Some(thread_id) => json!({
                     "id": 2,
                     "method": "thread/resume",
@@ -2884,10 +3080,24 @@ impl Core {
                         effort.as_deref(),
                     )
                 }),
-            };
-            let plugins = guard(&self.inner).worker_disabled_plugins.clone();
-            disable_plugins(&mut opening["params"], &plugins);
-            let _ = send_rpc(&stdin, &opening);
+            });
+            // The MCP servers the person's own config adds, as the worker's folder sees them.
+            let asked = send_rpc(
+                &stdin,
+                &json!({ "id": CONFIG_READ_ID, "method": "config/read", "params": { "cwd": cwd } }),
+            );
+            if asked.is_err() {
+                self.settle(
+                    job_id,
+                    STATUS_FAILED,
+                    "start-failed",
+                    "codex did not start the worker: it did not take the request for its config",
+                );
+                return;
+            }
+            let (sender, receiver) = channel();
+            opened = Some(sender);
+            self.arm_open_watchdog(job_id, &child, receiver);
         }
 
         let timeout_ms = guard(&self.inner)
@@ -2934,9 +3144,46 @@ impl Core {
                     if let Some(hook) = guard(&core.reader_hook).clone() {
                         hook(&message);
                     }
+                    // An answer, never a request of the worker's own, which has a method.
+                    let answer = message
+                        .get("method")
+                        .is_none()
+                        .then(|| message.get("id").and_then(Value::as_i64))
+                        .flatten();
+                    // The thread's opening is answered, so the open watchdog stands down.
+                    if answer == Some(2) {
+                        if let Some(opened) = opened.take() {
+                            let _ = opened.send(());
+                        }
+                    }
+                    let config_read = opening.is_some() && answer == Some(CONFIG_READ_ID);
                     match agy_log.as_mut() {
                         Some(log) => core.on_worker_message_agy(&owned_id, &message, log),
                         None if stream => core.on_worker_message_claude(&owned_id, &message),
+                        // Without the config read in full, the person's MCP servers are unknown,
+                        // so the thread does not open: it would open with them on.
+                        None if config_read => match (
+                            message
+                                .get("result")
+                                .filter(|result| result.get("config").is_some_and(Value::is_object)),
+                            opening.take(),
+                        ) {
+                            (Some(result), Some(mut opening)) => {
+                                isolate_thread(&mut opening["params"], &user_mcp_names(result));
+                                let _ = send_rpc(&stdin, &opening);
+                            }
+                            _ => core.finish_turn(
+                                &owned_id,
+                                STATUS_FAILED,
+                                Some("start-failed".into()),
+                                "codex did not start the worker: it could not read its own config, so \
+                                 the MCP servers of the person's config could not be turned off"
+                                    .into(),
+                                true,
+                                true,
+                                Some(&process),
+                            ),
+                        },
                         None => core.on_worker_message(&owned_id, &stdin, &spec, &message),
                     }
                 }
@@ -3021,6 +3268,31 @@ impl Core {
                 },
                 true,
             );
+        });
+    }
+
+    /// Fails a Codex worker whose app-server has not answered its thread's opening in time (#151):
+    /// the process is killed and the slot freed. `opened` hears the answer; it hangs up when the
+    /// worker's output closes, which ends the run on its own.
+    fn arm_open_watchdog(&self, job_id: &str, process: &Arc<Mutex<Child>>, opened: Receiver<()>) {
+        let core = self.clone();
+        let job_id = job_id.to_string();
+        let process = Arc::clone(process);
+        let limit = guard(&self.inner)
+            .codex_open_timeout
+            .unwrap_or(CODEX_OPEN_TIMEOUT);
+        thread::spawn(move || {
+            if let Err(RecvTimeoutError::Timeout) = opened.recv_timeout(limit) {
+                core.finish_turn(
+                    &job_id,
+                    STATUS_FAILED,
+                    Some("start-failed".into()),
+                    format!("codex did not open the worker's thread within {limit:?}"),
+                    true,
+                    true,
+                    Some(&process),
+                );
+            }
         });
     }
 
@@ -5605,10 +5877,12 @@ mod restart_tests {
     }
 
     use super::{
-        claude_worker_args, codex_models, disable_plugins, guard, thread_resume_params,
-        thread_start_params, Core, OrchestrationSettings,
+        claude_isolation_args, claude_worker_args, claude_worker_settings, codex_models, guard,
+        isolate_thread, thread_resume_params, thread_start_params, user_mcp_names, Core, Launcher,
+        OrchestrationSettings,
     };
-    use serde_json::json;
+    use serde_json::{json, Value};
+    use std::path::PathBuf;
 
     // The model, effort and sandbox a worker was delegated with reach its Codex thread (#252).
     #[test]
@@ -5640,44 +5914,234 @@ mod restart_tests {
         assert_eq!(params["config"]["tools"]["web_search"]["mode"], "live");
     }
 
-    // Plugins listed in the Orchestration settings are off in a worker's thread (#266).
+    // A Codex worker runs without the person's hooks, plugins, memories, apps and MCP servers, on a
+    // new thread and on one picked up again (#151).
     #[test]
-    fn a_codex_worker_thread_starts_without_the_listed_plugins() {
-        let mut params = thread_start_params("/repo", "\"never\"", "read-only", false, None, None);
-        disable_plugins(&mut params, &["ecc@ecc".into(), "ponytail@ponytail".into()]);
-        assert_eq!(params["config"]["plugins"]["ecc@ecc"]["enabled"], false);
-        assert_eq!(
-            params["config"]["plugins"]["ponytail@ponytail"]["enabled"],
-            false
+    fn a_codex_worker_thread_starts_and_resumes_without_the_persons_extensions() {
+        let user_mcp = ["context7".to_string(), "graphify".to_string()];
+        let mut start = thread_start_params("/repo", "\"never\"", "read-only", false, None, None);
+        isolate_thread(&mut start, &user_mcp);
+        let mut resume = thread_resume_params(
+            "thread-1",
+            "/repo",
+            "\"never\"",
+            "read-only",
+            false,
+            None,
+            None,
         );
-        assert_eq!(params["config"]["tools"]["web_search"]["mode"], "disabled");
+        isolate_thread(&mut resume, &user_mcp);
+        for params in [start, resume] {
+            assert_eq!(
+                params["config"]["features"],
+                json!({ "hooks": false, "plugins": false, "memories": false, "apps": false }),
+                "{params}"
+            );
+            assert_eq!(
+                params["config"]["mcp_servers"],
+                json!({ "context7": { "enabled": false }, "graphify": { "enabled": false } }),
+                "{params}"
+            );
+            assert_eq!(params["config"]["tools"]["web_search"]["mode"], "disabled");
+            assert_eq!(params["sandbox"], "read-only");
+        }
 
-        let mut untouched =
-            thread_start_params("/repo", "\"never\"", "read-only", false, None, None);
-        disable_plugins(&mut untouched, &[]);
-        assert!(untouched["config"].get("plugins").is_none(), "{untouched}");
+        // Without a user server, the features still go off and no server is touched.
+        let mut bare = thread_start_params("/repo", "\"never\"", "read-only", false, None, None);
+        isolate_thread(&mut bare, &[]);
+        assert_eq!(bare["config"]["features"]["hooks"], false);
+        assert!(bare["config"].get("mcp_servers").is_none(), "{bare}");
     }
 
+    /// Shaped like codex-cli 0.160.1's `config/read` result: each origin key is a dotted config
+    /// path, and the layer type says where its value came from.
+    fn config_read_fixture() -> Value {
+        let user = json!({
+            "name": { "type": "user", "file": "C:\\Users\\me\\.codex\\config.toml", "profile": null },
+            "version": "sha256:user"
+        });
+        let project = json!({
+            "name": { "type": "project", "dotCodexFolder": "C:\\repo\\.codex" },
+            "version": "sha256:project"
+        });
+        let session = json!({ "name": { "type": "sessionFlags" }, "version": "sha256:flags" });
+        json!({
+            "config": {
+                "model": "gpt-6-luna",
+                "mcp_servers": {
+                    "context7": { "url": "https://mcp.example/mcp" },
+                    "graphify": { "command": "graphify", "enabled": false },
+                    "repo-tools": { "command": "node", "args": ["tools.js"] },
+                    "flagged": { "command": "flagged" }
+                }
+            },
+            "origins": {
+                "model": user,
+                "mcp_servers.context7.url": user,
+                "mcp_servers.graphify.command": user,
+                "mcp_servers.graphify.enabled": user,
+                "mcp_servers.repo-tools.command": project,
+                "mcp_servers.repo-tools.args": project,
+                "mcp_servers.flagged.command": session
+            },
+            "layers": null
+        })
+    }
+
+    // Only the servers the person's own config adds are turned off; a project's stay (#151).
     #[test]
-    fn the_settings_carry_the_plugins_workers_start_without() {
+    fn the_mcp_servers_turned_off_are_the_ones_from_the_user_layer() {
+        let mut names = user_mcp_names(&config_read_fixture());
+        names.sort();
+        assert_eq!(names, ["context7", "graphify"]);
+        assert!(user_mcp_names(&Value::Null).is_empty());
+        assert!(user_mcp_names(&json!({ "config": {}, "origins": {} })).is_empty());
+    }
+
+    fn excludes(home: &str) -> Value {
+        json!([format!("{home}/CLAUDE.md"), format!("{home}/rules/**")])
+    }
+
+    fn isolated(home: &str) -> Value {
+        json!({ "claudeMdExcludes": excludes(home), "autoMemoryEnabled": false })
+    }
+
+    // A Claude worker runs without the person's CLAUDE.md, hooks, plugins, MCP servers and
+    // auto-memory, and keeps the project's CLAUDE.md. Its settings travel as a file, never as JSON
+    // on the command line (#151).
+    #[test]
+    fn a_claude_worker_runs_without_the_persons_own_context() {
+        assert_eq!(
+            claude_worker_settings(r"C:\Users\me\.claude\", None),
+            Ok(isolated("C:/Users/me/.claude"))
+        );
+        assert_eq!(
+            claude_isolation_args(r"D:\data\jobs\job-01\claude-settings.json"),
+            [
+                "--setting-sources",
+                "project,local",
+                "--strict-mcp-config",
+                "--settings",
+                r"D:\data\jobs\job-01\claude-settings.json"
+            ]
+        );
+    }
+
+    // Claude matches the excluded CLAUDE.md paths with picomatch, so a home folder's own brackets,
+    // braces, parentheses and wildcards are made literal (#151).
+    #[test]
+    fn a_home_folder_with_glob_characters_is_excluded_literally() {
+        assert_eq!(
+            claude_worker_settings(r"C:\Users\Jane [Work] {a,b} (x)*?\.claude", None),
+            Ok(isolated(
+                "C:/Users/Jane [[]Work[]] [{]a,b[}] [(]x[)][*][?]/.claude"
+            ))
+        );
+    }
+
+    // The person's own tool guards still run in a worker; nothing else of theirs is copied, least of
+    // all `env`, which can hold tokens. A file saved with a BOM reads the same (#151).
+    #[test]
+    fn a_claude_worker_keeps_only_the_persons_tool_guards_and_model_defaults() {
+        let guards = json!([
+            { "matcher": "Read|Grep|Bash", "hooks": [
+                { "type": "command", "command": "python C:/guards/secret-guard.py", "timeout": 5 }
+            ] },
+            { "matcher": "Bash|Write|Edit", "hooks": [
+                { "type": "command", "command": "python C:/guards/git-lock.py", "timeout": 5 }
+            ] }
+        ]);
+        let user = json!({
+            "env": { "ANTHROPIC_BASE_URL": "https://proxy.example", "API_TOKEN": "sk-never-copied" },
+            "model": "opus",
+            "effortLevel": "xhigh",
+            "language": "portuguese",
+            "permissions": { "defaultMode": "auto" },
+            "enabledPlugins": { "ecc@ecc": true },
+            "hooks": {
+                "PreToolUse": guards,
+                "SessionStart": [{ "hooks": [{ "type": "command", "command": "python context.py" }] }],
+                "PostToolUse": [{ "hooks": [{ "type": "command", "command": "python after.py" }] }]
+            }
+        })
+        .to_string();
+        let expected = json!({
+            "claudeMdExcludes": excludes("C:/Users/me/.claude"),
+            "autoMemoryEnabled": false,
+            "model": "opus",
+            "effortLevel": "xhigh",
+            "hooks": { "PreToolUse": guards }
+        });
+        for text in [user.clone(), format!("\u{feff}{user}")] {
+            let settings = claude_worker_settings("C:/Users/me/.claude", Some(text.as_bytes()));
+            assert_eq!(settings, Ok(expected.clone()));
+            assert!(!expected.to_string().contains("sk-never-copied"));
+        }
+    }
+
+    // A settings file that exists but cannot be read as the person's settings stops the worker:
+    // starting it with a shell and bypass but without their guards would be silent. The reason never
+    // quotes the file (#151).
+    #[test]
+    fn a_broken_settings_file_stops_the_claude_worker() {
+        for broken in [
+            &b"{ \"env\": { \"API_TOKEN\": \"sk-broken-secret\" "[..],
+            b"[]",
+            b"\xff\xfe{}",
+            br#"{ "hooks": { "PreToolUse": { "matcher": "Bash" } } }"#,
+        ] {
+            let refused = claude_worker_settings("C:/Users/me/.claude", Some(broken))
+                .expect_err("a broken file is refused");
+            assert!(!refused.contains("sk-broken-secret"), "{refused}");
+        }
+    }
+
+    // A file with no guards, or none yet, starts the worker isolated all the same (#151).
+    #[test]
+    fn a_settings_file_without_guards_isolates_all_the_same() {
+        for user in [
+            None,
+            Some(&br#"{ "hooks": { "PreToolUse": [] } }"#[..]),
+            Some(br#"{ "hooks": { "Stop": [{ "hooks": [] }] } }"#),
+            Some(br#"{ "model": 7, "effortLevel": null }"#),
+        ] {
+            assert_eq!(
+                claude_worker_settings("C:/Users/me/.claude", user),
+                Ok(isolated("C:/Users/me/.claude")),
+                "{user:?}"
+            );
+        }
+    }
+
+    // The launcher keeps the shell and bypass a worker needs and carries the folder its settings
+    // are read from at each start.
+    #[test]
+    fn the_claude_launcher_keeps_its_shell_and_carries_the_settings_folder() {
+        let launcher =
+            Launcher::claude_headless(PathBuf::from("claude"), PathBuf::from("C:/h/.claude"));
+        assert!(
+            launcher
+                .args
+                .windows(2)
+                .any(|pair| pair == ["--permission-mode", "bypassPermissions"]),
+            "{:?}",
+            launcher.args
+        );
+        assert_eq!(launcher.claude_home, Some(PathBuf::from("C:/h/.claude")));
+    }
+
+    // Preferences saved before #151 still carry the dropped worker plugin list; they must still apply.
+    #[test]
+    fn settings_saved_with_the_old_worker_plugin_list_still_apply() {
         let core = Core::default();
         let settings: OrchestrationSettings = serde_json::from_value(json!({
-            "maxConcurrent": 4,
+            "maxConcurrent": 3,
             "defaultTimeoutSeconds": 900,
             "workerDisabledPlugins": ["ecc@ecc"]
         }))
         .expect("settings");
         core.apply_settings(settings);
-        assert_eq!(
-            guard(&core.inner).worker_disabled_plugins,
-            vec!["ecc@ecc".to_string()]
-        );
-
-        // Settings saved before the list existed still parse.
-        let older: OrchestrationSettings =
-            serde_json::from_value(json!({ "maxConcurrent": 4, "defaultTimeoutSeconds": 900 }))
-                .expect("older settings");
-        assert!(older.worker_disabled_plugins.is_empty());
+        assert_eq!(guard(&core.inner).max_concurrent, 3);
     }
 
     // A worker picked up again after its process died must not lose its read-only sandbox.

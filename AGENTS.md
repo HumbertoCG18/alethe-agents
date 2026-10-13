@@ -1,8 +1,8 @@
 # Alethe — working guide (AI)
 
-> Identical in content to [`CLAUDE.md`](CLAUDE.md) in this directory. Keep both in sync.
-> Contributing from outside? Start with [`CONTRIBUTING.md`](CONTRIBUTING.md) — setup, project
-> layout, house rules, and PR convention.
+> Single source of agent instructions: `CLAUDE.md` only imports this file, and Codex and
+> Antigravity read it directly. Contributing from outside? Start with
+> [`CONTRIBUTING.md`](CONTRIBUTING.md) — setup, project layout, house rules, and PR convention.
 
 ## 1. What it is
 
@@ -23,21 +23,7 @@ npm run build    # tsc + vite build — tsc typechecks and VALIDATES i18n (see �
 npm test         # vitest run over src/**/*.test.{ts,tsx}
 ```
 
-**Building the Windows installer (MSI/NSIS)** requires the MSVC environment (`vcvars64`):
-
-```powershell
-cmd /c '"C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat" >NUL && npm run tauri build'
-```
-
-The folder depends on the Build Tools version: `2022\BuildTools` for Visual Studio 2022,
-`18\BuildTools` for Visual Studio 2026. `vswhere -products * -property installationPath` (in
-`C:\Program Files (x86)\Microsoft Visual Studio\Installer`) prints the installed one.
-
-When returning the path of a generated installer, always report the **full absolute path on the PC**
-(for example, `D:\project\src-tauri\target\release\bundle\nsis\Alethe_setup.exe`), never just the
-path relative to the repository.
-
-
+Building the Windows installer (MSI/NSIS): follow `.claude/skills/building-windows-installer/SKILL.md`.
 
 ## 3. Non-negotiable rules
 
@@ -61,49 +47,26 @@ path relative to the repository.
    (top of the file), with a short, objective, user-facing description. Never skip this step — the
    changelog is the source for release notes.
 
-## 4. Architecture at a glance
+## 4. Area rules
 
-**Communication:** the frontend calls `invoke(...)` through `lib/tauri/`; the terminal receives
-streaming through the Tauri events `pty://data/{id}` and `pty://exit/{id}`.
+Read the matching file before editing that area. Claude Code loads them on its own when it touches a
+matching file.
 
-## 5. Conventions
+- `src/` (React frontend): [`.claude/rules/frontend.md`](.claude/rules/frontend.md) — CSS Modules,
+  domain types, Zustand, `projects.json` debounce and migration, input validation before spawning.
+- `src-tauri/` (Rust backend and Tauri config): [`.claude/rules/tauri.md`](.claude/rules/tauri.md)
+  — CSP, `spawn_pty`, OAuth tokens, atomic writes, local data, Windows toolchain.
 
-- One `.module.css` file per component; color/spacing always through tokens, never literals.
-- New domain types go in `src/lib/types.ts`; reuse the existing ones.
-- Lean Zustand selectors to avoid rerender loops; `projects.json` is saved with debounce and atomic
-  writes (tmp → rename) — preserve that pattern.
-- The `projects.json` schema is versioned with migration/backfill — when changing its shape, keep the
-  migration.
+The frontend calls `invoke(...)` through `src/lib/tauri/`; the terminal receives streaming through
+the Tauri events `pty://data/{id}` and `pty://exit/{id}`.
 
-## 6. Gotchas / security
+## 5. Docs
 
-- `tauri.conf.json` ships a strict CSP (`script-src 'self'`, `worker-src 'none'`), asserted literally
-  by `src/securityPolicy.test.ts`. Any change there is a deliberate, reviewed one. Treat any
-  rendered input as untrusted; the webview still has full IPC access.
-- `spawn_pty` runs a shell with the command/args coming from the frontend — **validate input on the
-  frontend** before spawning.
-- OAuth tokens (Spotify, Claude) are stored in **plaintext** in app data; do not log or expose them.
-- The Windows build requires `vcvars64`. The Rust toolchain on `C:` can be corrupted by Windows
-  Defender — prefer building from `D:`.
-- Local data: `%APPDATA%/Alethe/` (profiles, `projects.json`, scrollback `*.bin`, `spawn.log`).
-
-## 7. Going deeper
-
-Versioned in this repo:
-
-- [`CONTRIBUTING.md`](CONTRIBUTING.md) — setup per OS, layout, house rules, commit/PR convention.
-- [`docs/FEATURES.md`](docs/FEATURES.md) — features in detail.
-- [`docs/CHANGELOG.md`](docs/CHANGELOG.md) — user-facing history.
-- [`docs/OVERVIEW.md`](docs/OVERVIEW.md) — domain model (Group, Project, Container, Pane, Terminal,
-  Sub-tab, PTY), stack, and persistence.
-- [`docs/BRAND.md`](docs/BRAND.md).
-- [`docs/PLUGINS.md`](docs/PLUGINS.md) — plugin system: manifest, capabilities, lifecycle, and how
-  to add a bundled plugin.
-- [`docs/THEMES.md`](docs/THEMES.md) — adding a theme, as a plugin or as a built-in.
-- [`docs/DIAGNOSTICO_MATURIDADE_TECNICA.md`](docs/DIAGNOSTICO_MATURIDADE_TECNICA.md) — diagnostic of
-  code organization, duplication, and performance, with prioritized recommendations.
-
-The domain glossary (Group, Project, Container, Pane, Sub-tab, PTY) is summarized in `CONTRIBUTING.md`.
+[`CONTRIBUTING.md`](CONTRIBUTING.md) (setup per OS, layout, domain glossary, commit/PR convention)
+and `docs/`: `FEATURES.md` (features in detail), `CHANGELOG.md`, `OVERVIEW.md` (domain model,
+stack, persistence), `BRAND.md`, `PLUGINS.md` (plugin manifest, capabilities, lifecycle, adding a
+bundled plugin), `THEMES.md` (adding a theme), `DIAGNOSTICO_MATURIDADE_TECNICA.md` (code
+organization, duplication and performance diagnostic).
 
 ## Language and comment rules
 

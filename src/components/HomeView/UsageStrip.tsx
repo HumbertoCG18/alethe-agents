@@ -1,15 +1,17 @@
 import { Clock, RefreshCw } from 'lucide-react'
-import { useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { loadClaudeUsage } from '../../lib/claudeUsageCache'
-import { getCachedCodexUsage } from '../../lib/codexUsageCache'
+import { getCachedCodexAccountStats, getCachedCodexUsage } from '../../lib/codexUsageCache'
 import { getCachedAntigravityUsage } from '../../lib/antigravityUsageCache'
 import { translate, getLocale, intlLocale, useT, type TFunction } from '../../lib/i18n'
 import { AGENT_TYPE_LABELS } from '../../lib/types'
 import { USAGE_PROVIDERS, type UsageProviderDef } from '../../lib/usageProviders'
 import {
+  antigravityBucketName,
   codexHeadlineWindow,
   hasCodexWindow,
   type AntigravityUsage,
+  type CodexAccountStats,
   type ClaudeUsage,
   type ClaudeUsageFailure,
   type CodexUsage,
@@ -39,6 +41,14 @@ function formatResetTime(resetsAt: string): string {
   } catch {
     return resetsAt
   }
+}
+
+function formatTokens(tokens: number | null): string {
+  if (tokens === null) return '—'
+  return new Intl.NumberFormat(intlLocale(getLocale()), {
+    notation: 'compact',
+    maximumFractionDigits: 1,
+  }).format(tokens)
 }
 
 function formatResetMs(resetsAtMs: number): string {
@@ -348,7 +358,6 @@ function ClaudeCard({ usage }: { usage: ClaudeUsage | null }) {
   const maxUtil = Math.max(
     usage.five_hour.utilization,
     usage.seven_day.utilization,
-    usage.seven_day_opus.utilization,
     ...modelLimits.map((limit) => limit.utilization),
   )
 
@@ -382,16 +391,11 @@ function ClaudeCard({ usage }: { usage: ClaudeUsage | null }) {
             util={usage.seven_day.utilization}
             base={accent}
           />
-          <Meter
-            label="opus"
-            value={`${pctNum(usage.seven_day_opus.utilization)}%`}
-            util={usage.seven_day_opus.utilization}
-            base={accent}
-          />
           {modelLimits.map((limit) => (
             <Meter
               key={limit.model}
               label={limit.model.toLowerCase()}
+              reset={formatResetTime(limit.resets_at)}
               value={`${pctNum(limit.utilization)}%`}
               util={limit.utilization}
               base={accent}
@@ -408,10 +412,6 @@ function ClaudeCard({ usage }: { usage: ClaudeUsage | null }) {
             value={formatResetTime(usage.seven_day.resets_at)}
           />
           <StatCell
-            label={t('widget.resetLabel', { w: 'opus' })}
-            value={formatResetTime(usage.seven_day_opus.resets_at)}
-          />
-          <StatCell
             label={t('widget.peakLabel')}
             value={`${pctNum(maxUtil)}%`}
             crit={maxUtil >= 80}
@@ -420,12 +420,9 @@ function ClaudeCard({ usage }: { usage: ClaudeUsage | null }) {
       </div>
       <CardFoot
         accent={accent}
-        left={[
-          '5h',
-          t('widget.week'),
-          'opus',
-          ...modelLimits.map((l) => l.model.toLowerCase()),
-        ].join(' · ')}
+        left={['5h', t('widget.week'), ...modelLimits.map((l) => l.model.toLowerCase())].join(
+          ' · ',
+        )}
         right={t('widget.peak', { v: `${pctNum(maxUtil)}%` })}
       />
     </div>
@@ -442,6 +439,19 @@ function CodexCard({
   const t = useT()
   const openModal = useUiStore((s) => s.openModal_)
   const accent = 'var(--agent-codex)'
+  const [stats, setStats] = useState<CodexAccountStats | null>(null)
+
+  // Read only while the card is on screen: these come from a spawned codex.exe, not the polled API.
+  useEffect(() => {
+    let cancelled = false
+    getCachedCodexAccountStats().then(
+      (value) => !cancelled && setStats(value),
+      () => undefined,
+    )
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const head = (
     <CardHead
@@ -527,6 +537,33 @@ function CodexCard({
             crit={usage.rate_limited}
           />
         </div>
+        {stats ? (
+          <div className={styles.statGrid}>
+            <StatCell
+              label={t('widget.lifetimeTokens')}
+              value={formatTokens(stats.lifetime_tokens)}
+            />
+            <StatCell
+              label={t('widget.peakDayTokens')}
+              value={formatTokens(stats.peak_daily_tokens)}
+            />
+            <StatCell
+              label={t('widget.longestChat')}
+              value={stats.longest_turn_secs ? formatDiff(stats.longest_turn_secs * 1000) : '—'}
+            />
+            <StatCell
+              label={t('widget.streakLabel')}
+              value={
+                stats.current_streak_days === null
+                  ? '—'
+                  : t('widget.streakValue', {
+                      n: stats.current_streak_days,
+                      best: stats.longest_streak_days ?? '—',
+                    })
+              }
+            />
+          </div>
+        ) : null}
         {showResetCreditAction && usage.reset_credits > 0 ? (
           <div className={styles.resetCreditBox}>
             <span className={styles.resetCreditTitle}>{t('widget.resetCreditHeading')}</span>
@@ -554,12 +591,13 @@ function AntigravityCard({ usage }: { usage: AntigravityUsage | null }) {
   const accent = 'var(--agent-antigravity)'
 
   const hasData = usage?.status === 'ready' && usage.buckets.length > 0
+  const groups = hasData ? [...new Set(usage.buckets.map((bucket) => bucket.label))] : []
   const head = (
     <CardHead
       badgeClass={styles.badgeAntigravity}
       icon={<AntigravityIcon size={16} />}
       name="antigravity"
-      plan={hasData ? `${usage.buckets.length} ${t('widget.quotaBucketsShort')}` : undefined}
+      plan={hasData ? `${groups.length} ${t('widget.quotaBucketsShort')}` : undefined}
       accent={accent}
       hasData={hasData}
       onRefresh={refreshAntigravity}
@@ -570,9 +608,7 @@ function AntigravityCard({ usage }: { usage: AntigravityUsage | null }) {
     const emptyTitle =
       usage?.status === 'no_cli'
         ? t('widget.antigravityNotInstalled')
-        : usage?.status === 'no_auth'
-          ? t('widget.antigravityNotSignedIn')
-          : t('widget.usageUnavailable')
+        : t('widget.usageUnavailable')
     return (
       <div className={styles.usageCard}>
         {head}
@@ -584,7 +620,10 @@ function AntigravityCard({ usage }: { usage: AntigravityUsage | null }) {
     )
   }
 
-  const primary = usage.buckets[0]
+  const primary = usage.buckets.reduce((most, bucket) =>
+    bucket.used_percent > most.used_percent ? bucket : most,
+  )
+  const week = t('widget.week')
   return (
     <div className={styles.usageCard}>
       {head}
@@ -595,15 +634,15 @@ function AntigravityCard({ usage }: { usage: AntigravityUsage | null }) {
         sub={
           usage.rate_limited
             ? t('widget.limitReached')
-            : t('widget.mostUsedBucket', { name: primary.label })
+            : t('widget.mostUsedBucket', { name: antigravityBucketName(primary, week) })
         }
       />
       <div className={styles.cardBody}>
         <div className={styles.meterList}>
           {usage.buckets.map((bucket) => (
             <Meter
-              key={`${bucket.label}:${bucket.resets_at}`}
-              label={bucket.label}
+              key={`${bucket.label}:${bucket.window}`}
+              label={antigravityBucketName(bucket, week)}
               reset={formatResetTime(bucket.resets_at)}
               value={`${pctNum(bucket.used_percent)}%`}
               util={bucket.used_percent}
@@ -623,10 +662,6 @@ function AntigravityCard({ usage }: { usage: AntigravityUsage | null }) {
             crit={primary.remaining_percent <= 1}
           />
           <StatCell
-            label={t('widget.modelsLabel')}
-            value={String(usage.buckets.reduce((sum, bucket) => sum + bucket.models.length, 0))}
-          />
-          <StatCell
             label={t('widget.peakLabel')}
             value={`${pctNum(usage.used_percent)}%`}
             crit={usage.used_percent >= 80}
@@ -635,8 +670,8 @@ function AntigravityCard({ usage }: { usage: AntigravityUsage | null }) {
       </div>
       <CardFoot
         accent={accent}
-        left={usage.buckets.map((bucket) => bucket.label).join(' · ')}
-        right={t('widget.quotaBuckets', { n: usage.buckets.length })}
+        left={groups.join(' · ')}
+        right={t('widget.quotaBuckets', { n: groups.length })}
       />
     </div>
   )

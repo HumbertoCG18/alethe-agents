@@ -7,12 +7,13 @@ import { useProjectsStore } from '../stores/projectsStore'
 import { useUiStore } from '../stores/uiStore'
 import { getCachedAntigravityUsage } from './antigravityUsageCache'
 import { getCachedClaudeUsage, loadClaudeUsage } from './claudeUsageCache'
-import { getCachedCodexUsage } from './codexUsageCache'
+import { getCachedCodexAccountStats, getCachedCodexUsage } from './codexUsageCache'
 import {
   type CodexUsage,
   consumeCodexResetCredit,
   getAntigravityUsage,
   getClaudeUsage,
+  getCodexAccountStats,
   getCodexUsage,
 } from './tauri'
 import { clearAllTtlCaches } from './ttlCache'
@@ -22,6 +23,7 @@ import { USAGE_ACCESS_OFF } from './usageAccess'
 const USAGE_COMMANDS = [
   'get_claude_usage',
   'get_codex_usage',
+  'get_codex_account_stats',
   'consume_codex_reset_credit',
   'get_antigravity_usage',
 ]
@@ -57,6 +59,8 @@ function readEverything() {
     getCachedClaudeUsage(true),
     getCachedCodexUsage(true),
     getCachedAntigravityUsage(true),
+    getCodexAccountStats(),
+    getCachedCodexAccountStats(true),
     loadClaudeUsage(true),
   ])
 }
@@ -80,7 +84,7 @@ describe('usage access gate', () => {
 
     expect(usageCalls()).toEqual([])
     expect(invoke).not.toHaveBeenCalled()
-    for (const result of results.slice(0, 7)) {
+    for (const result of results.slice(0, 9)) {
       expect(result).toEqual({ status: 'rejected', reason: USAGE_ACCESS_OFF })
     }
     // Off is not an error to show: no reading and no "unavailable" either.
@@ -93,7 +97,7 @@ describe('usage access gate', () => {
     await readEverything()
 
     expect(new Set(usageCalls())).toEqual(
-      new Set(['get_codex_usage', 'consume_codex_reset_credit']),
+      new Set(['get_codex_usage', 'get_codex_account_stats', 'consume_codex_reset_credit']),
     )
   })
 
@@ -121,5 +125,18 @@ describe('usage access gate', () => {
     finish(codexReading)
 
     await expect(pending).rejects.toBe(USAGE_ACCESS_OFF)
+  })
+})
+
+// Only a spawned codex.exe reports these stats (#202): a failure must not respawn it per mount.
+describe('Codex account stats cache', () => {
+  it('keeps a failed read for its TTL instead of spawning codex again', async () => {
+    allow({ codex: true })
+    invoke.mockRejectedValue('timeout')
+
+    await expect(getCachedCodexAccountStats()).resolves.toBeNull()
+    await expect(getCachedCodexAccountStats()).resolves.toBeNull()
+
+    expect(usageCalls()).toEqual(['get_codex_account_stats'])
   })
 })

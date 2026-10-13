@@ -548,6 +548,7 @@ pub fn run() {
             cursor_sessions::create_cursor_chat,
             claude_usage::get_claude_usage,
             codex_usage::get_codex_usage,
+            codex_usage::get_codex_account_stats,
             codex_usage::consume_codex_reset_credit,
             antigravity_usage::get_antigravity_usage,
             agent_cost::get_session_cost,

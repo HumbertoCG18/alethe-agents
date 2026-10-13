@@ -27,7 +27,6 @@ describe('agent fitness', () => {
     const claude = claudeFitness({
       five_hour: claudeWindow(20),
       seven_day: claudeWindow(19),
-      seven_day_opus: claudeWindow(0),
     })
     const codex = codexFitness({
       primary: codexWindow(22),
@@ -54,7 +53,6 @@ describe('agent fitness', () => {
     const fitness = claudeFitness({
       five_hour: claudeWindow(10, 'soon'),
       seven_day: claudeWindow(90, 'later'),
-      seven_day_opus: claudeWindow(0),
     })
     expect(fitness.resetsAt).toBe('later')
   })
@@ -63,7 +61,6 @@ describe('agent fitness', () => {
     const fitness = claudeFitness({
       five_hour: claudeWindow(12),
       seven_day: claudeWindow(20),
-      seven_day_opus: claudeWindow(0),
       model_limits: [{ model: 'Fable', utilization: 92.4, resets_at: 'monday' }],
     })
     expect(fitness.worst).toBe('fable')
@@ -74,7 +71,6 @@ describe('agent fitness', () => {
     const fitness = claudeFitness({
       five_hour: claudeWindow(10),
       seven_day: claudeWindow(30),
-      seven_day_opus: claudeWindow(0),
       model_limits: [{ model: 'Fable', utilization: 100, resets_at: 'monday' }],
     })
     expect(fitness.worst).toBe('fable')
@@ -86,6 +82,7 @@ describe('agent fitness', () => {
 const agyBucket = (label: string, used_percent: number, resets_at = '') => ({
   label,
   models: [],
+  window: '5h',
   used_percent,
   remaining_percent: 100 - used_percent,
   resets_at,

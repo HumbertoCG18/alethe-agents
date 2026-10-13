@@ -23,7 +23,6 @@ pub struct ModelLimit {
 pub struct ClaudeUsage {
     pub five_hour: UsageWindow,
     pub seven_day: UsageWindow,
-    pub seven_day_opus: UsageWindow,
     pub model_limits: Vec<ModelLimit>,
 }
 
@@ -242,23 +241,24 @@ fn parse_usage(body: &serde_json::Value) -> ClaudeUsage {
         }
     };
 
-    // Opus has its own row; when the legacy `seven_day_opus` window is absent, fill that row from
-    // the Opus entry in `limits[]` instead of listing it twice.
-    let (opus, model_limits): (Vec<_>, Vec<_>) = parse_model_limits(body)
-        .into_iter()
-        .partition(|limit| limit.model.eq_ignore_ascii_case("opus"));
-    let seven_day_opus = match opus.into_iter().next() {
-        Some(limit) if body.get("seven_day_opus").is_none_or(|v| v.is_null()) => UsageWindow {
-            utilization: limit.utilization,
-            resets_at: limit.resets_at,
-        },
-        _ => parse_window("seven_day_opus"),
-    };
+    // Opus no longer has a limit of its own; it shows only when the API reports one, like any
+    // other model. The legacy `seven_day_opus` window counts only when `limits[]` lacks Opus.
+    let mut model_limits = parse_model_limits(body);
+    let reports_opus = model_limits
+        .iter()
+        .any(|limit| limit.model.eq_ignore_ascii_case("opus"));
+    if !reports_opus && body.get("seven_day_opus").is_some_and(|v| !v.is_null()) {
+        let opus = parse_window("seven_day_opus");
+        model_limits.push(ModelLimit {
+            model: "Opus".to_string(),
+            utilization: opus.utilization,
+            resets_at: opus.resets_at,
+        });
+    }
 
     ClaudeUsage {
         five_hour: parse_window("five_hour"),
         seven_day: parse_window("seven_day"),
-        seven_day_opus,
         model_limits,
     }
 }
@@ -317,32 +317,50 @@ mod tests {
         }));
 
         assert_eq!(usage.five_hour.utilization, 15.0);
+        let models: Vec<(&str, f64)> = usage
+            .model_limits
+            .iter()
+            .map(|limit| (limit.model.as_str(), limit.utilization))
+            .collect();
         assert_eq!(
-            usage.model_limits.len(),
-            1,
-            "Opus keeps its own row; surface limits are skipped"
+            models,
+            vec![("Fable", 25.0), ("Opus", 40.0)],
+            "Opus is one more model limit; surface limits are skipped"
         );
-        assert_eq!(usage.model_limits[0].model, "Fable");
-        assert_eq!(usage.model_limits[0].utilization, 25.0);
         assert_eq!(usage.model_limits[0].resets_at, "2026-09-24T01:59:59Z");
-        assert_eq!(
-            usage.seven_day_opus.utilization, 40.0,
-            "Opus from limits[] fills its row"
-        );
     }
 
     #[test]
-    fn legacy_opus_window_wins_over_its_scoped_limit() {
+    fn no_opus_row_when_the_api_reports_no_opus_limit() {
         let usage = super::parse_usage(&json!({
-            "seven_day_opus": { "utilization": 12.0, "resets_at": "2026-09-24T01:59:59Z" },
+            "seven_day_opus": null,
+            "limits": [{
+                "kind": "weekly_scoped", "percent": 2, "resets_at": "2026-09-24T01:59:59Z",
+                "scope": { "model": { "id": null, "display_name": "Fable" }, "surface": null }
+            }]
+        }));
+
+        assert_eq!(usage.model_limits.len(), 1);
+        assert_eq!(usage.model_limits[0].model, "Fable");
+    }
+
+    #[test]
+    fn legacy_opus_window_shows_only_without_a_scoped_opus_limit() {
+        let legacy = json!({ "utilization": 12.0, "resets_at": "2026-09-24T01:59:59Z" });
+        let alone = super::parse_usage(&json!({ "seven_day_opus": legacy }));
+        assert_eq!(alone.model_limits.len(), 1);
+        assert_eq!(alone.model_limits[0].model, "Opus");
+        assert_eq!(alone.model_limits[0].utilization, 12.0);
+
+        let both = super::parse_usage(&json!({
+            "seven_day_opus": legacy,
             "limits": [{
                 "kind": "weekly_scoped", "percent": 40, "resets_at": "2026-09-24T01:59:59Z",
                 "scope": { "model": { "id": null, "display_name": "Opus" }, "surface": null }
             }]
         }));
-
-        assert_eq!(usage.seven_day_opus.utilization, 12.0);
-        assert!(usage.model_limits.is_empty());
+        assert_eq!(both.model_limits.len(), 1);
+        assert_eq!(both.model_limits[0].utilization, 40.0);
     }
 
     #[test]

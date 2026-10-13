@@ -18,7 +18,6 @@ export type ClaudeModelLimit = {
 export type ClaudeUsage = {
   five_hour: ClaudeUsageWindow
   seven_day: ClaudeUsageWindow
-  seven_day_opus: ClaudeUsageWindow
   model_limits?: ClaudeModelLimit[]
 }
 
@@ -71,26 +70,46 @@ export async function getCodexUsage(): Promise<CodexUsage> {
   return withUsageAccess('codex', () => invoke<CodexUsage>('get_codex_usage'))
 }
 
+/** Account-wide token activity, the Overview of Codex's own `/usage`. */
+export type CodexAccountStats = {
+  lifetime_tokens: number | null
+  peak_daily_tokens: number | null
+  longest_turn_secs: number | null
+  current_streak_days: number | null
+  longest_streak_days: number | null
+}
+
+export async function getCodexAccountStats(): Promise<CodexAccountStats> {
+  return withUsageAccess('codex', () => invoke<CodexAccountStats>('get_codex_account_stats'))
+}
+
 export async function consumeCodexResetCredit(creditId?: string): Promise<CodexUsage> {
   return withUsageAccess('codex', () =>
     invoke<CodexUsage>('consume_codex_reset_credit', { creditId }),
   )
 }
 
+/** One window (`5h` or `weekly`) of one quota group, as `agy /usage` reports it. */
 export type AntigravityQuotaBucket = {
   label: string
   models: string[]
+  window: string
   used_percent: number
   remaining_percent: number
   resets_at: string
 }
 
 export type AntigravityUsage = {
-  status: 'ready' | 'no_cli' | 'no_auth' | 'unavailable'
+  status: 'ready' | 'no_cli' | 'unavailable'
   cli_path: string
   used_percent: number
   rate_limited: boolean
   buckets: AntigravityQuotaBucket[]
+}
+
+/** Display name of a bucket, such as `gemini · week`; `week` is the localized weekly label. */
+export function antigravityBucketName(bucket: AntigravityQuotaBucket, week: string): string {
+  return `${bucket.label.toLowerCase()} · ${bucket.window === 'weekly' ? week : bucket.window}`
 }
 
 export async function getAntigravityUsage(): Promise<AntigravityUsage> {

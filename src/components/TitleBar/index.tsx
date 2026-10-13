@@ -32,7 +32,13 @@ import { getCachedCodexUsage } from '../../lib/codexUsageCache'
 import { useT } from '../../lib/i18n'
 import { observeClaudeReset, observeCodexReset } from '../../lib/limitResetWatch'
 import { formatShortcut } from '../../lib/platform'
-import { codexHeadlineWindow, hasCodexWindow, killPty, remoteControlInfo } from '../../lib/tauri'
+import {
+  antigravityBucketName,
+  codexHeadlineWindow,
+  hasCodexWindow,
+  killPty,
+  remoteControlInfo,
+} from '../../lib/tauri'
 import { useSidebarViews } from '../../lib/viewPlacement'
 import { usePomodoroStore } from '../../stores/pomodoroStore'
 import { useProjectsStore } from '../../stores/projectsStore'
@@ -761,10 +767,6 @@ export function TitleBar() {
                     <span>{t('widget.week')}</span>
                     <strong>{formatPct(claudeUsage.seven_day.utilization)}</strong>
                   </div>
-                  <div className={styles.usagePopoverLine}>
-                    <span>{t('ws.usageOpusLabel')}</span>
-                    <strong>{formatPct(claudeUsage.seven_day_opus.utilization)}</strong>
-                  </div>
                   {(claudeUsage.model_limits ?? []).map((limit) => (
                     <div key={limit.model} className={styles.usagePopoverLine}>
                       <span>{t('ws.usageModelLabel', { model: limit.model.toLowerCase() })}</span>
@@ -864,9 +866,11 @@ export function TitleBar() {
                       {antigravityUsage.buckets.map((bucket) => (
                         <div
                           className={styles.usagePopoverLine}
-                          key={`${bucket.label}:${bucket.resets_at}`}
+                          key={`${bucket.label}:${bucket.window}`}
                         >
-                          <span title={bucket.models.join(', ')}>{bucket.label}</span>
+                          <span title={bucket.models.join(', ')}>
+                            {antigravityBucketName(bucket, t('widget.week'))}
+                          </span>
                           <strong>
                             {formatPct(bucket.used_percent)} · {formatResetTime(bucket.resets_at)}
                           </strong>
@@ -879,9 +883,7 @@ export function TitleBar() {
                       <strong>
                         {antigravityUsage.status === 'no_cli'
                           ? t('widget.antigravityNotInstalled')
-                          : antigravityUsage.status === 'no_auth'
-                            ? t('widget.antigravityNotSignedIn')
-                            : t('widget.usageUnavailable')}
+                          : t('widget.usageUnavailable')}
                       </strong>
                     </div>
                   )}

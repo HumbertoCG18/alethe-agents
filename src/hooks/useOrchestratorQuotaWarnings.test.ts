@@ -23,7 +23,6 @@ vi.mock('../lib/codexUsageCache', () => ({ getCachedCodexUsage: vi.fn() }))
 const fableAt92 = {
   five_hour: { utilization: 5, resets_at: '' },
   seven_day: { utilization: 10, resets_at: '' },
-  seven_day_opus: { utilization: 0, resets_at: '' },
   model_limits: [{ model: 'Fable', utilization: 92, resets_at: 'monday' }],
 }
 
@@ -134,7 +133,7 @@ describe('useOrchestratorQuotaWarnings', () => {
     usage.fitness.mockClear()
     onlyAntigravity(true)
     usage.antigravity.mockResolvedValue({
-      status: 'no_auth',
+      status: 'unavailable',
       cli_path: 'agy',
       used_percent: 0,
       rate_limited: false,
@@ -148,9 +147,9 @@ describe('useOrchestratorQuotaWarnings', () => {
 })
 
 describe('quotaWindowLabel', () => {
-  it('names the session, weekly and Opus windows', () => {
+  it('names the session and weekly windows, and any other label as a model limit', () => {
     expect(quotaWindowLabel('5h', t)).toBe('5-hour session')
     expect(quotaWindowLabel('week', t)).toBe('weekly limit')
-    expect(quotaWindowLabel('opus', t)).toBe('weekly Opus limit')
+    expect(quotaWindowLabel('fable', t)).toBe('weekly limit of fable')
   })
 })

@@ -4,7 +4,7 @@ import { notifyLimitReset } from './notifications'
 import type { ClaudeUsage, CodexUsage } from './tauri'
 import type { AgentType } from './types'
 
-type WindowKind = '5h' | 'week' | 'opus'
+type WindowKind = '5h' | 'week'
 type Entry = { resetsAt: number; notified: boolean; agent: AgentType; kind: WindowKind }
 
 const entries = new Map<string, Entry>()
@@ -19,7 +19,7 @@ function agentLabel(agent: AgentType): string {
 
 function windowLabel(kind: WindowKind): string {
   if (kind === 'week') return translate(getLocale(), 'widget.week')
-  return kind // '5h' | 'opus'
+  return kind
 }
 
 function fire(entry: Entry): void {
@@ -74,7 +74,6 @@ function parseIso(iso: string): number {
 export function observeClaudeReset(usage: ClaudeUsage): void {
   observe('claude:5h', 'claude', '5h', parseIso(usage.five_hour.resets_at))
   observe('claude:week', 'claude', 'week', parseIso(usage.seven_day.resets_at))
-  observe('claude:opus', 'claude', 'opus', parseIso(usage.seven_day_opus.resets_at))
 }
 
 export function observeCodexReset(usage: CodexUsage): void {

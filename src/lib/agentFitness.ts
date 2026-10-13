@@ -21,7 +21,7 @@ function isoFromMs(ms: number): string | null {
 
 /**
  * Human name of the window a fitness `worst` label stands for; any other label is a model limit.
- * Antigravity labels name its quota buckets, which are not weekly windows.
+ * Antigravity labels name the quota group (Gemini, Claude and GPT) of its tightest window.
  */
 export function quotaWindowLabel(
   worst: string,
@@ -31,7 +31,6 @@ export function quotaWindowLabel(
   if (agent === 'antigravity') return t('orchestrator.quotaWindowBucket', { bucket: worst })
   if (worst === '5h') return t('orchestrator.quotaWindow5h')
   if (worst === 'week') return t('orchestrator.quotaWindowWeek')
-  if (worst === 'opus') return t('orchestrator.quotaWindowOpus')
   return t('orchestrator.quotaWindowModel', { model: worst })
 }
 
@@ -42,11 +41,6 @@ export function claudeFitness(usage: ClaudeUsage): AgentFitness {
       label: 'week',
       used: usage.seven_day.utilization,
       resetsAt: usage.seven_day.resets_at || null,
-    },
-    {
-      label: 'opus',
-      used: usage.seven_day_opus.utilization,
-      resetsAt: usage.seven_day_opus.resets_at || null,
     },
     ...(usage.model_limits ?? []).map((limit) => ({
       label: limit.model.toLowerCase(),

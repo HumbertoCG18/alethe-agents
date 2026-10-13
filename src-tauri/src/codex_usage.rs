@@ -391,6 +391,40 @@ pub async fn get_codex_usage() -> Result<CodexUsage, String> {
         .map_err(|e| format!("join error: {e}"))?
 }
 
+/// Account-wide token activity, the Overview of Codex's own `/usage`. Fields stay empty when the
+/// account does not report them.
+#[derive(Debug, Serialize, Clone, PartialEq)]
+pub struct CodexAccountStats {
+    pub lifetime_tokens: Option<u64>,
+    pub peak_daily_tokens: Option<u64>,
+    pub longest_turn_secs: Option<u64>,
+    pub current_streak_days: Option<u64>,
+    pub longest_streak_days: Option<u64>,
+}
+
+fn parse_account_stats(result: &Value) -> Result<CodexAccountStats, String> {
+    let summary = result.get("summary").ok_or("no summary")?;
+    let field = |key: &str| summary.get(key).and_then(Value::as_u64);
+    Ok(CodexAccountStats {
+        lifetime_tokens: field("lifetimeTokens"),
+        peak_daily_tokens: field("peakDailyTokens"),
+        longest_turn_secs: field("longestRunningTurnSec"),
+        current_streak_days: field("currentStreakDays"),
+        longest_streak_days: field("longestStreakDays"),
+    })
+}
+
+/// Only the app-server reports these, so each read spawns codex.exe (#202): the frontend reads
+/// them while a usage card is open and caches them for 30 minutes, apart from the limit polling.
+#[tauri::command]
+pub async fn get_codex_account_stats() -> Result<CodexAccountStats, String> {
+    tokio::task::spawn_blocking(|| {
+        parse_account_stats(&app_server_call("account/usage/read", None)?)
+    })
+    .await
+    .map_err(|e| format!("join error: {e}"))?
+}
+
 #[tauri::command]
 pub async fn consume_codex_reset_credit(credit_id: Option<String>) -> Result<CodexUsage, String> {
     tokio::task::spawn_blocking(move || consume_reset_credit(credit_id))
@@ -541,5 +575,28 @@ mod tests {
             super::oauth_credentials(&json!({ "tokens": { "access_token": "" } })),
             None
         );
+    }
+
+    #[test]
+    fn reads_the_account_usage_overview() {
+        // Shape of `account/usage/read` on codex-cli 0.162.1.
+        let stats = super::parse_account_stats(&json!({
+            "summary": {
+                "lifetimeTokens": 2_384_437_875_u64,
+                "peakDailyTokens": 142_995_352,
+                "longestRunningTurnSec": 16_093,
+                "currentStreakDays": 14,
+                "longestStreakDays": null
+            },
+            "dailyUsageBuckets": [{ "startDate": "2026-10-11", "tokens": 1 }]
+        }))
+        .unwrap();
+
+        assert_eq!(stats.lifetime_tokens, Some(2_384_437_875));
+        assert_eq!(stats.peak_daily_tokens, Some(142_995_352));
+        assert_eq!(stats.longest_turn_secs, Some(16_093));
+        assert_eq!(stats.current_streak_days, Some(14));
+        assert_eq!(stats.longest_streak_days, None);
+        assert!(super::parse_account_stats(&json!({})).is_err());
     }
 }

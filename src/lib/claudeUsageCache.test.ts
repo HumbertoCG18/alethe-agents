@@ -11,7 +11,6 @@ vi.mock('./tauri', () => ({ getClaudeUsage }))
 const reading: ClaudeUsage = {
   five_hour: { utilization: 34, resets_at: '2026-09-29T20:00:00Z' },
   seven_day: { utilization: 46, resets_at: '2026-10-01T09:00:00Z' },
-  seven_day_opus: { utilization: 0, resets_at: '' },
 }
 
 beforeEach(() => {

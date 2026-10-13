@@ -24,7 +24,6 @@ vi.mock('../../lib/claudeUsageCache', () => ({
     return {
       five_hour: { utilization: fs.usage, resets_at: '' },
       seven_day: { utilization: 0, resets_at: '' },
-      seven_day_opus: { utilization: 0, resets_at: '' },
     }
   }),
 }))

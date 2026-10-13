@@ -101,11 +101,6 @@ export function UsageDropdown({
               util={claudeUsage.seven_day.utilization}
               reset={fmtReset(new Date(claudeUsage.seven_day.resets_at).getTime(), now)}
             />
-            <Row
-              label={t('ws.usageOpusLabel')}
-              util={claudeUsage.seven_day_opus.utilization}
-              reset={fmtReset(new Date(claudeUsage.seven_day_opus.resets_at).getTime(), now)}
-            />
             {(claudeUsage.model_limits ?? []).map((limit) => (
               <Row
                 key={limit.model}

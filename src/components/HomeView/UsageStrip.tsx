@@ -420,11 +420,9 @@ function ClaudeCard({ usage }: { usage: ClaudeUsage | null }) {
       </div>
       <CardFoot
         accent={accent}
-        left={[
-          '5h',
-          t('widget.week'),
-          ...modelLimits.map((l) => l.model.toLowerCase()),
-        ].join(' · ')}
+        left={['5h', t('widget.week'), ...modelLimits.map((l) => l.model.toLowerCase())].join(
+          ' · ',
+        )}
         right={t('widget.peak', { v: `${pctNum(maxUtil)}%` })}
       />
     </div>
@@ -541,8 +539,14 @@ function CodexCard({
         </div>
         {stats ? (
           <div className={styles.statGrid}>
-            <StatCell label={t('widget.lifetimeTokens')} value={formatTokens(stats.lifetime_tokens)} />
-            <StatCell label={t('widget.peakDayTokens')} value={formatTokens(stats.peak_daily_tokens)} />
+            <StatCell
+              label={t('widget.lifetimeTokens')}
+              value={formatTokens(stats.lifetime_tokens)}
+            />
+            <StatCell
+              label={t('widget.peakDayTokens')}
+              value={formatTokens(stats.peak_daily_tokens)}
+            />
             <StatCell
               label={t('widget.longestChat')}
               value={stats.longest_turn_secs ? formatDiff(stats.longest_turn_secs * 1000) : '—'}
@@ -602,7 +606,9 @@ function AntigravityCard({ usage }: { usage: AntigravityUsage | null }) {
 
   if (!usage || !hasData) {
     const emptyTitle =
-      usage?.status === 'no_cli' ? t('widget.antigravityNotInstalled') : t('widget.usageUnavailable')
+      usage?.status === 'no_cli'
+        ? t('widget.antigravityNotInstalled')
+        : t('widget.usageUnavailable')
     return (
       <div className={styles.usageCard}>
         {head}

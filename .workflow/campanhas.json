@@ -616,7 +616,7 @@
       "worktrees": [
         "alethe-agents-agy"
       ],
-      "atualizado_em": "2026-10-11",
+      "atualizado_em": "2026-10-15",
       "tarefas": [
         {
           "id": "AGY-01",
@@ -674,6 +674,15 @@
           "origem": "USER",
           "resultado": "Gate 2 por lote do dono em 11/10/2026 (\"Aprovo, Gate 2 por lote (Recomendado)\"): diff do AGY sem nenhuma config do git — HEAD resolvido em Rust no gitdir fixado, objetos lidos por um repositório bare próprio do Alethe sem config (alternates para o object store fixado), varredura Rust sem seguir links + check-ignore só nesses caminhos, patch por diff-index no índice próprio; modos/tipos, rename só de caixa e bit de execução do dono como o git. Worktree criada com git worktree add simples; pasta de hooks em TEMP e enumeração de filtros removidas. Limites ponytail: reftable, core.excludesFile, pastas ignoradas varridas, todo blob lido por turno, LFS/ident/working-tree-encoding.",
           "evidencia": "PR #171 (merge 17481be); revisões Astra 159 r1–r3 adjudicadas 6/0; suíte local 3× (só a falha conhecida do tailscale); CI Linux/macOS rodou o teste cfg(unix)"
+        },
+        {
+          "id": "AGY-06",
+          "titulo": "Haiku e executores pela regra ROTA-04 do lab",
+          "nivel": "T2",
+          "estado": "proposta",
+          "depende_de": [],
+          "origem": "USER",
+          "nota": "regra do lab (agent-workflow-lab PR #51, references/routing.md; evidência em evals/rota-03-2026-10-15.md): T1 Haiku/high → Sonnet; T2 Sonnet/high → Opus. Itens: (1) alinhar executor-t1 (hoje Sonnet medium) e executor-t2 (hoje Opus high); (2) resumo/Q&A de Markdown no Haiku (src/lib/markdownSummary.ts:8-9, hoje codex); (3) sandbox usa Haiku fixo até no planejador (src/stores/agentSandboxStore.ts:131,248); (4) unificar haiku-resumidor/haiku-mecanico (src-tauri/src/economy_agents.rs:17,37) com o haiku-ops do lab. Citações conferidas em 15/10 (Explore haiku, 7 citações)"
         }
       ]
     },
@@ -723,7 +732,7 @@
       "janela": "assistida",
       "depende_de": [],
       "worktrees": [],
-      "atualizado_em": "2026-10-09",
+      "atualizado_em": "2026-10-15",
       "tarefas": [
         {
           "id": "UI-01",
@@ -840,6 +849,15 @@
           ],
           "evidencia": "PRs #109 (CI na dev e evidência de aceite no template) e #118 (dev verde); CI da dev ok em 6c74518: https://github.com/HumbertoCG18/alethe-agents/actions/runs/37854626996",
           "resultado": "CI roda em push/PR para dev; primeiro verde após #118"
+        },
+        {
+          "id": "UI-11",
+          "titulo": "Reimaginar a página de orquestração nas configurações",
+          "nivel": "T2",
+          "estado": "proposta",
+          "depende_de": [],
+          "origem": "USER",
+          "nota": "pedido do dono 15/10; bloqueada até a ROTA-05 do agent-workflow-lab (medir Codex como revisor, executor e orquestrador). Ideia: cota por fornecedor, orquestrador ativo, troca automática para o Codex com cota semanal do Claude ≥ 80% (só entre tarefas), troca manual; Codex/AGY implementam e Claude revisa só leitura nesse modo. Implementar só a regra que a ROTA-05 aprovar"
         }
       ]
     },

@@ -404,6 +404,9 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ### Changed
 
+- **Claude workers get a short brief of fixed rules.** Isolated from your own CLAUDE.md, a worker
+  now still starts with a few rules that hold for any task: no commit, push or deploy unless the task
+  asks, never print a secret, stay in the task's directory.
 - **Antigravity workers edit files but run no commands.** Each worker now runs as the
   `alethe-worker` agy agent, which Alethe installs and keeps up to date in
   `~/.gemini/config/agents/alethe-worker/`, without your own agy hooks, rules, GEMINI.md or MCP

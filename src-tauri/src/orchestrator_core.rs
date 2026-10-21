@@ -2099,6 +2099,47 @@ fn claude_isolation_args(settings_file: &str) -> Vec<String> {
     .to_vec()
 }
 
+/// What a Claude worker is told when the person's own instructions stay out (#197): rules that
+/// hold whatever the task. Plain text with no secret in it, written next to the worker's settings.
+const CLAUDE_WORKER_BRIEF: &str = "Rules for this worker, whatever the task:\n\
+- Do not commit, push, tag, merge or deploy unless the task asks for it by name.\n\
+- Never print a secret, token, key or the contents of a credentials or .env file.\n\
+- Work only inside the task's directory and change only what the task needs.\n\
+- When the task cannot be done as written, stop and say what is missing.\n";
+
+/// Writes `bytes` as `name` in `dir`, creating `dir`: the temp file is only ever new and goes over
+/// `name` by rename, so a link or hard link already at `name` is replaced, never written through.
+fn write_job_file(dir: &std::path::Path, name: &str, bytes: &[u8]) -> std::io::Result<std::path::PathBuf> {
+    let file = dir.join(name);
+    let temp = dir.join(format!("{name}.tmp"));
+    std::fs::create_dir_all(dir)?;
+    // Whatever was left at the temp path goes first, a link without what it points to, and the
+    // temp file is only ever new: a write through a link could replace the person's files.
+    match std::fs::remove_file(&temp) {
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error),
+        _ => {}
+    }
+    let staged = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temp)
+        .and_then(|mut staged| staged.write_all(bytes))
+        .and_then(|()| std::fs::rename(&temp, &file));
+    if let Err(error) = staged {
+        // Its own error stands; a temp file that cannot be removed is not worth hiding it for.
+        let _ = std::fs::remove_file(&temp);
+        return Err(error);
+    }
+    Ok(file)
+}
+
+/// `--append-system-prompt-file` for the brief in `brief_file` (the worker runs in `-p` mode).
+fn claude_brief_args(brief_file: &str) -> Vec<String> {
+    ["--append-system-prompt-file", brief_file]
+        .map(String::from)
+        .to_vec()
+}
+
 /// What a Claude worker's command line adds to its launcher: the session to resume, if any, and the
 /// model and effort the planner chose.
 fn claude_worker_args(
@@ -2894,30 +2935,19 @@ impl Core {
         let settings =
             claude_worker_settings(&home.to_string_lossy(), user.as_deref()).map_err(refused)?;
         let dir = self.job_dir(job_id);
-        let file = dir.join("claude-settings.json");
-        let temp = dir.join("claude-settings.json.tmp");
-        // Whatever was left at the temp path goes first, a link without what it points to, and the
-        // temp file is only ever new: a write through a link could replace the person's settings.
-        std::fs::create_dir_all(&dir)
-            .and_then(|()| match std::fs::remove_file(&temp) {
-                Err(error) if !missing(&error) => Err(error),
-                _ => Ok(()),
-            })
-            .and_then(|()| {
-                std::fs::OpenOptions::new()
-                    .write(true)
-                    .create_new(true)
-                    .open(&temp)
-            })
-            .and_then(|mut staged| staged.write_all(settings.to_string().as_bytes()))
-            .and_then(|()| std::fs::rename(&temp, &file))
-            .map_err(|error| {
+        let written = |name: &str, bytes: &[u8], what: &str| {
+            write_job_file(&dir, name, bytes).map_err(|error| {
                 format!(
-                    "the Claude worker did not start: its settings could not be written to {} ({error})",
-                    file.display()
+                    "the Claude worker did not start: its {what} could not be written to {} ({error})",
+                    dir.join(name).display()
                 )
-            })?;
-        Ok(claude_isolation_args(&file.to_string_lossy()))
+            })
+        };
+        let file = written("claude-settings.json", settings.to_string().as_bytes(), "settings")?;
+        let brief = written("claude-brief.md", CLAUDE_WORKER_BRIEF.as_bytes(), "brief")?;
+        let mut args = claude_isolation_args(&file.to_string_lossy());
+        args.extend(claude_brief_args(&brief.to_string_lossy()));
+        Ok(args)
     }
 
     fn spawn_worker(&self, job_id: &str) {
@@ -5949,7 +5979,7 @@ mod restart_tests {
     }
 
     use super::{
-        claude_isolation_args, claude_worker_args, claude_worker_settings, codex_models, guard,
+        claude_brief_args, claude_isolation_args, write_job_file, claude_worker_args, CLAUDE_WORKER_BRIEF, claude_worker_settings, codex_models, guard,
         isolate_thread, thread_resume_params, thread_start_params, user_mcp_names, Core, Launcher,
         OrchestrationSettings,
     };
@@ -6072,6 +6102,49 @@ mod restart_tests {
 
     fn excludes(home: &str) -> Value {
         json!([format!("{home}/CLAUDE.md"), format!("{home}/rules/**")])
+    }
+
+    // A Claude worker without the person's CLAUDE.md still gets a short brief of fixed rules, as a
+    // file on the command line, and the brief carries no secret (#197).
+    #[test]
+    fn a_claude_worker_gets_a_minimal_brief() {
+        assert_eq!(
+            claude_brief_args(r"D:\data\jobs\job-01\claude-brief.md"),
+            [
+                "--append-system-prompt-file",
+                r"D:\data\jobs\job-01\claude-brief.md"
+            ]
+        );
+        assert!(CLAUDE_WORKER_BRIEF.contains("Do not commit, push"));
+        assert!(CLAUDE_WORKER_BRIEF.contains("Never print a secret"));
+        assert!(CLAUDE_WORKER_BRIEF.len() < 600);
+    }
+
+    // A job's file goes over what is at its name by rename, so a link left there keeps its target
+    // (#197). A hard link stands for the link: it shares the inode a plain write would truncate.
+    #[test]
+    fn a_job_file_is_not_written_through_a_link() {
+        let dir = std::env::temp_dir().join(format!("alethe-197-{}", std::process::id()));
+        let outside = dir.join("outside");
+        let job = dir.join("job");
+        std::fs::create_dir_all(&job).unwrap();
+        std::fs::write(&outside, "the person's file").unwrap();
+        std::fs::hard_link(&outside, job.join("claude-brief.md")).unwrap();
+        let written = write_job_file(&job, "claude-brief.md", b"brief").unwrap();
+        assert_eq!(std::fs::read_to_string(written).unwrap(), "brief");
+        assert_eq!(std::fs::read_to_string(&outside).unwrap(), "the person's file");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    // A write that fails leaves no temp file behind, and the caller gets the write's own error.
+    #[test]
+    fn a_failed_job_file_write_leaves_no_temp_file() {
+        let dir = std::env::temp_dir().join(format!("alethe-197-fail-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("claude-brief.md")).unwrap();
+        let error = write_job_file(&dir, "claude-brief.md", b"brief").unwrap_err();
+        assert!(!dir.join("claude-brief.md.tmp").exists(), "left behind: {error}");
+        assert!(dir.join("claude-brief.md").is_dir());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     fn isolated(home: &str) -> Value {

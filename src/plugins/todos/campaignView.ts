@@ -19,6 +19,7 @@ import {
   campaignWorkers,
   checkedResult,
   inCheckouts,
+  isFinal,
   isoDay,
   liveTaskWorkers,
   type NightDiary,
@@ -86,6 +87,7 @@ export const STATE_KEYS: Record<TaskState, MessageKey> = {
   bloqueada: 'todo.campaigns.stateBlocked',
   reservada: 'todo.campaigns.stateReserved',
   concluída: 'todo.campaigns.stateDone',
+  descartada: 'todo.campaigns.stateDiscarded',
 }
 
 /** The agents a campaign opens in. */
@@ -99,6 +101,7 @@ export const TASK_LANES: Record<TaskState, string> = {
   bloqueada: 'blocked',
   reservada: 'idle',
   concluída: 'finished',
+  descartada: 'finished',
 }
 
 export type Registry = CampaignRegistry & {
@@ -863,7 +866,7 @@ export function nightUndecided(entry: NightEntry, campaigns: readonly Campaign[]
   const state = campaigns
     .flatMap((campaign) => campaign.tasks)
     .find((task) => task.id === entry.task)?.state
-  return state !== undefined && state !== 'concluída' && state !== 'pronta'
+  return state !== undefined && !isFinal(state) && state !== 'pronta'
 }
 
 /** "2 running · 1 queued"; null when nothing is live. */

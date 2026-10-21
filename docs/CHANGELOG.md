@@ -589,6 +589,9 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ### Fixed
 
+- **A discarded campaign task no longer counts in the campaign's percentage.** The `descartada` state
+  (closed without delivery, as in the registry's lab) leaves both the done count and the total, and
+  no longer keeps a campaign or its dependents from finishing.
 - **A Claude worker's diff shows the files it created**, and it clears once the worker reverts its
   changes instead of keeping the last one.
 - **Agent CLIs installed with both a `.cmd` and an `.exe` launch the `.exe`**, so the arguments you

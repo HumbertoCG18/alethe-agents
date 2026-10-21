@@ -7,6 +7,7 @@ import {
   campaignPrerequisites,
   type CampaignSituation,
   campaignWorkers,
+  isFinal,
   nightView,
   type RegistryError,
   type TaskState,
@@ -347,7 +348,7 @@ export function CampaignRow({
                       {task.window !== campaign.window ? (
                         <span>{t(WINDOW_KEYS[task.window])}</span>
                       ) : null}
-                      {task.state !== 'concluída' && task.unmet.length > 0 ? (
+                      {!isFinal(task.state) && task.unmet.length > 0 ? (
                         <span className={styles.situation} data-unmet>
                           {t('todo.campaigns.waits', { ids: task.unmet.join(', ') })}
                         </span>

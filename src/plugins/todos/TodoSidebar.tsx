@@ -31,6 +31,7 @@ import {
   type CampaignTask,
   campaignTaskView,
   campaignWorkers,
+  isFinal,
   type NightDiary,
   type NightEntry,
   nightView,
@@ -851,7 +852,7 @@ function waitingOnYou(registry: Registry, diary: NightDiary | null) {
       .filter(
         (task) =>
           // Done, or back in the queue for the next night: not waiting for the Gate 2.
-          task.state !== 'concluída' &&
+          !isFinal(task.state) &&
           task.state !== 'pronta' &&
           task.result?.startsWith(GATE_2_RESULT) &&
           !listed.has(task.id),
@@ -1536,9 +1537,11 @@ function CampaignTaskRow({
   const detailId = useId()
   const detailLabel = t('todo.taskDetail.toggle', { id: task.id })
   const done = task.state === 'concluída'
+  // A discarded task is closed without delivery: no check, no reopen, no steps.
+  const closed = isFinal(task.state)
   const undoable = done && edits.undoable(task.id)
   // A task done elsewhere has no state here to go back to.
-  const label = t(done ? (undoable ? 'todo.reopen' : STATE_KEYS[task.state]) : 'todo.complete')
+  const label = t(closed ? (undoable ? 'todo.reopen' : STATE_KEYS[task.state]) : 'todo.complete')
   const live = workersLabel(t, workers.get(task.id))
   const inactive = task.state === 'em execução' && !working && !workers.get(task.id)?.running
   // Through its steps when it has them, its result in the tooltip; else its result.
@@ -1559,7 +1562,7 @@ function CampaignTaskRow({
   return (
     <div
       data-task={task.id}
-      className={`${styles.todoRow} ${done ? styles.todoRowCompleted : ''}`}
+      className={`${styles.todoRow} ${closed ? styles.todoRowCompleted : ''}`}
       onKeyDown={actions?.onKeyDown}
     >
       {sources ? (
@@ -1584,7 +1587,7 @@ function CampaignTaskRow({
         type="button"
         className={styles.checkButton}
         onClick={() => void edits.toggle(task)}
-        disabled={edits.busy || (done && !undoable)}
+        disabled={edits.busy || (closed && !undoable)}
         title={label}
         aria-label={label}
       >
@@ -1609,7 +1612,7 @@ function CampaignTaskRow({
           {t(inactive ? 'todo.campaigns.inactiveTask' : STATE_KEYS[task.state])}
         </span>
       )}
-      {step && !done && stepLine ? (
+      {step && !closed && stepLine ? (
         <span
           className={`${styles.detailMeta} ${styles.todoTitleText} ${styles.stepLine}`}
           title={task.result ?? stepLine}

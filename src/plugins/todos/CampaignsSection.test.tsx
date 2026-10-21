@@ -778,10 +778,23 @@ describe('Active campaigns in the Todo tab', () => {
       'OITO-06',
       'OITO-07',
     ])
-    fireEvent.click(screen.getByRole('button', { name: '1 done' }))
+    fireEvent.click(screen.getByRole('button', { name: '1 closed' }))
     expect(listed()).toHaveLength(8)
     expect(listed().at(-1)).toBe('OITO-01')
     expect(row('OITO-03')).toHaveTextContent('pronta sem dependência')
+  })
+
+  it('counts a discarded task as closed, not done, and names it on its row', async () => {
+    const registry = structuredClone(exemplo)
+    const oito = registry.campanhas.find((campaign) => campaign.id === 'OITO')!
+    oito.tarefas.find((task) => task.id === 'OITO-02')!.estado = 'descartada'
+    fs.files.set(REGISTRY, JSON.stringify(registry))
+    activate()
+    render(<TodoSidebar />)
+    await waitFor(() => expect(row('OITO-03')).not.toBeNull())
+    expect(screen.queryByRole('button', { name: /done$/ })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '2 closed' }))
+    expect(row('OITO-02')).toHaveTextContent('Discarded')
   })
 
   it('counts an undecomposed campaign as +?', async () => {
@@ -792,7 +805,7 @@ describe('Active campaigns in the Todo tab', () => {
     expect(within(aberta).getByRole('button', { name: /^ABERTA ·/ })).toHaveTextContent('1/1+?')
     expect(screen.queryByRole('progressbar')).toBeNull()
     expect(within(aberta).getByText('No tasks here.')).toBeInTheDocument()
-    fireEvent.click(within(aberta).getByRole('button', { name: '1 done' }))
+    fireEvent.click(within(aberta).getByRole('button', { name: '1 closed' }))
     expect(listed()).toEqual(['ABERTA-01'])
   })
 
@@ -852,7 +865,7 @@ describe('Active campaigns in the Todo tab', () => {
     render(<TodoSidebar />)
     await waitFor(() => expect(row('OITO-03')).not.toBeNull())
     // A task checked here joins the done ones: shown, to reopen it from its row.
-    fireEvent.click(screen.getByRole('button', { name: '1 done' }))
+    fireEvent.click(screen.getByRole('button', { name: '1 closed' }))
 
     fireEvent.click(within(row('OITO-03')).getByRole('button', { name: 'Mark complete' }))
     await waitFor(() =>
@@ -900,7 +913,7 @@ describe('Active campaigns in the Todo tab', () => {
     activate()
     render(<TodoSidebar />)
     await waitFor(() => expect(row('OITO-03')).not.toBeNull())
-    fireEvent.click(screen.getByRole('button', { name: '1 done' }))
+    fireEvent.click(screen.getByRole('button', { name: '1 closed' }))
     // Reading the worktrees runs git: 0.2 to 0.4 s per read on Windows (ACH-0001).
     const checkouts = await worktreeCheckouts('C:\\repo')
     let readWorktrees: () => void = () => {}
@@ -3399,7 +3412,7 @@ describe('Todo tabs', () => {
     ])
     expect(rows(active('PARADA'))).toEqual(['PARADA-01'])
     // Its done tasks wait, collapsed, at its end; no filter tabs.
-    fireEvent.click(within(oito).getByRole('button', { name: '1 done' }))
+    fireEvent.click(within(oito).getByRole('button', { name: '1 closed' }))
     expect(rows(oito).at(-1)).toBe('OITO-01')
     expect(screen.queryByRole('tab', { name: 'All' })).toBeNull()
     // Its facts are the map row's, in its header's tooltip.
@@ -3670,7 +3683,7 @@ describe('Active campaign step', () => {
     expect(row('OITO-02')).not.toHaveTextContent('aguarda')
     // A Gate 2 task's result is why it is in Pending, not a step; a done task has none.
     expect(within(row('OITO-07')).queryByText('aguarda o Gate 2 do usuário')).toBeNull()
-    fireEvent.click(within(active('OITO')!).getByRole('button', { name: '1 done' }))
+    fireEvent.click(within(active('OITO')!).getByRole('button', { name: '1 closed' }))
     expect(within(row('OITO-01')).queryByText('feita e conferida')).toBeNull()
   })
 
@@ -4268,7 +4281,7 @@ describe('Personal list', () => {
     expect(chip('Write the doc')).toHaveTextContent('App')
     expect(chip('Loose one')).toHaveTextContent('No project')
 
-    const doneGroup = screen.getByRole('button', { name: '1 done' })
+    const doneGroup = screen.getByRole('button', { name: '1 closed' })
     expect(doneGroup).toHaveAttribute('aria-expanded', 'false')
     fireEvent.click(doneGroup)
     expect(titles()).toEqual(['Loose one', 'Write the doc', 'Finished one'])

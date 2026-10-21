@@ -14,6 +14,7 @@ import {
   campaignActivity,
   campaignBlock,
   campaignCwd,
+  campaignPrerequisites,
   campaignStepTitle,
   campaignTabTitle,
   campaignTaskView,
@@ -1291,5 +1292,94 @@ describe('nightView', () => {
     expect(view.tasks.map((item) => item.id)).toEqual(['NIGHT-01'])
     expect([view.done, view.total, view.percent]).toEqual([1, 1, 100])
     expect(view.situation.kind).toBe('done')
+  })
+})
+
+describe('discarded tasks', () => {
+  const task = (id: string, estado: string, janela?: string) => ({
+    id,
+    titulo: id,
+    estado,
+    depende_de: [],
+    ...(janela ? { janela } : {}),
+  })
+  const campaigns = parse({
+    versao: 1,
+    projeto: 'x',
+    tronco: 'C:\\repo',
+    campanhas: [
+      {
+        id: 'DESC',
+        prioridade: 1,
+        janela: 'noite',
+        tarefas: [
+          task('DESC-01', 'concluída'),
+          task('DESC-02', 'pronta'),
+          task('DESC-03', 'descartada'),
+        ],
+      },
+      {
+        id: 'FIM',
+        prioridade: 2,
+        janela: 'qualquer',
+        tarefas: [task('FIM-01', 'concluída'), task('FIM-02', 'descartada')],
+      },
+    ],
+  })
+
+  it('leave both the done count and the total, and so the percentage', () => {
+    const campaign = byId(campaigns, 'DESC')
+    expect([campaign.done, campaign.total, campaign.percent]).toEqual([1, 2, 50])
+    const view = nightView(campaign)!
+    expect([view.done, view.total, view.percent]).toEqual([1, 2, 50])
+  })
+
+  it('do not keep a campaign from being done', () => {
+    const campaign = byId(campaigns, 'FIM')
+    expect([campaign.done, campaign.total, campaign.percent]).toEqual([1, 1, 100])
+    expect(campaign.situation.kind).toBe('done')
+  })
+})
+
+describe('discarded tasks in the other consumers', () => {
+  const task = (id: string, estado: string, depende_de: string[] = []) => ({
+    id,
+    titulo: id,
+    estado,
+    depende_de,
+  })
+  const campaigns = parse({
+    versao: 1,
+    projeto: 'x',
+    tronco: 'C:\\repo',
+    campanhas: [
+      {
+        id: 'A',
+        prioridade: 1,
+        janela: 'qualquer',
+        tarefas: [task('A-01', 'descartada'), task('A-02', 'proposta')],
+      },
+      {
+        id: 'B',
+        prioridade: 2,
+        janela: 'qualquer',
+        depende_de: ['A-01'],
+        tarefas: [task('B-01', 'pronta')],
+      },
+    ],
+  })
+
+  it('does not hold a campaign back for a discarded prerequisite', () => {
+    expect(campaignPrerequisites(byId(campaigns, 'B'), campaigns)).toEqual([])
+  })
+
+  it('resumes from an open task, never a discarded one', () => {
+    expect(resumeTask(byId(campaigns, 'A'))?.id).toBe('A-02')
+  })
+
+  it('lists discarded tasks with the closed ones, after the open ones', () => {
+    const tasks = byId(campaigns, 'A').tasks
+    expect(campaignTaskView(tasks, 'active').map((item) => item.id)).toEqual(['A-02'])
+    expect(campaignTaskView(tasks, 'completed').map((item) => item.id)).toEqual(['A-01'])
   })
 })

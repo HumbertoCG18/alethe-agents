@@ -2,6 +2,7 @@ import { type RefObject, useEffect, useRef, useState } from 'react'
 
 import {
   evidenceIsPath,
+  isFinal,
   NIGHT_RESULTS,
   type NightDiary,
   type NightEntry,
@@ -239,7 +240,7 @@ export function NightEntryRow({
   const campaign =
     entry.result === 'aguarda-voce' ? taskCampaign(registry.campaigns, entry.task) : undefined
   const state = campaign?.tasks.find((task) => task.id === entry.task)?.state
-  const undecided = state !== undefined && state !== 'concluída'
+  const undecided = state !== undefined && !isFinal(state)
   const { onKeyDown, toggle, menu } = useTaskActions({
     taskId: entry.task,
     campaign,

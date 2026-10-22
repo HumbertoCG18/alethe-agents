@@ -20,9 +20,14 @@ pub const SCROLLBACK_CAP_BYTES: usize = 4 * 1024 * 1024;
 pub const SCROLLBACK_FLUSH_INTERVAL_MS: u128 = 250;
 
 /// `SCROLLBACK_CAP_BYTES`. 2× o cap = ~2× de write-amplification amortizada
-
+/// Acima disso o `.bin` (append-only) é compactado pra cauda de
+/// `SCROLLBACK_CAP_BYTES`. 2× o cap = ~2× de write-amplification amortizada
+/// sobre a saída real, e no máximo ~8 MB por terminal em disco.
 pub const SCROLLBACK_COMPACT_BYTES: u64 = SCROLLBACK_CAP_BYTES as u64 * 2;
-
+/// Cadência do canal `pty://activity/{id}` enquanto o painel está invisível —
+/// baixa o suficiente pra não pesar na main thread do webview, alta o
+/// suficiente pra `AgentCompletionMonitor` (RESPONSE_IDLE_MS=4500 no frontend)
+/// detectar "agente terminou" com folga mesmo em background.
 pub const PTY_ACTIVITY_EMIT_INTERVAL_MS: u128 = 450;
 const TEARDOWN_NORMAL: u8 = 0;
 const TEARDOWN_KILLED: u8 = 1;
@@ -54,10 +59,22 @@ fn child_has_exited(child: &Arc<Mutex<Box<dyn portable_pty::Child + Send + Sync>
     }
 }
 
+/// RAM livre mínima (do SISTEMA, não só do que o Alethe gerencia) exigida
+/// antes de tentar o boot de um agente novo. Sem isso, um boot com o sistema
+/// já no limite deixa o PRÓPRIO processo do agente (Node/WebKit/etc.) nascer
+/// sem memória suficiente e se matar sozinho assim que tenta alocar (visto ao
+/// vivo: crash "MemoryExhaustion" do JavaScriptCore) — algo que o Alethe não
+/// tem como evitar DEPOIS que o processo já nasceu, porque não controla o
+/// alocador interno dele. O `ResourceSupervisor` (resources.rs) só enxerga a
+/// memória dos processos que o próprio Alethe já gerencia, não a RAM livre
+/// real do Windows — por isso esse gate é separado e roda sempre, mesmo com o
 /// supervisor no modo manual.
 const SPAWN_MIN_AVAILABLE_MB: f64 = 400.0;
 const SPAWN_MEMORY_WAIT_POLL_MS: u64 = 1_000;
-
+/// Teto de espera: depois disso tenta o boot mesmo sem folga confirmada — é
+/// melhor arriscar um crash raro do que travar o usuário pra sempre esperando
+/// uma liberação de RAM que pode nunca vir (ex.: outro processo com vazamento
+/// real, não uma pressão passageira).
 const SPAWN_MEMORY_WAIT_MAX_MS: u128 = 45_000;
 
 #[derive(Clone, Serialize)]
@@ -67,6 +84,12 @@ pub struct PtySpawnMemoryWaitPayload {
     pub threshold_mb: f64,
 }
 
+/// Espera a RAM livre do sistema ter uma folga mínima antes de deixar o
+/// chamador prosseguir com o boot real do processo. Depois que o agente já
+/// nasceu com folga, o consumo contínuo dele é responsabilidade do próprio
+/// provider (Claude/Codex/OpenCode já gerenciam sua própria memória em
+/// runtime) — este gate protege só o MOMENTO do boot, nunca o funcionamento
+/// depois.
 fn wait_for_spawnable_memory(app: &AppHandle, id: &str) -> u128 {
     let started = Instant::now();
     loop {
@@ -92,6 +115,21 @@ fn wait_for_spawnable_memory(app: &AppHandle, id: &str) -> u128 {
 
 // (~5.8 GB de folga) enquanto a RAM "livre" parecia OK. Comprometer de
 
+// DESATIVADO (não removido, pra não perder o raciocínio): a ideia original
+// era um "colchão" de RAM que o Alethe ia comprometendo aos poucos em segundo
+// plano (só quando sobrava RAM FÍSICA livre) e soltava bem antes de cada
+// boot, pra aumentar a chance da memória recém-liberada ir pro processo
+// novo. Descartada depois de um crash real ao vivo: `sysinfo::available_memory()`
+// só enxerga RAM física livre, nunca o LIMITE DE COMMIT do Windows (RAM +
+// paginação somados) — e nesse teste o commit já estava em 39.7 de 45.5 GB
+// (~5.8 GB de folga) enquanto a RAM "livre" parecia OK. Comprometer de
+// propósito até 400 MB extras num sistema já perto do limite de commit é
+// exatamente o tipo de coisa que pode estourar esse limite e causar um crash
+// pior do que o que o mecanismo tentava evitar — o oposto da intenção. Uma
+// versão futura precisaria checar o commit real (`GetPerformanceInfo` do
+// Windows, via a crate `windows`) antes de comprometer qualquer coisa, não
+// só a RAM física. Até lá, `wait_for_spawnable_memory` sozinha é a escolha
+// seguro: só LÊ o estado, nunca aloca nada de propósito.
 fn prepare_memory_for_boot(app: &AppHandle, id: &str) -> u128 {
     wait_for_spawnable_memory(app, id)
 }
@@ -100,7 +138,9 @@ pub struct ScrollbackBuffer {
     pub data: VecDeque<u8>,
     pub last_flush: Instant,
     pub dirty: bool,
-
+    /// Bytes novos ainda não escritos em disco. O flush faz APPEND só disto —
+    /// não reescreve os 4 MB do anel. Sem isso, um spinner (poucos bytes/s)
+    /// forçava um rewrite de 4 MB a cada 250ms (~16 MB/s por terminal ativo).
     pub pending: Vec<u8>,
 }
 
@@ -117,6 +157,9 @@ impl ScrollbackBuffer {
 
 /// a cauda de um caractere multibyte que o `read()` do PTY partiu no limite do
 
+/// Quantos bytes do início de `buf` formam UTF-8 válido. O resto (0–3 bytes) é
+/// a cauda de um caractere multibyte que o `read()` do PTY partiu no limite do
+/// buffer — esses bytes esperam a próxima leitura pra não virarem `�`.
 fn valid_utf8_prefix_len(buf: &[u8]) -> usize {
     match std::str::from_utf8(buf) {
         Ok(s) => s.len(),
@@ -124,6 +167,12 @@ fn valid_utf8_prefix_len(buf: &[u8]) -> usize {
     }
 }
 
+/// Avança `start` até o próximo byte que inicia um caractere UTF-8 (ou até o
+/// fim do slice), evitando cortar no meio de uma sequência multibyte quando
+/// `start` foi escolhido só por contagem de bytes (ex.: truncar scrollback
+/// pelos últimos N bytes em `attach_pty`). Bytes de continuação UTF-8 sempre
+/// têm os dois bits mais altos como `10`; sem isso, um corte no meio de um
+/// acento (ex.: "ã" = 2 bytes) sobra um byte órfão que vira `U+FFFD` no
 /// `from_utf8_lossy` seguinte.
 pub(crate) fn align_to_char_boundary(slice: &[u8], start: usize) -> usize {
     let mut start = start.min(slice.len());
@@ -135,10 +184,19 @@ pub(crate) fn align_to_char_boundary(slice: &[u8], start: usize) -> usize {
 
 /// output real → resize → nudge de redesenho) em `spawn.log`, pro
 
+/// `ALETHE_PTY_DEBUG=1` liga uma timeline de timestamps (spawn → primeiro
+/// output real → resize → nudge de redesenho) em `spawn.log`, pro
+/// procedimento de diagnóstico da área principal do OpenCode renderizando
+/// em branco (ver docs/CHANGELOG.md e o plano de investigação). Mesmo
+/// padrão de `ALETHE_E2E`/`ALETHE_GHOSTTY_PROBE` já usado no projeto — sem
+/// a variável, zero custo extra (só a checagem do env var).
 fn pty_debug_enabled() -> bool {
     std::env::var("ALETHE_PTY_DEBUG").as_deref() == Ok("1")
 }
 
+/// Decide se o canal `pty://activity/{id}` (painel invisível) já pode emitir
+/// de novo. `None` = nunca emitiu ainda (primeiro lote invisível passa na
+/// hora, sem esperar o intervalo).
 fn activity_emit_due(last_activity_emit: Option<Instant>, interval_ms: u128) -> bool {
     match last_activity_emit {
         None => true,
@@ -148,32 +206,50 @@ fn activity_emit_due(last_activity_emit: Option<Instant>, interval_ms: u128) -> 
 
 pub struct PtySession {
     pub pty_id: String,
-
+    // Arc<Mutex> pelo mesmo motivo do writer (comentário abaixo): resize_pty
+    // precisa poder clonar o handle e soltar o lock global de sessions antes
+    // de chamar master.resize (ConPTY pode travar) sem prender kill/write/
+    // attach de todos os outros PTYs atrás dele.
     pub master: Arc<Mutex<Box<dyn MasterPty + Send>>>,
-
+    // writer fica em Arc<Mutex> pra write_pty poder soltar o lock global de
+    // sessions antes de escrever. Sem isso, escritas longas de um PTY bloqueiam
+    // qualquer outra operacao (resize, attach, kill) em todos os outros PTYs.
     pub writer: Arc<Mutex<Box<dyn Write + Send>>>,
     pub child: Arc<Mutex<Box<dyn portable_pty::Child + Send + Sync>>>,
     pub scrollback: Arc<Mutex<ScrollbackBuffer>>,
-
+    /// Sinaliza que o reader terminou de persistir a cauda final. Suspensão
+    /// espera esta barreira antes de permitir que o mesmo id seja retomado.
     pub reader_done: Arc<(Mutex<Option<bool>>, Condvar)>,
     /// Motivo do teardown. Kill/restart pulam o flush final; suspend espera o
+    /// flush final do reader antes de permitir a retomada do mesmo `ptyId`.
     pub teardown: Arc<AtomicU8>,
     pub command: Option<String>,
     pub cwd: Option<String>,
     pub read_active: Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>,
-
+    /// Visibilidade lógica do painel no frontend (aba/grupo ativo, não
+    /// colapsado). NÃO pausa a leitura do PTY (isso travaria o `write()` do
+    /// agente) — só decide se o coalescer manda o lote pro canal `data`
+    /// (render caro) ou pro `activity` (throttlado, só recordIo/completion).
     pub visible: Arc<AtomicBool>,
 
     /// OpenCode, disparado tanto no boot (primeiro output real do processo)
     /// quanto em `resize_pty`. Os dois gatilhos podem cair quase juntos —
-
+    /// Timestamp (ms) do último nudge de redesenho (Ctrl+L) mandado pro
+    /// OpenCode, disparado tanto no boot (primeiro output real do processo)
+    /// quanto em `resize_pty`. Os dois gatilhos podem cair quase juntos —
+    /// sem coordenação, dois redesenhos concorrentes do OpenCode se
     /// sobrepunham na tela em vez de um substituir o outro (texto/blocos de
     /// um redraw colidindo com o outro), confirmado analisando os bytes
+    /// crus do scrollback. `try_claim_opencode_nudge` garante só um disparo
+    /// por janela curta, não importa qual dos dois gatilhos chegou primeiro.
     pub opencode_nudge_lock: Arc<AtomicU64>,
 }
 
 const OPENCODE_NUDGE_COOLDOWN_MS: u64 = 400;
 
+/// CAS simples: só concede o nudge se a última tentativa (de QUALQUER
+/// gatilho) foi há mais de `OPENCODE_NUDGE_COOLDOWN_MS`. `Ordering::SeqCst`
+/// por segurança — não é um caminho quente o suficiente pra valer a pena
 /// relaxar.
 fn try_claim_opencode_nudge(lock: &AtomicU64) -> bool {
     let now = now_ms();
@@ -190,6 +266,9 @@ pub type PtySessions = Arc<Mutex<HashMap<String, PtySession>>>;
 #[cfg(windows)]
 static PTY_JOB_HANDLE: OnceLock<isize> = OnceLock::new();
 
+/// Coordena somente spawns do MESMO id. O mutex de `PtySessions` não pode
+/// permanecer travado durante `openpty`/resolução/spawn do processo: isso
+/// serializava todos os terminais apesar da fila do frontend permitir paralelismo.
 static SPAWN_COORDINATOR: OnceLock<(Mutex<HashSet<String>>, Condvar)> = OnceLock::new();
 
 struct SpawnReservation {
@@ -313,7 +392,16 @@ pub async fn spawn_pty(
     command_line: Option<String>,
 ) -> Result<SpawnPtyResponse, String> {
     // OUTRO comando IPC (spawn de outro terminal, poll do GSD Sync, leitura de
-
+    // `openpty`/resolução do launcher/`spawn_command` são chamadas de SO de
+    // verdade (ConPTY, criação de processo) — podem demorar bem mais que o
+    // normal sob AV/antivírus escaneando o processo novo, ou travar de vez em
+    // quando (bug conhecido do ConPTY do Windows). Antes disso rodava direto
+    // na thread que o Tauri usa pra despachar o comando; se travasse, TODO
+    // OUTRO comando IPC (spawn de outro terminal, poll do GSD Sync, leitura de
+    // PTYs já abertos) ficava esperando atrás dele — o app inteiro parecia
+    // travado, não só o terminal novo. `spawn_blocking` isola isso na thread
+    // pool bloqueante dedicada do Tokio (até 512 threads), mesmo padrão já
+    // usado em todo outro comando pesado deste codebase (ver `claude_sessions`,
     // `activity_stats`, `agent_cost`).
     let sessions: PtySessions = Arc::clone(sessions.inner());
     let remote_hub = Arc::clone(remote.inner());
@@ -325,6 +413,9 @@ pub async fn spawn_pty(
         // First step: the folder is resolved, checked and held as starting before the memory wait,
         // and stays held until the session is registered or the spawn fails.
         let Some(begun) = begin_pty_spawn(&sessions, &id, cwd.as_deref(), || {
+            // Boot de verdade vai acontecer — solta o colchão pré-alocado e
+            // garante folga de RAM antes de criar o processo (ver comentário de
+            // `prepare_memory_for_boot`).
             prepare_memory_for_boot(&app, &id)
         })?
         else {
@@ -397,6 +488,13 @@ pub async fn spawn_pty(
             })
             .unwrap_or_else(|| "<none>".to_string());
         if let Some(folder) = begun.folder.as_deref() {
+            // Alguns caminhos chegam aqui com o prefixo verbatim `\\?\` do
+            // Windows (worktree canonicalizado, dado antigo persistido antes
+            // do fix em `worktrees::git_arg` etc.) — `cmd.exe` e vários CLIs
+            // baseados em Node recusam esse formato como diretório atual e
+            // silenciosamente caem pra `C:\Windows`. Strip aqui é a rede de
+            // segurança final: cobre qualquer cwd que chegue sujo, de
+            // qualquer origem, sem precisar caçar cada call site.
             command.cwd(crate::worktrees::git_arg(folder));
         }
         let child = pair
@@ -425,17 +523,26 @@ pub async fn spawn_pty(
 
 
         // OpenCode terminar de subir e trocar o TTY pro modo raw/alt-screen
-
-
-
-
+        // Nudge de boot (ver uso mais abaixo, no loop de batches): o Ctrl+L
+        // que já mandamos em `resize_pty` pro OpenCode não cobre o caso de
+        // um terminal recém-criado que nunca é redimensionado — o "kick"
+        // daquele fix é disparado pelo spawn da promise no frontend, não por
+        // sinal nenhum do processo filho, então quase sempre chega ANTES do
+        // OpenCode terminar de subir e trocar o TTY pro modo raw/alt-screen
+        // da TUI (aterrissa em stdin ainda em modo cooked/pré-boot). Sem
+        // nenhum retry, essa única tentativa mal-cronometrada é a única
+        // chance que o OpenCode tem — daí a tela ficar em branco/com blocos
+        // de glifo soltos mesmo num terminal novo, sem nenhum resize.
         let is_opencode = requested_command.as_deref() == Some("opencode");
         let boot_nudge_writer = Arc::clone(&writer);
         let boot_nudge_lock = Arc::clone(&opencode_nudge_lock);
 
 
         // do OpenCode em branco, docs/CHANGELOG.md), separado de `event_app`
-
+        // Handle dedicado pro log de diagnóstico (ver `pty_debug_enabled` /
+        // `ALETHE_PTY_DEBUG` — procedimento de diagnóstico da área principal
+        // do OpenCode em branco, docs/CHANGELOG.md), separado de `event_app`
+        // (canal de dados) só pra deixar claro o propósito em cada clone.
         let debug_app = app.clone();
         let debug_id = id.clone();
         let event_name = format!("pty://data/{id}");
@@ -460,6 +567,10 @@ pub async fn spawn_pty(
 
         // de emitir. Resultado: 1 evento IPC + 1 push_scrollback por LOTE em vez de
 
+        // Reader síncrono na thread-pool bloqueante do Tokio manda chunks por um
+        // canal MPSC; o batcher async coalesce por até 16ms (60 FPS) ou 64 KB antes
+        // de emitir. Resultado: 1 evento IPC + 1 push_scrollback por LOTE em vez de
+        // 1 por read — elimina micro-stutters com N terminais em saída pesada.
         let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<u8>>(1024);
         let watch_child_exit = wsl_target.is_some();
         let child_gone = Arc::new(tokio::sync::Notify::new());
@@ -486,11 +597,11 @@ pub async fn spawn_pty(
 
         tauri::async_runtime::spawn(async move {
         tokio::task::spawn_blocking(move || {
-
-
+            // 32 KiB: menos syscalls sob saída pesada (builds, cat de arquivo
+            // grande) sem custo de latência pra outputs pequenos.
             let mut buffer = [0_u8; 32 * 1024];
             loop {
-
+                // Checa se leitura está ativa. Se não, bloqueia no Condvar.
                 {
                     let (lock, cvar) = &*thread_read_active;
                     let mut active = lock.lock().unwrap();
@@ -511,16 +622,16 @@ pub async fn spawn_pty(
             }
         });
 
-
+        // Cauda de um caractere UTF-8 multibyte partido entre dois lotes.
         let mut carry: Vec<u8> = Vec::new();
         let mut batch: Vec<u8> = Vec::new();
-
-
+        // `None` = ainda não emitiu nada no canal `activity` — deixa o
+        // primeiro lote invisível passar na hora, sem esperar o intervalo.
         let mut last_activity_emit: Option<Instant> = None;
-
-
-
-
+        // Saída acumulada desde o último emit no canal `activity`, pra o
+        // throttle atrasar sem descartar. Teto de 256 KiB porque o consumidor
+        // só precisa de volume e de padrões recentes — não redesenha a tela
+        // (isso é o replay de scrollback no `doResync`).
         let mut activity_pending = String::new();
         const ACTIVITY_PENDING_CAP: usize = 256 * 1024;
 
@@ -536,6 +647,18 @@ pub async fn spawn_pty(
 
         // amostrar o stream faria um agente em segundo plano nunca sair de
 
+        // Painel visível: emite no canal `data` de sempre (render caro no
+        // frontend). Painel invisível: NÃO emite `data` (o frontend não está
+        // desenhando aquele xterm mesmo) — emite só `activity`, throttlado,
+        // pra manter recordIo/AgentCompletionMonitor vivos em background sem
+        // custo de render. `push_scrollback` (fora daqui) roda sempre, então
+        // nenhum byte é perdido — só o "desenhar na tela" é adiado.
+        //
+        // O throttle ACUMULA em `activity_pending` em vez de descartar: o
+        // consumidor do canal conta caracteres de saída (`outputChars` do
+        // `AgentCompletionMonitor`) e casa padrões de erro de bootstrap, então
+        // amostrar o stream faria um agente em segundo plano nunca sair de
+        // `armed` ou perder a detecção de conflito de resume do Codex.
         let mut emit_data_or_activity = |text: &str| {
 
 
@@ -582,14 +705,16 @@ pub async fn spawn_pty(
                     None
                 }
             };
+            // Bloqueia até o primeiro chunk — zero wakeups quando o terminal
+            // está ocioso. None = reader terminou (EOF/erro) e canal fechou.
             let Some(first) = received else { break };
             batch.extend_from_slice(&first);
 
-
-
-
-
-
+            // Primeiro lote real de saída do processo filho = prova de que
+            // ele está vivo e já produzindo output — sinal muito mais
+            // confiável de "hora certa" do que o momento em que o frontend
+            // terminou de esperar o spawn. Kick único, numa task separada
+            // pra não atrasar o desenho deste primeiro lote em si.
             if is_opencode && !sent_boot_nudge {
                 sent_boot_nudge = true;
                 if pty_debug_enabled() {
@@ -607,11 +732,11 @@ pub async fn spawn_pty(
                 let nudge_debug_id = debug_id.clone();
                 tauri::async_runtime::spawn(async move {
                     tokio::time::sleep(Duration::from_millis(150)).await;
-
-
-
-
-
+                    // Reclama o direito de nudge só na hora de escrever, não
+                    // no agendamento — um resize_pty pode ter disparado o
+                    // dele durante essa espera; se já ganhou, não manda o
+                    // nosso por cima (dois redesenhos concorrentes é o que
+                    // causava a corrupção em primeiro lugar).
                     let claimed = try_claim_opencode_nudge(&nudge_lock);
                     if pty_debug_enabled() {
                         let _ = append_spawn_log(
@@ -631,7 +756,7 @@ pub async fn spawn_pty(
                 });
             }
 
-
+            // Coalesce o que chegar em até 16ms ou até encher 64 KB.
             let batch_started = Instant::now();
             while batch.len() < 64 * 1024 {
                 let remaining =
@@ -649,18 +774,18 @@ pub async fn spawn_pty(
             }
 
             let count = batch.len();
-
-
+            // Scrollback recebe os bytes crus do lote (sempre corretos — só o
+            // emit precisa de fronteira de caractere).
             let _ = push_scrollback(&scrollback_app, &scrollback_id, &thread_scrollback, &batch);
 
-
-
-
+            // Emit PRIMEIRO o que é UTF-8 completo — user vê o echo na hora,
+            // sem disk I/O no caminho da tecla. Caractere partido no limite do
+            // lote fica em `carry` pro próximo ciclo.
             if carry.is_empty() {
-
+                // Caminho rápido (caso comum): nada pendente, zero alloc.
                 let valid = valid_utf8_prefix_len(&batch);
                 if valid > 0 {
-
+                    // SAFETY: batch[..valid] é UTF-8 válido por construção.
                     let text = unsafe { std::str::from_utf8_unchecked(&batch[..valid]) };
                     emit_data_or_activity(text);
                 }
@@ -671,16 +796,16 @@ pub async fn spawn_pty(
                 carry.extend_from_slice(&batch);
                 let valid = valid_utf8_prefix_len(&carry);
                 if valid > 0 {
-
+                    // SAFETY: carry[..valid] é UTF-8 válido por construção.
                     let text = unsafe { std::str::from_utf8_unchecked(&carry[..valid]) };
                     emit_data_or_activity(text);
                     carry.drain(..valid);
                 }
             }
 
-
-
-
+            // `carry` só deve guardar a cauda de UM caractere (≤3 bytes).
+            // Se passar disso, são bytes inválidos que nunca completam:
+            // emite lossy (mostra �) e zera pra não vazar nem travar.
             if carry.len() > 3 {
                 let lossy = String::from_utf8_lossy(&carry).into_owned();
                 emit_data_or_activity(lossy.as_str());
@@ -689,7 +814,7 @@ pub async fn spawn_pty(
 
             batch.clear();
 
-
+            // Backpressure leve pra dar vazão à fila IPC do webview.
             tokio::time::sleep(Duration::from_millis(2)).await;
         }
 
@@ -707,9 +832,14 @@ pub async fn spawn_pty(
 
         //
 
-
-
-
+        // PTY morreu: garante o scrollback no disco e LIBERA o buffer em RAM (até
+        // 4 MiB). A sessão fica no HashMap; attach_pty recarrega do disco se preciso.
+        // Só libera se o flush deu certo, pra nunca perder dados não persistidos.
+        //
+        // EXCEÇÃO kill/restart (`killed`): NÃO reescreve o .bin. Em kill_pty o
+        // delete_scrollback já removeu o arquivo; em restart_pty um novo spawn
+        // reusou o mesmo id — em ambos, um Overwrite tardio deste reader morto
+        // ressuscitaria/corromperia o arquivo. Aqui só liberamos o buffer em RAM.
         let teardown_reason = thread_teardown.load(Ordering::SeqCst);
         let persisted = if teardown_reason == TEARDOWN_KILLED
             || teardown_reason == TEARDOWN_RESTARTED
@@ -920,7 +1050,14 @@ pub async fn restart_pty(
     command_line: Option<String>,
 ) -> Result<SpawnPtyResponse, String> {
     // apagar o scrollback antigo rodava direto no corpo async, fora de
-
+    // A fase de matar o processo antigo (taskkill pela árvore inteira) +
+    // apagar o scrollback antigo rodava direto no corpo async, fora de
+    // qualquer spawn_blocking — só o boot do processo NOVO (via spawn_pty,
+    // abaixo) estava isolado. Isso travava a thread do runtime Tokio que
+    // estava processando este restart, com o mesmo efeito de travar outros
+    // comandos IPC atrás dela. Agora a fase de kill também roda em
+    // spawn_blocking, e solta o lock de `sessions` assim que remove a sessão
+    // do mapa (mesmo motivo de `kill_pty`).
     let kill_sessions: PtySessions = Arc::clone(sessions.inner());
     let kill_app = app.clone();
     let kill_id = id.clone();
@@ -934,7 +1071,10 @@ pub async fn restart_pty(
         if let Some(session) = session {
             session.teardown.store(TEARDOWN_RESTARTED, Ordering::SeqCst);
             // `kill_pty_tree` (process_tree.rs) derruba raiz + descendentes em
-
+            // `kill_pty_tree` (process_tree.rs) derruba raiz + descendentes em
+            // qualquer plataforma (via sysinfo); precisa rodar ANTES de
+            // `kill_process_tree`/`child.kill()` matarem a raiz, senão a
+            // travessia da árvore não encontra os netos reparentados.
             let _ = process_tree::kill_pty_tree(&kill_id);
             kill_tree_without_holding_child(&session.child);
         }
@@ -969,12 +1109,16 @@ pub async fn attach_pty(
     max_bytes: Option<usize>,
 ) -> Result<String, String> {
     // lento sob um scrollback grande. Igual a `spawn_pty`, roda em
-
+    // Fallback de disco (`load_scrollback`, abaixo) é I/O real — pode ficar
+    // lento sob um scrollback grande. Igual a `spawn_pty`, roda em
+    // `spawn_blocking` pra não travar o despacho de outros comandos
+    // (inclusive o attach de OUTROS terminais) atrás dele; ver comentário
     // completo em `spawn_pty`.
     let sessions: PtySessions = Arc::clone(sessions.inner());
     tokio::task::spawn_blocking(move || {
         let max_bytes = max_bytes.unwrap_or(512 * 1024).max(16 * 1024);
 
+        // Caminho comum: serve do buffer em memória.
         {
             let sessions = sessions
                 .lock()
@@ -985,6 +1129,7 @@ pub async fn attach_pty(
                     .lock()
                     .map_err(|_| "PTY scrollback lock poisoned".to_string())?;
                 if !buffer.data.is_empty() {
+                    // make_contiguous + slice evita a cópia extra do iter().skip().collect().
                     let slice = buffer.data.make_contiguous();
                     let start =
                         align_to_char_boundary(slice, slice.len().saturating_sub(max_bytes));
@@ -993,6 +1138,7 @@ pub async fn attach_pty(
             }
         }
 
+        // Buffer vazio: PTY recém-criado (sem output) ou PTY morto cujo buffer foi
         // liberado. Em ambos os casos o disco tem a verdade (vazio ou o scrollback final).
         let disk = load_scrollback(&app, &id)?;
         let bytes: Vec<u8> = disk.into_iter().collect();
@@ -1054,7 +1200,12 @@ pub async fn write_pty(
     data: String,
 ) -> Result<(), String> {
     // lock, qualquer attach/resize/kill/spawn em outro PTY ficaria parado.
-
+    // Pega o handle do writer e SOLTA o lock global de sessions antes de
+    // escrever. Escrita pode bloquear no PTY (buffer cheio); se segurassemos o
+    // lock, qualquer attach/resize/kill/spawn em outro PTY ficaria parado.
+    // `spawn_blocking` isola isso da thread de despacho do Tauri — sem isso,
+    // uma escrita presa (agente que parou de drenar stdin) travava todo
+    // comando IPC atrás dela, não só este terminal.
     let sessions: PtySessions = Arc::clone(sessions.inner());
     tokio::task::spawn_blocking(move || {
         let writer = {
@@ -1087,6 +1238,10 @@ pub async fn resize_pty(
     cols: u16,
     rows: u16,
 ) -> Result<(), String> {
+    // Mesmo padrão de write_pty: clona os handles (master/writer) e SOLTA o
+    // lock global de sessions antes de chamar master.resize — ConPTY é
+    // conhecido por travar num resize ocasionalmente no Windows; sem soltar o
+    // lock antes, isso prendia kill/write/attach de TODOS os outros terminais.
     let sessions: PtySessions = Arc::clone(sessions.inner());
     let remote_hub = Arc::clone(remote.inner());
     tokio::task::spawn_blocking(move || {
@@ -1121,7 +1276,9 @@ pub async fn resize_pty(
                 })
                 .map_err(|error| error.to_string())?;
         }
-
+        // Espelho do controle remoto: o dispositivo remoto é um viewer
+        // independente do painel local, então publica sempre — o gate de
+        // visibilidade abaixo vale só pro xterm desta janela.
         remote_hub.publish(&id, || {
             serde_json::json!({
                 "type": "pty_resize",
@@ -1141,6 +1298,29 @@ pub async fn resize_pty(
         // `try_claim_opencode_nudge` coordena com o nudge de boot (primeiro
         // output do processo, em `spawn_pty`) — os dois podem disparar quase
 
+        // OpenCode no Windows/Linux/macOS nem sempre redesenha a TUI após
+        // resize — a tela fica truncada até a próxima tecla. Ctrl+L (Form
+        // Feed) força o redraw em todas as plataformas.
+        //
+        // `master.resize()` acima só ajusta o winsize do PTY e dispara
+        // SIGWINCH pro processo filho — não há garantia de ordem entre a
+        // entrega/tratamento desse sinal e o Ctrl+L chegando no stdin logo
+        // em seguida. O próprio framework de TUI do OpenCode já reage ao
+        // SIGWINCH com seu próprio redraw assíncrono; mandar o Ctrl+L sem
+        // nenhuma folga faz os dois redraws (um calculado pra geometria
+        // antiga, outro pra nova) correrem em paralelo e se sobrescreverem
+        // no meio — a tela sai com blocos de glifo corrompidos em vez de
+        // conteúdo real, sobretudo durante um arraste contínuo de divisor
+        // (vários resizes seguidos). Uma folga curta aqui não é uma garantia
+        // de sincronização de verdade (não há como saber quando o redraw do
+        // processo filho termina de fato), mas reduz bastante a janela da
+        // corrida — já estamos numa `spawn_blocking`, então dormir aqui não
+        // trava nenhum outro comando.
+        //
+        // `try_claim_opencode_nudge` coordena com o nudge de boot (primeiro
+        // output do processo, em `spawn_pty`) — os dois podem disparar quase
+        // juntos num terminal recém-criado que já é redimensionado logo
+        // depois do spawn; sem essa trava, os DOIS nudges mandavam Ctrl+L
         // e o OpenCode fazia dois redesenhos concorrentes que se
         // sobrepunham na tela (confirmado analisando os bytes crus do
         // scrollback — texto de um redraw colidindo com blocos do outro).
@@ -1197,7 +1377,15 @@ pub async fn kill_pty(
     id: String,
 ) -> Result<(), String> {
     // fim do `if let`), prendendo TODO outro comando PTY (spawn/attach/write/
-
+    // `terminate_session` roda taskkill/wait pela árvore inteira — pode
+    // demorar (ou travar) de verdade. Antes, o MutexGuard de `sessions` ficava
+    // vivo durante essa chamada inteira (guard só cai no fim da função, não no
+    // fim do `if let`), prendendo TODO outro comando PTY (spawn/attach/write/
+    // resize/kill de qualquer outro terminal) atrás dele — e como o mutex não
+    // é reentrante, nem uma segunda tentativa de matar o MESMO terminal
+    // travado conseguia rodar. Agora: solta o lock assim que remove a sessão
+    // do mapa, e só then faz o trabalho bloqueante, dentro de spawn_blocking
+    // pra também não travar a thread de despacho do Tauri.
     let sessions: PtySessions = Arc::clone(sessions.inner());
     tokio::task::spawn_blocking(move || {
         let session = {
@@ -1276,6 +1464,10 @@ pub async fn kill_ptys(
 
 ///
 
+/// Estaciona um runtime sem apagar scrollback nem identidade de sessão.
+///
+/// Encerra o processo e espera o reader persistir sua última cauda. Assim um
+/// novo spawn com o mesmo id nunca disputa com writes do reader antigo.
 pub fn suspend_session(app: &AppHandle, sessions: &PtySessions, id: &str) -> Result<bool, String> {
     suspend_session_with_reason(app, sessions, id, "user-request")
 }
@@ -1297,6 +1489,8 @@ pub fn suspend_session_with_reason(
     };
 
     session.teardown.store(TEARDOWN_SUSPENDED, Ordering::SeqCst);
+    // Precisa rodar antes de `unregister_pty` (abaixo) — `kill_pty_tree` busca
+    // o PID raiz no mesmo registro que `unregister_pty` limpa.
     let _ = process_tree::kill_pty_tree(&session.pty_id);
     kill_tree_without_holding_child(&session.child);
     {
@@ -1346,6 +1540,10 @@ pub async fn suspend_pty(
     sessions: State<'_, PtySessions>,
     id: String,
 ) -> Result<bool, String> {
+    // `suspend_session` já solta o lock de `sessions` antes do kill (remove
+    // sob lock, guard cai no fim do bloco `{}`), mas ainda espera até 5s pelo
+    // flush do reader — bloqueante o bastante pra travar a thread de despacho
+    // do Tauri sem spawn_blocking.
     let sessions: PtySessions = Arc::clone(sessions.inner());
     tokio::task::spawn_blocking(move || suspend_session(&app, &sessions, &id))
         .await
@@ -1400,6 +1598,10 @@ pub fn set_pty_read_state(
     Ok(())
 }
 
+/// Não pausa a leitura do PTY (`read_active` faz isso e travaria o agente) —
+/// só decide se o coalescer manda o próximo lote pro canal `data` (render) ou
+/// `activity` (throttlado). Barato: um `AtomicBool::store`, sem tocar no
+/// hot path do reader/coalescer além do `load` já feito ali.
 #[tauri::command]
 /// Returns whether the flag was applied. `false` means the session was not there to receive it —
 /// the caller must not assume the stream is now on, because output gating stays as it was.
@@ -1467,7 +1669,10 @@ pub async fn list_pty_processes(
     sessions: State<'_, PtySessions>,
 ) -> Result<Vec<PtyProcessSnapshot>, String> {
     // lento sob carga. Igual aos outros comandos PTY, isolado em
-
+    // `sysinfo::refresh_processes_specifics` varre processos do SO — pode ser
+    // lento sob carga. Igual aos outros comandos PTY, isolado em
+    // spawn_blocking pra não travar a thread de despacho do Tauri. Mantém o
+    // contrato antigo (nunca falha de verdade pro frontend) devolvendo lista
     // vazia se a task bloqueante falhar por algum motivo.
     let sessions: PtySessions = Arc::clone(sessions.inner());
     let result: Vec<PtyProcessSnapshot> = tokio::task::spawn_blocking(move || {
@@ -1557,14 +1762,21 @@ pub fn load_scrollback(app: &AppHandle, id: &str) -> Result<VecDeque<u8>, String
     Ok(data.into())
 }
 
+/// Writer global de scrollback: uma única thread em background recebe
+/// `(path, bytes)` e escreve. Evita spawnar uma thread a cada flush (250ms por
+/// PTY ativo). Vive pela vida do processo — sem teardown por PTY, sem vazar thread.
 enum ScrollbackWrite {
+    /// Anexa `bytes` ao fim do `.bin` (cria se não existir). Compacta pra cauda
+    /// de `SCROLLBACK_CAP_BYTES` se o arquivo passar de `SCROLLBACK_COMPACT_BYTES`.
     Append { path: PathBuf, bytes: Vec<u8> },
-
+    /// Reescreve o arquivo inteiro (usado no teardown do PTY, uma vez).
     Overwrite { path: PathBuf, bytes: Vec<u8> },
-
+    /// Confirma que todos os appends/overwrites anteriores já chegaram ao disco.
     Barrier(std::sync::mpsc::Sender<()>),
 }
 
+/// Anexa e, se o arquivo cresceu além do limite, compacta pra cauda do cap.
+/// Compactar é raro (a cada ~4 MB de saída), então o custo é amortizado.
 fn append_and_maybe_compact(path: &Path, bytes: &[u8]) {
     let mut file = match fs::OpenOptions::new().create(true).append(true).open(path) {
         Ok(file) => file,
@@ -1585,6 +1797,9 @@ fn append_and_maybe_compact(path: &Path, bytes: &[u8]) {
     }
 }
 
+/// Writer global de scrollback: uma única thread em background recebe comandos
+/// e escreve. Evita spawnar uma thread a cada flush (250ms por PTY ativo).
+/// Vive pela vida do processo — sem teardown por PTY, sem vazar thread.
 fn scrollback_writer() -> &'static std::sync::mpsc::Sender<ScrollbackWrite> {
     static WRITER: std::sync::OnceLock<std::sync::mpsc::Sender<ScrollbackWrite>> =
         std::sync::OnceLock::new();
@@ -1635,12 +1850,13 @@ pub fn push_scrollback(
         .lock()
         .map_err(|_| "PTY scrollback lock poisoned".to_string())?;
     buffer.data.extend(data);
-
+    // Drena de uma vez em vez de pop_front em loop (uma operação vs N).
     if buffer.data.len() > SCROLLBACK_CAP_BYTES {
         let excess = buffer.data.len() - SCROLLBACK_CAP_BYTES;
         buffer.data.drain(..excess);
     }
-
+    // Acumula SÓ os bytes novos pro append. O anel em memória (`data`) continua
+    // servindo o getScrollback; o disco recebe só o delta, não os 4 MB inteiros.
     buffer.pending.extend_from_slice(data);
     buffer.dirty = true;
 
@@ -1660,8 +1876,11 @@ pub fn push_scrollback(
         return Ok(());
     }
 
+    // Disk write em thread separada — segurar o reader thread aqui causava
+    // latência visível de digitação (10-50ms por flush no Windows) propagando
+    // pra TODOS os terminais com qualquer atividade.
     let path = scrollback_path(app, id)?;
-
+    // Envia pro writer global em vez de spawnar uma thread por flush.
     let _ = scrollback_writer().send(ScrollbackWrite::Append { path, bytes });
     Ok(())
 }
@@ -1677,13 +1896,16 @@ pub fn flush_scrollback(
     if !buffer.dirty {
         return Ok(());
     }
-
+    // No teardown reescrevemos o anel inteiro (capado a 4 MB) — é a compactação
+    // final do arquivo. `data` já inclui o que estava em `pending`.
     let bytes = buffer.data.iter().copied().collect::<Vec<_>>();
     buffer.pending.clear();
     buffer.last_flush = Instant::now();
     buffer.dirty = false;
     drop(buffer);
 
+    // Via o writer global pra manter ordem FIFO com Appends ainda na fila —
+    // senão um Append pendente poderia sobrescrever este Overwrite e duplicar
     // a cauda no disco.
     let path = scrollback_path(app, id)?;
     let _ = scrollback_writer().send(ScrollbackWrite::Overwrite { path, bytes });
@@ -1699,6 +1921,11 @@ pub fn delete_scrollback(app: &AppHandle, id: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Remove `.bin` órfãos — scrollback de terminais que não existem mais no
+/// projects.json. Roda no startup, ANTES de qualquer spawn (sem corrida).
+/// Conservador: só apaga se o id NÃO aparecer em nenhum lugar do texto do
+/// projects.json (ids são nanoids; colisão com texto não-relacionado é
+/// improvável). Se o projects.json não puder ser lido, não apaga nada.
 pub fn cleanup_orphan_scrollback(app: &AppHandle) {
     let Ok(dir) = scrollback_dir(app) else {
         return;
@@ -1710,7 +1937,7 @@ pub fn cleanup_orphan_scrollback(app: &AppHandle) {
         Ok(path) => fs::read_to_string(&path).unwrap_or_default(),
         Err(_) => return,
     };
-
+    // Vazio = sem projects.json legível → melhor não arriscar apagar nada.
     if projects_text.is_empty() {
         return;
     }
@@ -1829,14 +2056,32 @@ fn teardown_log(ids: &[String], requested: &[SessionKill]) -> (String, Vec<Strin
     (summary, lines)
 }
 
+/// Resultado da instalação do Job Object — lido por `crash_watch.rs` (grava
+/// no heartbeat, pra ficar registrado se um crash acontecer depois) e por um
+/// comando Tauri de diagnóstico. Sem isso, uma falha de `install_kill_on_close_guard`
+/// era 100% silenciosa: ninguém saberia que a rede de segurança contra
+/// terminais órfãos estava inativa naquela sessão até órfãos aparecerem.
 static JOB_GUARD_ACTIVE: OnceLock<bool> = OnceLock::new();
 
+/// Status da rede de segurança (Job Object) desta sessão. `false` antes de
+/// `install_kill_on_close_guard` rodar (só acontece bem cedo no boot) ou em
+/// qualquer plataforma não-Windows.
 pub fn job_guard_active() -> bool {
     JOB_GUARD_ACTIVE.get().copied().unwrap_or(false)
 }
 
 /// e seus descendentes (node/claude/codex/MCP) herdam o job. Enquanto o app vive,
 
+/// Rede de segurança no Windows contra terminais órfãos. Cria um Job Object com
+/// KILL_ON_JOB_CLOSE e assigna o PRÓPRIO processo do app; todos os shells ConPTY
+/// e seus descendentes (node/claude/codex/MCP) herdam o job. Enquanto o app vive,
+/// o handle do job fica aberto; quando o app morre por QUALQUER via — fechar
+/// normal, crash ou kill forçado (onde `RunEvent::Exit` NÃO roda) — o SO fecha o
+/// handle e mata a árvore inteira. Complementa (não substitui) `kill_all_sessions`.
+/// Deve ser chamado bem cedo no boot, antes de qualquer spawn. Se o SO recusar
+/// em qualquer etapa, não há regressão (comportamento igual a antes desta rede
+/// existir) — mas agora fica registrado em `JOB_GUARD_ACTIVE`/stderr em vez de
+/// falhar 100% em silêncio.
 #[cfg(windows)]
 pub fn install_kill_on_close_guard() {
     use std::mem::{size_of, zeroed};
@@ -1849,6 +2094,9 @@ pub fn install_kill_on_close_guard() {
     use windows_sys::Win32::System::Threading::GetCurrentProcess;
 
     let active = unsafe {
+        // `lpJobAttributes = null` já cria o handle como NÃO herdável por
+        // padrão (SECURITY_ATTRIBUTES.bInheritHandle implícito = FALSE) — não
+        // precisa de SetHandleInformation extra pra isso.
         let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
         if job.is_null() {
             eprintln!("[pty] install_kill_on_close_guard: CreateJobObjectW falhou (GetLastError não capturado)");
@@ -1868,10 +2116,15 @@ pub fn install_kill_on_close_guard() {
                 false
             } else if AssignProcessToJobObject(job, GetCurrentProcess()) != 0 {
                 // feche o Job Object cedo demais e elimine os terminais
-
+                // Mantém o handle num OnceLock estático. Além de documentar a
+                // posse do recurso, isso impede que uma refatoração futura
+                // feche o Job Object cedo demais e elimine os terminais
+                // enquanto o app ainda está vivo.
                 let _ = PTY_JOB_HANDLE.set(job as isize);
                 true
             } else {
+                // Se o Windows recusar a associação (por exemplo, uma
+                // política de jobs aninhados), não deixe um handle inválido
                 // vazando.
                 eprintln!(
                     "[pty] install_kill_on_close_guard: AssignProcessToJobObject falhou — \
@@ -2290,7 +2543,7 @@ mod tests {
     #[test]
     fn valid_utf8_prefix_passes_complete_ascii_and_multibyte() {
         assert_eq!(valid_utf8_prefix_len(b"hello"), 5);
-
+        // "café" — o "é" são 2 bytes (0xC3 0xA9), todos presentes.
         let cafe = "café".as_bytes();
         assert_eq!(valid_utf8_prefix_len(cafe), cafe.len());
         // Box-drawing "─" (3 bytes) completo.
@@ -2300,10 +2553,11 @@ mod tests {
 
     #[test]
     fn valid_utf8_prefix_stops_before_split_multibyte() {
+        // Primeiro byte de "é" sozinho (read partiu aqui) → 0 bytes válidos.
         assert_eq!(valid_utf8_prefix_len(&[0xC3]), 0);
-
+        // "a" + primeiro byte de "é" → só o "a" é válido.
         assert_eq!(valid_utf8_prefix_len(&[b'a', 0xC3]), 1);
-
+        // Emoji 😀 (4 bytes) com só os 2 primeiros → 0 válidos.
         let grin = "😀".as_bytes();
         assert_eq!(valid_utf8_prefix_len(&grin[..2]), 0);
     }
@@ -2320,7 +2574,7 @@ mod tests {
             Some(just_emitted),
             PTY_ACTIVITY_EMIT_INTERVAL_MS
         ));
-
+        // Instant "no passado" simulado por um intervalo já vencido.
         let stale =
             Instant::now() - Duration::from_millis(PTY_ACTIVITY_EMIT_INTERVAL_MS as u64 + 1);
         assert!(activity_emit_due(
@@ -2331,11 +2585,12 @@ mod tests {
 
     #[test]
     fn valid_utf8_prefix_carry_reassembles_split_char() {
+        // Simula o split: "x" + "é" partido entre dois reads.
         let full = "xé".as_bytes(); // [b'x', 0xC3, 0xA9]
         let first = &full[..2]; // "x" + 0xC3
         let valid = valid_utf8_prefix_len(first);
         assert_eq!(valid, 1);
-
+        // carry = [0xC3]; chega o resto do próximo read.
         let mut carry = first[valid..].to_vec();
         carry.extend_from_slice(&full[2..]); // + 0xA9
         assert_eq!(valid_utf8_prefix_len(&carry), carry.len());

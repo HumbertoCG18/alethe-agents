@@ -131,14 +131,18 @@ pub(crate) fn codex_user_prompt(value: &serde_json::Value) -> Option<String> {
     {
         return None;
     }
-    payload.get("content")?.as_array()?.iter().find_map(|block| {
-        let text = block.get("text").and_then(|v| v.as_str())?.trim();
-        if text.is_empty() || text.starts_with('<') {
-            None
-        } else {
-            Some(text.to_string())
-        }
-    })
+    payload
+        .get("content")?
+        .as_array()?
+        .iter()
+        .find_map(|block| {
+            let text = block.get("text").and_then(|v| v.as_str())?.trim();
+            if text.is_empty() || text.starts_with('<') {
+                None
+            } else {
+                Some(text.to_string())
+            }
+        })
 }
 
 #[cfg(test)]

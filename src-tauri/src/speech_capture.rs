@@ -69,8 +69,7 @@ pub fn list_input_devices() -> Result<Vec<SpeechInputDevice>, String> {
     }
     if out.is_empty() {
         return Err(
-            "No microphone found. Check PipeWire/PulseAudio and that a mic is connected."
-                .into(),
+            "No microphone found. Check PipeWire/PulseAudio and that a mic is connected.".into(),
         );
     }
     Ok(out)
@@ -98,10 +97,7 @@ fn to_mono(interleaved: &[f32], channels: usize) -> Vec<f32> {
     if channels <= 1 {
         return interleaved.to_vec();
     }
-    interleaved
-        .chunks(channels)
-        .map(|frame| frame[0])
-        .collect()
+    interleaved.chunks(channels).map(|frame| frame[0]).collect()
 }
 
 fn publish_level(level: &Arc<AtomicU32>, mono: &[f32]) {
@@ -252,7 +248,10 @@ pub fn start_capture(device_id: Option<String>) -> Result<CaptureSession, String
             let _ = stop_rx.recv();
             drop(stream);
 
-            let raw = samples.lock().map(|guard| guard.clone()).unwrap_or_default();
+            let raw = samples
+                .lock()
+                .map(|guard| guard.clone())
+                .unwrap_or_default();
             let out = resample_linear(&raw, sample_rate, TARGET_RATE);
             let peak = peak_amplitude(&out);
             Ok(CapturedAudio {

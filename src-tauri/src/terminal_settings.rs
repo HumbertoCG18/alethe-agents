@@ -133,7 +133,8 @@ fn shells_on_path() -> Vec<ShellOption> {
 pub(crate) fn resolve_shell(selected: Option<&str>) -> Option<String> {
     // The rule `pty.rs` applies to a plain tab's override: a real file, never a command line.
     let selected = selected?.trim();
-    (Path::new(selected).is_absolute() && Path::new(selected).is_file()).then(|| selected.to_string())
+    (Path::new(selected).is_absolute() && Path::new(selected).is_file())
+        .then(|| selected.to_string())
 }
 
 /// A plain terminal's shell: its own while it still resolves, else the default from Preferences;
@@ -295,7 +296,8 @@ mod tests {
         let plain =
             crate::cli_resolver::command_builder_for_terminal(None, Some(&shell.id), &[], None);
         assert_eq!(plain.get_argv()[0].to_string_lossy(), shell.id);
-        let agent = crate::cli_resolver::command_builder_for_terminal(Some("claude"), None, &[], None);
+        let agent =
+            crate::cli_resolver::command_builder_for_terminal(Some("claude"), None, &[], None);
         assert_eq!(
             agent.get_argv()[0].to_string_lossy(),
             crate::cli_resolver::default_shell()
@@ -305,18 +307,30 @@ mod tests {
     #[test]
     fn names_windows_shell_families_by_location() {
         let kind = |name, id| shell_kind(name, id);
-        assert_eq!(kind("pwsh", r"C:\Program Files\PowerShell\7\pwsh.exe"), "pwsh");
         assert_eq!(
-            kind("pwsh", r"C:\Users\me\AppData\Local\Microsoft\WindowsApps\pwsh.exe"),
+            kind("pwsh", r"C:\Program Files\PowerShell\7\pwsh.exe"),
+            "pwsh"
+        );
+        assert_eq!(
+            kind(
+                "pwsh",
+                r"C:\Users\me\AppData\Local\Microsoft\WindowsApps\pwsh.exe"
+            ),
             "pwshStore"
         );
         assert_eq!(
-            kind("powershell", r"C:\WINDOWS\System32\WindowsPowerShell\v1.0\powershell.exe"),
+            kind(
+                "powershell",
+                r"C:\WINDOWS\System32\WindowsPowerShell\v1.0\powershell.exe"
+            ),
             "powershell"
         );
         assert_eq!(kind("cmd", r"C:\WINDOWS\system32\cmd.exe"), "cmd");
         assert_eq!(kind("bash", r"C:\WINDOWS\system32\bash.exe"), "wsl");
-        assert_eq!(kind("bash", r"C:\Program Files\Git\bin\bash.exe"), "gitBash");
+        assert_eq!(
+            kind("bash", r"C:\Program Files\Git\bin\bash.exe"),
+            "gitBash"
+        );
         assert_eq!(kind("bash", r"C:\msys64\usr\bin\bash.exe"), "bash");
         let found = shells_on_path().into_iter().find(|s| s.kind == "gitBash");
         let git_bash = crate::cli_resolver::command_builder_for_terminal(
@@ -325,7 +339,10 @@ mod tests {
             &[],
             None,
         );
-        if git_bash.get_argv()[0].to_string_lossy().ends_with("bash.exe") {
+        if git_bash.get_argv()[0]
+            .to_string_lossy()
+            .ends_with("bash.exe")
+        {
             let args: Vec<_> = git_bash.get_argv()[1..]
                 .iter()
                 .map(|a| a.to_string_lossy().into_owned())

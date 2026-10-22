@@ -420,22 +420,22 @@ pub async fn spawn_pty(
         ));
         let opencode_nudge_lock = Arc::new(AtomicU64::new(0));
         // Nudge de boot (ver uso mais abaixo, no loop de batches): o Ctrl+L
-                                                                           
-                                                                         
-                                                                             
-                                                                            
+
+
+
+
         // OpenCode terminar de subir e trocar o TTY pro modo raw/alt-screen
-                                                                         
-                                                                        
-                                                                            
-                                                                      
+
+
+
+
         let is_opencode = requested_command.as_deref() == Some("opencode");
         let boot_nudge_writer = Arc::clone(&writer);
         let boot_nudge_lock = Arc::clone(&opencode_nudge_lock);
-                                                                            
-                                                                             
+
+
         // do OpenCode em branco, docs/CHANGELOG.md), separado de `event_app`
-                                                                          
+
         let debug_app = app.clone();
         let debug_id = id.clone();
         let event_name = format!("pty://data/{id}");
@@ -456,10 +456,10 @@ pub async fn spawn_pty(
         let thread_visible = Arc::clone(&visible);
         let remote_pty_id = id.clone();
 
-                                                                                 
-                                                                                    
+
+
         // de emitir. Resultado: 1 evento IPC + 1 push_scrollback por LOTE em vez de
-                                                                               
+
         let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<u8>>(1024);
         let watch_child_exit = wsl_target.is_some();
         let child_gone = Arc::new(tokio::sync::Notify::new());
@@ -486,11 +486,11 @@ pub async fn spawn_pty(
 
         tauri::async_runtime::spawn(async move {
         tokio::task::spawn_blocking(move || {
-                                                                              
-                                                                  
+
+
             let mut buffer = [0_u8; 32 * 1024];
             loop {
-                                                                            
+
                 {
                     let (lock, cvar) = &*thread_read_active;
                     let mut active = lock.lock().unwrap();
@@ -511,35 +511,35 @@ pub async fn spawn_pty(
             }
         });
 
-                                                                          
+
         let mut carry: Vec<u8> = Vec::new();
         let mut batch: Vec<u8> = Vec::new();
-                                                                       
-                                                                           
+
+
         let mut last_activity_emit: Option<Instant> = None;
-                                                                         
-                                                                              
-                                                                            
-                                                         
+
+
+
+
         let mut activity_pending = String::new();
         const ACTIVITY_PENDING_CAP: usize = 256 * 1024;
 
-                                                                          
-                                                                             
-                                                                            
-                                                                             
-                                                                             
-                                                                    
+
+
+
+
+
+
         //
         // O throttle ACUMULA em `activity_pending` em vez de descartar: o
-                                                                          
-                                                                               
+
+
         // amostrar o stream faria um agente em segundo plano nunca sair de
-                                                                       
+
         let mut emit_data_or_activity = |text: &str| {
-                                                                           
-                                                                             
-                                                                  
+
+
+
             remote_hub.publish(&remote_pty_id, || {
                 serde_json::json!({ "type": "pty_output", "ptyId": &remote_pty_id, "text": text })
             });
@@ -567,8 +567,8 @@ pub async fn spawn_pty(
         let mut sent_boot_nudge = false;
 
         loop {
-                                                                             
-                                                                             
+
+
             let received = tokio::select! {
                 biased;
                 chunk = rx.recv() => chunk,
@@ -585,11 +585,11 @@ pub async fn spawn_pty(
             let Some(first) = received else { break };
             batch.extend_from_slice(&first);
 
-                                                                           
-                                                                      
-                                                                           
-                                                                          
-                                                                   
+
+
+
+
+
             if is_opencode && !sent_boot_nudge {
                 sent_boot_nudge = true;
                 if pty_debug_enabled() {
@@ -607,11 +607,11 @@ pub async fn spawn_pty(
                 let nudge_debug_id = debug_id.clone();
                 tauri::async_runtime::spawn(async move {
                     tokio::time::sleep(Duration::from_millis(150)).await;
-                                                                             
-                                                                          
-                                                                          
-                                                                           
-                                                              
+
+
+
+
+
                     let claimed = try_claim_opencode_nudge(&nudge_lock);
                     if pty_debug_enabled() {
                         let _ = append_spawn_log(
@@ -631,7 +631,7 @@ pub async fn spawn_pty(
                 });
             }
 
-                                                                     
+
             let batch_started = Instant::now();
             while batch.len() < 64 * 1024 {
                 let remaining =
@@ -649,18 +649,18 @@ pub async fn spawn_pty(
             }
 
             let count = batch.len();
-                                                                              
-                                                       
+
+
             let _ = push_scrollback(&scrollback_app, &scrollback_id, &thread_scrollback, &batch);
 
-                                                                             
-                                                                               
-                                                      
+
+
+
             if carry.is_empty() {
-                                                                          
+
                 let valid = valid_utf8_prefix_len(&batch);
                 if valid > 0 {
-                                                                            
+
                     let text = unsafe { std::str::from_utf8_unchecked(&batch[..valid]) };
                     emit_data_or_activity(text);
                 }
@@ -671,16 +671,16 @@ pub async fn spawn_pty(
                 carry.extend_from_slice(&batch);
                 let valid = valid_utf8_prefix_len(&carry);
                 if valid > 0 {
-                                                                            
+
                     let text = unsafe { std::str::from_utf8_unchecked(&carry[..valid]) };
                     emit_data_or_activity(text);
                     carry.drain(..valid);
                 }
             }
 
-                                                                          
-                                                                        
-                                                                      
+
+
+
             if carry.len() > 3 {
                 let lossy = String::from_utf8_lossy(&carry).into_owned();
                 emit_data_or_activity(lossy.as_str());
@@ -689,7 +689,7 @@ pub async fn spawn_pty(
 
             batch.clear();
 
-                                                                     
+
             tokio::time::sleep(Duration::from_millis(2)).await;
         }
 
@@ -702,14 +702,14 @@ pub async fn spawn_pty(
             });
         }
 
-                                                                                  
-                                                                                      
-                                                                                  
+
+
+
         //
-                                                                               
-                                                                               
-                                                                               
-                                                                                  
+
+
+
+
         let teardown_reason = thread_teardown.load(Ordering::SeqCst);
         let persisted = if teardown_reason == TEARDOWN_KILLED
             || teardown_reason == TEARDOWN_RESTARTED
@@ -862,9 +862,7 @@ pub async fn spawn_pty(
 /// keystroke while output, which never touches the lock, keeps arriving.
 fn kill_tree_without_holding_child(child: &Arc<Mutex<Box<dyn portable_pty::Child + Send + Sync>>>) {
     // Scoped so the guard is visibly dropped before the kill, not merely at the end of a line.
-    let pid = {
-        child.lock().ok().and_then(|mut child| child.process_id())
-    };
+    let pid = { child.lock().ok().and_then(|mut child| child.process_id()) };
     if let Some(pid) = pid {
         kill_process_tree(pid);
     }

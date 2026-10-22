@@ -63,8 +63,14 @@ mod tests {
 
     #[test]
     fn an_ordinary_id_is_left_alone() {
-        assert_eq!(scrollback_file_name("orchestrator-shell-01"), "orchestrator-shell-01.bin");
-        assert_eq!(scrollback_file_name("PlNsE55eLe796edeEnjpg"), "PlNsE55eLe796edeEnjpg.bin");
+        assert_eq!(
+            scrollback_file_name("orchestrator-shell-01"),
+            "orchestrator-shell-01.bin"
+        );
+        assert_eq!(
+            scrollback_file_name("PlNsE55eLe796edeEnjpg"),
+            "PlNsE55eLe796edeEnjpg.bin"
+        );
     }
 }
 

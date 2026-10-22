@@ -16,7 +16,7 @@ use tauri::{AppHandle, Emitter, State};
 use tokio::sync::Mutex as AsyncMutex;
 
 use crate::paths::app_data_dir;
-use crate::speech_capture::{self, CapturedAudio, CaptureSession, SpeechInputDevice};
+use crate::speech_capture::{self, CaptureSession, CapturedAudio, SpeechInputDevice};
 
 const SAMPLE_RATE: i32 = 16_000;
 
@@ -367,7 +367,8 @@ pub async fn speech_download_model(
                 },
             );
         }
-        out.flush().map_err(|e| format!("flush {}: {e}", file.name))?;
+        out.flush()
+            .map_err(|e| format!("flush {}: {e}", file.name))?;
         drop(out);
 
         let hash = sha256_file(&tmp)?;
@@ -481,8 +482,10 @@ fn is_text_vocab(path: &Path) -> bool {
 
 fn write_hotwords(dir: &Path) -> Result<PathBuf, String> {
     let path = dir.join("hotwords.txt");
-    let body = HOTWORDS.join("
-");
+    let body = HOTWORDS.join(
+        "
+",
+    );
     fs::write(&path, body).map_err(|e| format!("write hotwords: {e}"))?;
     Ok(path)
 }

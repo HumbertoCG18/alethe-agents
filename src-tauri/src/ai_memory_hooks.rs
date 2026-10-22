@@ -85,18 +85,34 @@ mod tests {
     fn an_event_only_alethe_wants_is_untouched() {
         let mut alethe = alethe_side();
         merge_hooks(&mut alethe, &their_side()).unwrap();
-        assert_eq!(alethe.get("UserPromptSubmit").unwrap().as_array().unwrap().len(), 1);
+        assert_eq!(
+            alethe
+                .get("UserPromptSubmit")
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
     }
 
     #[test]
     fn an_unfamiliar_shape_is_refused_and_changes_nothing() {
         // Every terminal reads this file. A half-merged one breaks all of them, so a shape we do
         // not recognise must leave Alethe's own hooks exactly as they were.
-        for bad in [json!("nope"), json!(["SessionStart"]), json!({ "SessionStart": 3 })] {
+        for bad in [
+            json!("nope"),
+            json!(["SessionStart"]),
+            json!({ "SessionStart": 3 }),
+        ] {
             let mut alethe = alethe_side();
             let before = serde_json::to_string(&alethe).unwrap();
             assert!(merge_hooks(&mut alethe, &bad).is_err(), "{bad:?}");
-            assert_eq!(serde_json::to_string(&alethe).unwrap(), before, "left intact");
+            assert_eq!(
+                serde_json::to_string(&alethe).unwrap(),
+                before,
+                "left intact"
+            );
         }
     }
 }

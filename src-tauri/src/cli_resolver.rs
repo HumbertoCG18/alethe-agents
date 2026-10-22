@@ -1161,8 +1161,12 @@ mod tests {
              [Console]::Out.Write((ConvertTo-Json -InputObject @($args) -Compress))\n",
         )
         .unwrap();
-        let builder =
-            command_builder_for_terminal(Some("probe"), Some(&script.to_string_lossy()), args, None);
+        let builder = command_builder_for_terminal(
+            Some("probe"),
+            Some(&script.to_string_lossy()),
+            args,
+            None,
+        );
         let argv = builder.get_argv();
         let output = std::process::Command::new(&argv[0])
             .args(&argv[1..])
@@ -1206,8 +1210,17 @@ mod tests {
 
     #[test]
     fn a_shell_given_a_command_line_runs_it_and_exits_with_it() {
-        let argv = argv_of(&command_builder_for_terminal(None, None, &[], Some("npm run dev")));
-        assert_eq!(argv.last().map(String::as_str), Some("npm run dev"), "{argv:?}");
+        let argv = argv_of(&command_builder_for_terminal(
+            None,
+            None,
+            &[],
+            Some("npm run dev"),
+        ));
+        assert_eq!(
+            argv.last().map(String::as_str),
+            Some("npm run dev"),
+            "{argv:?}"
+        );
         let flag = if cfg!(windows) { "-Command" } else { "-lc" };
         assert_eq!(argv[argv.len() - 2], flag, "{argv:?}");
     }
@@ -1215,7 +1228,10 @@ mod tests {
     #[test]
     fn a_plain_shell_stays_interactive() {
         let argv = argv_of(&command_builder_for_terminal(None, None, &[], None));
-        assert!(!argv.iter().any(|arg| arg == "-Command" || arg == "-lc"), "{argv:?}");
+        assert!(
+            !argv.iter().any(|arg| arg == "-Command" || arg == "-lc"),
+            "{argv:?}"
+        );
     }
 
     #[test]
@@ -1231,7 +1247,10 @@ mod tests {
         }
 
         for shell in ["bash", "/bin/zsh", "nu.exe", "cmd.exe", "fish", ""] {
-            assert!(!is_powershell(shell), "expected a non-PowerShell shell: {shell}");
+            assert!(
+                !is_powershell(shell),
+                "expected a non-PowerShell shell: {shell}"
+            );
         }
     }
 

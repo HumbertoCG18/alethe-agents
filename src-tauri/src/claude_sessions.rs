@@ -79,7 +79,10 @@ struct RecordHeader {
 
 /// Reads one line, keeping at most `MAX_LINE_BYTES` and discarding the rest
 /// without buffering it. Returns false at EOF.
-pub(crate) fn read_capped_line(reader: &mut impl BufRead, buf: &mut Vec<u8>) -> std::io::Result<bool> {
+pub(crate) fn read_capped_line(
+    reader: &mut impl BufRead,
+    buf: &mut Vec<u8>,
+) -> std::io::Result<bool> {
     buf.clear();
     let mut consumed_any = false;
     loop {
@@ -683,6 +686,9 @@ mod encode_cwd_tests {
             encode_cwd_for_claude(r"C:\Users\dev\Projeto Demanda Review"),
             "C--Users-dev-Projeto-Demanda-Review"
         );
-        assert_eq!(encode_cwd_for_claude("/home/dev/my_app ção"), "-home-dev-my-app---o");
+        assert_eq!(
+            encode_cwd_for_claude("/home/dev/my_app ção"),
+            "-home-dev-my-app---o"
+        );
     }
 }

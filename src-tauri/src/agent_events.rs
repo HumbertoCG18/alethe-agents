@@ -309,7 +309,8 @@ fn write_codex_hook_forwarder(port: u16) -> Result<PathBuf, String> {
         endpoint = endpoint,
         token = powershell_single_quoted(token),
     );
-    let path = std::env::temp_dir().join(format!("alethe-codex-hook-forward-{}.ps1", install_tag()));
+    let path =
+        std::env::temp_dir().join(format!("alethe-codex-hook-forward-{}.ps1", install_tag()));
     std::fs::write(&path, script).map_err(|e| format!("write_failed:{e}"))?;
     Ok(path)
 }
@@ -425,11 +426,13 @@ pub async fn codex_mcp_config_write(
     planner_agent: String,
 ) -> Result<(), String> {
     let state = app.state::<crate::orchestrator::OrchestratorState>();
-    state.core().register_planner(crate::orchestrator_core::Planner {
-        id: planner_id.clone(),
-        label: planner_label,
-        agent: planner_agent,
-    });
+    state
+        .core()
+        .register_planner(crate::orchestrator_core::Planner {
+            id: planner_id.clone(),
+            label: planner_label,
+            agent: planner_agent,
+        });
     tokio::task::spawn_blocking(move || codex_mcp_config_write_inner(repo, planner_id))
         .await
         .map_err(|error| format!("codex_mcp_config_write: falha na task bloqueante: {error}"))?
@@ -472,7 +475,10 @@ fn codex_hooks_config_write_inner(repo: String, _planner_id: String) -> Result<(
         body.push('\n');
     }
 
-    let command_toml = format!("powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"{script_path}\"", script_path = script_path.to_string_lossy());
+    let command_toml = format!(
+        "powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"{script_path}\"",
+        script_path = script_path.to_string_lossy()
+    );
     let mut block = String::new();
     block.push_str(&format!("\n{CODEX_HOOKS_MARK_START}\n"));
     for event in ["SubagentStart", "SubagentStop"] {

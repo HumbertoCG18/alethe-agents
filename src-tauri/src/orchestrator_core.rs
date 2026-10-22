@@ -281,7 +281,10 @@ impl AgyLog {
                 thread::sleep(self.grace);
                 (again, unfinished) = self.read_denials()?;
                 if unfinished && unexplained(&again) {
-                    return Err(format!("{} ends in an unfinished line", self.path.display()));
+                    return Err(format!(
+                        "{} ends in an unfinished line",
+                        self.path.display()
+                    ));
                 }
             }
             lines = again;
@@ -2109,7 +2112,11 @@ const CLAUDE_WORKER_BRIEF: &str = "Rules for this worker, whatever the task:\n\
 
 /// Writes `bytes` as `name` in `dir`, creating `dir`: the temp file is only ever new and goes over
 /// `name` by rename, so a link or hard link already at `name` is replaced, never written through.
-fn write_job_file(dir: &std::path::Path, name: &str, bytes: &[u8]) -> std::io::Result<std::path::PathBuf> {
+fn write_job_file(
+    dir: &std::path::Path,
+    name: &str,
+    bytes: &[u8],
+) -> std::io::Result<std::path::PathBuf> {
     let file = dir.join(name);
     let temp = dir.join(format!("{name}.tmp"));
     std::fs::create_dir_all(dir)?;
@@ -2322,7 +2329,11 @@ impl Core {
                 },
             );
         }
-        for record in value.get("shells").and_then(Value::as_array).unwrap_or(&vec![]) {
+        for record in value
+            .get("shells")
+            .and_then(Value::as_array)
+            .unwrap_or(&vec![])
+        {
             let Some(shell) = Shell::from_record(record) else {
                 continue;
             };
@@ -2525,7 +2536,12 @@ impl Core {
             .ok_or_else(|| format!("unknown shell {shell_id}"))?;
         let lines = lines.clamp(1, MAX_OUTPUT_LINES);
         let output = if shell.status == SHELL_RUNNING {
-            shells::tail_lines(&host.output(&shell.pty_id(), OUTPUT_BYTES).unwrap_or_default(), lines)
+            shells::tail_lines(
+                &host
+                    .output(&shell.pty_id(), OUTPUT_BYTES)
+                    .unwrap_or_default(),
+                lines,
+            )
         } else {
             shells::tail_lines(&shell.last_output, lines)
         };
@@ -2943,7 +2959,11 @@ impl Core {
                 )
             })
         };
-        let file = written("claude-settings.json", settings.to_string().as_bytes(), "settings")?;
+        let file = written(
+            "claude-settings.json",
+            settings.to_string().as_bytes(),
+            "settings",
+        )?;
         let brief = written("claude-brief.md", CLAUDE_WORKER_BRIEF.as_bytes(), "brief")?;
         let mut args = claude_isolation_args(&file.to_string_lossy());
         args.extend(claude_brief_args(&brief.to_string_lossy()));
@@ -4263,8 +4283,16 @@ mod tests {
 
     fn two_sets() -> Vec<RuleSet> {
         vec![
-            RuleSet { id: GENERAL_ID.into(), name: "General".into(), text: "always this".into() },
-            RuleSet { id: "backend".into(), name: "Backend".into(), text: "server side".into() },
+            RuleSet {
+                id: GENERAL_ID.into(),
+                name: "General".into(),
+                text: "always this".into(),
+            },
+            RuleSet {
+                id: "backend".into(),
+                name: "Backend".into(),
+                text: "server side".into(),
+            },
         ]
     }
 
@@ -4299,10 +4327,15 @@ mod tests {
         assert!(text.starts_with("<alethe-rules>"), "{text}");
         // Order is part of the contract (design §6): the general rules come first, so a named
         // set that contradicts them reads as the narrower rule, not a correction out of nowhere.
-        let general = text.find("always this").expect("the general set travels too");
+        let general = text
+            .find("always this")
+            .expect("the general set travels too");
         let named = text.find("server side").expect("the named set is there");
         assert!(general < named, "general comes first: {text}");
-        assert!(text.contains("the repository wins"), "the precedence line: {text}");
+        assert!(
+            text.contains("the repository wins"),
+            "the precedence line: {text}"
+        );
         assert!(text.contains("<task>\ndo the thing\n</task>"), "{text}");
     }
 
@@ -4331,8 +4364,14 @@ mod tests {
         }]);
 
         let text = first_turn_of(&core);
-        assert!(text.contains("always this"), "the general rules survive the miss: {text}");
-        assert!(text.contains("the repository wins"), "a real block, not a fragment: {text}");
+        assert!(
+            text.contains("always this"),
+            "the general rules survive the miss: {text}"
+        );
+        assert!(
+            text.contains("the repository wins"),
+            "a real block, not a fragment: {text}"
+        );
         assert!(text.contains("<task>\ndo the thing\n</task>"), "{text}");
         assert_eq!(
             core.snapshot()["jobs"][0]["rules"],
@@ -5668,7 +5707,9 @@ pub fn handle_mcp_body(core: &Core, body: &str, planner: Option<&str>) -> Option
                 "instructions": planner_instructions(core)
             }
         }),
-        "tools/list" => json!({ "jsonrpc": "2.0", "id": id, "result": { "tools": tools_for(core) } }),
+        "tools/list" => {
+            json!({ "jsonrpc": "2.0", "id": id, "result": { "tools": tools_for(core) } })
+        }
         "tools/call" => {
             let name = params
                 .get("name")
@@ -5979,9 +6020,9 @@ mod restart_tests {
     }
 
     use super::{
-        claude_brief_args, claude_isolation_args, write_job_file, claude_worker_args, CLAUDE_WORKER_BRIEF, claude_worker_settings, codex_models, guard,
-        isolate_thread, thread_resume_params, thread_start_params, user_mcp_names, Core, Launcher,
-        OrchestrationSettings,
+        claude_brief_args, claude_isolation_args, claude_worker_args, claude_worker_settings,
+        codex_models, guard, isolate_thread, thread_resume_params, thread_start_params,
+        user_mcp_names, write_job_file, Core, Launcher, OrchestrationSettings, CLAUDE_WORKER_BRIEF,
     };
     use serde_json::{json, Value};
     use std::path::PathBuf;
@@ -6132,7 +6173,10 @@ mod restart_tests {
         std::fs::hard_link(&outside, job.join("claude-brief.md")).unwrap();
         let written = write_job_file(&job, "claude-brief.md", b"brief").unwrap();
         assert_eq!(std::fs::read_to_string(written).unwrap(), "brief");
-        assert_eq!(std::fs::read_to_string(&outside).unwrap(), "the person's file");
+        assert_eq!(
+            std::fs::read_to_string(&outside).unwrap(),
+            "the person's file"
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -6142,7 +6186,10 @@ mod restart_tests {
         let dir = std::env::temp_dir().join(format!("alethe-197-fail-{}", std::process::id()));
         std::fs::create_dir_all(dir.join("claude-brief.md")).unwrap();
         let error = write_job_file(&dir, "claude-brief.md", b"brief").unwrap_err();
-        assert!(!dir.join("claude-brief.md.tmp").exists(), "left behind: {error}");
+        assert!(
+            !dir.join("claude-brief.md.tmp").exists(),
+            "left behind: {error}"
+        );
         assert!(dir.join("claude-brief.md").is_dir());
         std::fs::remove_dir_all(&dir).unwrap();
     }

@@ -28,7 +28,11 @@ fn check_ico_bytes(bytes: &[u8]) -> Result<(), String> {
     if bytes.len() as u64 > MAX_ICON_BYTES {
         return Err("icon exceeds 512KB".to_string());
     }
-    if bytes.len() < 4 || bytes[0] != 0x00 || bytes[1] != 0x00 || bytes[2] != 0x01 || bytes[3] != 0x00
+    if bytes.len() < 4
+        || bytes[0] != 0x00
+        || bytes[1] != 0x00
+        || bytes[2] != 0x01
+        || bytes[3] != 0x00
     {
         return Err("not a valid .ico file".to_string());
     }

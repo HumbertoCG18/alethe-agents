@@ -241,7 +241,10 @@ pub fn orchestrator_job_diff(
 
 /// Interrupts a running worker and settles it as cancelled — the same path `alethe_cancel` takes.
 #[tauri::command]
-pub fn orchestrator_cancel_job(state: tauri::State<'_, OrchestratorState>, job_id: String) -> Value {
+pub fn orchestrator_cancel_job(
+    state: tauri::State<'_, OrchestratorState>,
+    job_id: String,
+) -> Value {
     json!({ "cancelled": state.core.cancel_jobs(&[job_id]) })
 }
 

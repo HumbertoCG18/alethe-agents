@@ -979,7 +979,10 @@ mod tests {
                 lines,
                 done,
             };
-            watch.asleep.recv_timeout(STEP_LIMIT).expect("the watch sleeps");
+            watch
+                .asleep
+                .recv_timeout(STEP_LIMIT)
+                .expect("the watch sleeps");
             (watch, unblock)
         }
 
@@ -987,15 +990,21 @@ mod tests {
         /// all it does in between is done.
         fn sleep(&self, slept: Duration) {
             self.wake.send(slept).unwrap();
-            self.asleep.recv_timeout(STEP_LIMIT).expect("the watch sleeps");
+            self.asleep
+                .recv_timeout(STEP_LIMIT)
+                .expect("the watch sleeps");
         }
 
         fn answer(&self) -> Instant {
-            self.answers.recv_timeout(STEP_LIMIT).expect("the ping is answered")
+            self.answers
+                .recv_timeout(STEP_LIMIT)
+                .expect("the ping is answered")
         }
 
         fn line(&self) -> (String, String) {
-            self.lines.recv_timeout(STEP_LIMIT).expect("a line is logged")
+            self.lines
+                .recv_timeout(STEP_LIMIT)
+                .expect("a line is logged")
         }
 
         /// Checks nothing more was logged, then stops the watch: with the main thread free, its

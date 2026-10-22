@@ -63,7 +63,13 @@ fn check_until_settled(core: &Core) -> (Value, Vec<Value>) {
     let mut ack = Value::Null;
     loop {
         let checked = call(core, "alethe_check", json!({ "wait": true, "ack": ack }));
-        deliveries.extend(checked["deliveries"].as_array().expect("deliveries").iter().cloned());
+        deliveries.extend(
+            checked["deliveries"]
+                .as_array()
+                .expect("deliveries")
+                .iter()
+                .cloned(),
+        );
         ack = checked["ack"].clone();
         if checked["workersStillBusy"] == json!(0) {
             return (checked, deliveries);
@@ -92,12 +98,18 @@ impl ShellHost for FakeShellHost {
     }
 
     fn output(&self, pty_id: &str, _max_bytes: usize) -> Result<String, String> {
-        self.calls.lock().expect("calls").push(format!("output {pty_id}"));
+        self.calls
+            .lock()
+            .expect("calls")
+            .push(format!("output {pty_id}"));
         Ok(self.printed.lock().expect("printed").clone())
     }
 
     fn stop(&self, pty_id: &str) -> Result<(), String> {
-        self.calls.lock().expect("calls").push(format!("stop {pty_id}"));
+        self.calls
+            .lock()
+            .expect("calls")
+            .push(format!("stop {pty_id}"));
         Ok(())
     }
 }
@@ -119,7 +131,11 @@ fn tool_names(listed: &Value) -> Vec<String> {
 }
 
 fn open_npm(core: &Core) -> Value {
-    call(core, "alethe_open_shell", json!({ "command": "npm run dev", "cwd": "C:\\app" }))
+    call(
+        core,
+        "alethe_open_shell",
+        json!({ "command": "npm run dev", "cwd": "C:\\app" }),
+    )
 }
 
 fn codex_launcher() -> Launcher {
@@ -195,7 +211,11 @@ fn the_core_serves_the_shipped_rules_until_the_app_injects_its_own() {
         text: "minhas regras".into(),
     }]);
     let names: Vec<String> = core.rule_sets().into_iter().map(|set| set.name).collect();
-    assert_eq!(names, vec!["Geral"], "the person's list replaces ours entirely");
+    assert_eq!(
+        names,
+        vec!["Geral"],
+        "the person's list replaces ours entirely"
+    );
 
     core.set_rule_sets(vec![]);
     assert!(
@@ -208,12 +228,21 @@ fn the_core_serves_the_shipped_rules_until_the_app_injects_its_own() {
 fn shells_are_offered_only_where_something_can_run_them() {
     let bare = Core::default();
     let names = tool_names(&rpc(&bare, 1, "tools/list", json!({})));
-    assert!(!names.iter().any(|name| name == "alethe_open_shell"), "{names:?}");
+    assert!(
+        !names.iter().any(|name| name == "alethe_open_shell"),
+        "{names:?}"
+    );
 
     let (core, _) = shell_core();
     let names = tool_names(&rpc(&core, 1, "tools/list", json!({})));
-    assert!(names.iter().any(|name| name == "alethe_open_shell"), "{names:?}");
-    assert!(names.iter().any(|name| name == "alethe_shell_output"), "{names:?}");
+    assert!(
+        names.iter().any(|name| name == "alethe_open_shell"),
+        "{names:?}"
+    );
+    assert!(
+        names.iter().any(|name| name == "alethe_shell_output"),
+        "{names:?}"
+    );
 }
 
 #[test]
@@ -240,10 +269,16 @@ fn a_shell_that_fails_to_open_leaves_nothing_behind() {
     }));
     let opened = open_npm(&core);
     assert!(
-        opened["error"].as_str().unwrap_or_default().contains("does not exist"),
+        opened["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("does not exist"),
         "{opened}"
     );
-    assert_eq!(core.snapshot()["shells"].as_array().expect("shells").len(), 0);
+    assert_eq!(
+        core.snapshot()["shells"].as_array().expect("shells").len(),
+        0
+    );
 }
 
 #[test]
@@ -252,7 +287,11 @@ fn the_output_is_the_clean_tail() {
     open_npm(&core);
     *host.printed.lock().expect("printed") =
         "\u{1b}[32mcompiled\u{1b}[0m\r\nlistening on :3000\r\n".to_string();
-    let read = call(&core, "alethe_shell_output", json!({ "shellId": "shell-01", "lines": 1 }));
+    let read = call(
+        &core,
+        "alethe_shell_output",
+        json!({ "shellId": "shell-01", "lines": 1 }),
+    );
     assert_eq!(read["output"], "listening on :3000", "{read}");
     assert_eq!(read["status"], "running", "{read}");
 }
@@ -260,9 +299,16 @@ fn the_output_is_the_clean_tail() {
 #[test]
 fn an_unknown_shell_is_refused() {
     let (core, _) = shell_core();
-    let read = call(&core, "alethe_shell_output", json!({ "shellId": "shell-99" }));
+    let read = call(
+        &core,
+        "alethe_shell_output",
+        json!({ "shellId": "shell-99" }),
+    );
     assert!(
-        read["error"].as_str().unwrap_or_default().contains("unknown shell"),
+        read["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("unknown shell"),
         "{read}"
     );
 }
@@ -279,7 +325,11 @@ fn an_exit_report_marks_the_shell_exited_and_keeps_what_it_printed() {
     assert_eq!(shell["exitCode"], 1, "{shell}");
 
     *host.printed.lock().expect("printed") = String::new();
-    let read = call(&core, "alethe_shell_output", json!({ "shellId": "shell-01" }));
+    let read = call(
+        &core,
+        "alethe_shell_output",
+        json!({ "shellId": "shell-01" }),
+    );
     assert_eq!(read["output"], "Error: port 3000 is taken", "{read}");
 }
 
@@ -315,7 +365,10 @@ fn restarting_runs_the_same_command_again_as_a_new_run() {
     core.restart_shell("shell-01").expect("restarted");
 
     let calls = host.calls.lock().expect("calls").clone();
-    assert!(calls.contains(&"stop orchestrator-shell-01".to_string()), "{calls:?}");
+    assert!(
+        calls.contains(&"stop orchestrator-shell-01".to_string()),
+        "{calls:?}"
+    );
     assert_eq!(
         calls.last().map(String::as_str),
         Some("open orchestrator-shell-01 run=2 npm run dev @ C:\\app"),
@@ -333,7 +386,10 @@ fn a_running_shell_cannot_be_removed() {
     assert!(core.remove_shell("shell-01").is_err());
     core.stop_shell("shell-01").expect("stopped");
     core.remove_shell("shell-01").expect("removed");
-    assert_eq!(core.snapshot()["shells"].as_array().expect("shells").len(), 0);
+    assert_eq!(
+        core.snapshot()["shells"].as_array().expect("shells").len(),
+        0
+    );
 }
 
 #[test]
@@ -354,20 +410,34 @@ fn a_second_open_with_the_same_command_and_cwd_adopts_the_running_shell() {
         "alethe_open_shell",
         json!({ "command": "npm run dev", "cwd": "C:\\app" }),
     );
-    assert_eq!(second["shellId"], "shell-01", "a second call must adopt the same shell: {second}");
+    assert_eq!(
+        second["shellId"], "shell-01",
+        "a second call must adopt the same shell: {second}"
+    );
     assert_eq!(second["reused"], json!(true), "{second}");
 
     let calls = host.calls.lock().expect("calls").clone();
     assert_eq!(
-        calls.iter().filter(|call| call.starts_with("open ")).count(),
+        calls
+            .iter()
+            .filter(|call| call.starts_with("open "))
+            .count(),
         1,
         "a second process must not be spawned: {calls:?}"
     );
-    let shells = core.snapshot()["shells"].as_array().expect("shells").clone();
-    assert_eq!(shells.len(), 1, "only one shell must remain in the snapshot");
+    let shells = core.snapshot()["shells"]
+        .as_array()
+        .expect("shells")
+        .clone();
+    assert_eq!(
+        shells.len(),
+        1,
+        "only one shell must remain in the snapshot"
+    );
     assert_eq!(shells[0]["owner"]["kind"], json!("planner"), "{shells:?}");
     assert_eq!(
-        shells[0]["owner"]["id"], json!("planner-b"),
+        shells[0]["owner"]["id"],
+        json!("planner-b"),
         "the new planner must adopt the shell: {shells:?}"
     );
 }
@@ -379,12 +449,18 @@ fn a_stopped_shell_is_not_reused_and_a_fresh_one_opens_instead() {
     core.stop_shell("shell-01").expect("stopped");
 
     let reopened = open_npm(&core);
-    assert_eq!(reopened["shellId"], "shell-02", "a stopped shell must not be reused: {reopened}");
+    assert_eq!(
+        reopened["shellId"], "shell-02",
+        "a stopped shell must not be reused: {reopened}"
+    );
     assert!(reopened.get("reused").is_none(), "{reopened}");
 
     let calls = host.calls.lock().expect("calls").clone();
     assert_eq!(
-        calls.iter().filter(|call| call.starts_with("open ")).count(),
+        calls
+            .iter()
+            .filter(|call| call.starts_with("open "))
+            .count(),
         2,
         "{calls:?}"
     );
@@ -490,7 +566,10 @@ fn the_guide_tool_answers_in_plain_markdown() {
         .as_str()
         .expect("guide text");
     let opening: String = text.chars().take(80).collect();
-    assert!(text.starts_with("# "), "markdown, not an escaped JSON string: {opening}");
+    assert!(
+        text.starts_with("# "),
+        "markdown, not an escaped JSON string: {opening}"
+    );
     assert!(text.contains("Preferences"), "{opening}");
     assert!(text.contains("orchestration board"), "{opening}");
 }
@@ -499,11 +578,19 @@ fn the_guide_tool_answers_in_plain_markdown() {
 fn the_briefing_names_the_rule_sets_and_says_to_choose_one() {
     let core = Core::default();
     let initialized = rpc(&core, 1, "initialize", json!({}));
-    let text = initialized["result"]["instructions"].as_str().expect("instructions");
+    let text = initialized["result"]["instructions"]
+        .as_str()
+        .expect("instructions");
 
     assert!(text.contains("General (always applied)"), "{text}");
-    assert!(text.contains("Backend") && text.contains("Frontend"), "{text}");
-    assert!(text.contains("name the set"), "it tells the planner to choose: {text}");
+    assert!(
+        text.contains("Backend") && text.contains("Frontend"),
+        "{text}"
+    );
+    assert!(
+        text.contains("name the set"),
+        "it tells the planner to choose: {text}"
+    );
 
     // With the general set alone there is nothing to choose, so asking for a choice would send the
     // planner looking for names that do not exist.
@@ -515,7 +602,10 @@ fn the_briefing_names_the_rule_sets_and_says_to_choose_one() {
     let alone = instructions_of(&core);
     assert!(alone.contains("General (always applied)"), "{alone}");
     assert!(!alone.contains("name the set"), "nothing to name: {alone}");
-    assert!(alone.contains("alethe_rules"), "reading one still applies: {alone}");
+    assert!(
+        alone.contains("alethe_rules"),
+        "reading one still applies: {alone}"
+    );
 }
 
 #[test]
@@ -525,12 +615,23 @@ fn the_briefing_names_come_from_live_state_not_the_defaults() {
     // rules_until_the_app_injects_its_own` proves it for `rule_sets()` itself.
     let core = Core::default();
     core.set_rule_sets(vec![
-        RuleSet { id: "general".into(), name: "General".into(), text: "g".into() },
-        RuleSet { id: "db".into(), name: "Banco de Dados".into(), text: "sql".into() },
+        RuleSet {
+            id: "general".into(),
+            name: "General".into(),
+            text: "g".into(),
+        },
+        RuleSet {
+            id: "db".into(),
+            name: "Banco de Dados".into(),
+            text: "sql".into(),
+        },
     ]);
     let text = instructions_of(&core);
     assert!(text.contains("Banco de Dados"), "{text}");
-    assert!(!text.contains("Backend"), "stale defaults must not leak through: {text}");
+    assert!(
+        !text.contains("Backend"),
+        "stale defaults must not leak through: {text}"
+    );
 }
 
 #[test]
@@ -571,7 +672,10 @@ fn the_rules_tool_lists_names_and_returns_one_set() {
         json!({ "name": "alethe_rules", "arguments": { "name": "frontend" } }),
     );
     let text = one["result"]["content"][0]["text"].as_str().expect("text");
-    assert!(text.starts_with("# Frontend"), "plain markdown, not escaped JSON: {text}");
+    assert!(
+        text.starts_with("# Frontend"),
+        "plain markdown, not escaped JSON: {text}"
+    );
 }
 
 #[test]
@@ -579,8 +683,14 @@ fn the_rules_tool_refuses_an_unknown_name() {
     let core = Core::default();
     let result = call(&core, "alethe_rules", json!({ "name": "Backhand" }));
     let text = result["error"].as_str().unwrap_or_default();
-    assert!(text.contains("unknown rule set"), "the call must be refused: {result}");
-    assert!(text.contains("Backend"), "the refusal lists what exists: {text}");
+    assert!(
+        text.contains("unknown rule set"),
+        "the call must be refused: {result}"
+    );
+    assert!(
+        text.contains("Backend"),
+        "the refusal lists what exists: {text}"
+    );
 }
 
 fn instructions_of(core: &Core) -> String {
@@ -1075,15 +1185,27 @@ fn a_delivery_stays_until_the_planner_acknowledges_it() {
         json!({ "cwd": dir.to_string_lossy(), "tasks": ["anything"] }),
     );
 
-    let first = call(&core, "alethe_check", json!({ "wait": true, "timeoutMs": 5000 }));
+    let first = call(
+        &core,
+        "alethe_check",
+        json!({ "wait": true, "timeoutMs": 5000 }),
+    );
     let seq = first["deliveries"][0]["seq"].as_u64().expect("a delivery");
     assert_eq!(first["deliveries"][0]["repeat"], json!(false), "{first}");
-    assert_eq!(first["ack"], json!(seq), "the response names what to acknowledge: {first}");
+    assert_eq!(
+        first["ack"],
+        json!(seq),
+        "the response names what to acknowledge: {first}"
+    );
 
     // The client gave up before that response arrived, so the planner never saw it.
     let retried = call(&core, "alethe_check", json!({}));
     let again = retried["deliveries"].as_array().expect("deliveries");
-    assert_eq!(again.len(), 1, "an unacknowledged delivery was dropped: {retried}");
+    assert_eq!(
+        again.len(),
+        1,
+        "an unacknowledged delivery was dropped: {retried}"
+    );
     assert_eq!(again[0]["seq"], json!(seq), "{retried}");
     assert_eq!(again[0]["repeat"], json!(true), "{retried}");
 
@@ -1110,12 +1232,19 @@ fn a_blocking_check_returns_before_the_mcp_client_gives_up() {
     );
 
     let started = std::time::Instant::now();
-    let checked = call(&core, "alethe_check", json!({ "wait": true, "timeoutMs": 600000 }));
+    let checked = call(
+        &core,
+        "alethe_check",
+        json!({ "wait": true, "timeoutMs": 600000 }),
+    );
     let waited = started.elapsed();
 
     // Claude Code drops an MCP call somewhere past 45 seconds. A check still blocked by then
     // answers into a closed connection, and whatever it handed out is lost with it.
-    assert!(waited < Duration::from_secs(50), "blocked for {waited:?}: {checked}");
+    assert!(
+        waited < Duration::from_secs(50),
+        "blocked for {waited:?}: {checked}"
+    );
     assert_eq!(checked["workersStillBusy"], json!(1), "{checked}");
 
     let _ = std::fs::remove_dir_all(&dir);
@@ -1140,7 +1269,11 @@ fn an_unacknowledged_delivery_does_not_cut_short_a_wait_for_the_next_one() {
 
     let wait_for_first = json!({ "wait": true, "untilAllSettled": false, "timeoutMs": 2000 });
     let first = call(&core, "alethe_check", wait_for_first.clone());
-    assert_eq!(first["deliveries"].as_array().expect("deliveries").len(), 1, "{first}");
+    assert_eq!(
+        first["deliveries"].as_array().expect("deliveries").len(),
+        1,
+        "{first}"
+    );
 
     let started = std::time::Instant::now();
     let second = call(&core, "alethe_check", wait_for_first);
@@ -1226,7 +1359,11 @@ fn two_workers_overlap_and_check_waits_for_both() {
         json!(0),
         "untilAllSettled returned early: {checked}"
     );
-    assert_eq!(deliveries.len(), 2, "both workers must land: {deliveries:?}");
+    assert_eq!(
+        deliveries.len(),
+        2,
+        "both workers must land: {deliveries:?}"
+    );
     assert_eq!(peak, 2, "the workers never overlapped");
     assert!(
         dir.join("ALPHA.txt").exists(),
@@ -1266,7 +1403,11 @@ fn the_queue_never_breaches_the_concurrency_limit() {
     let peak = watcher.finish();
 
     assert_eq!(peak, 2, "the limit was breached, peak was {peak}");
-    assert_eq!(deliveries.len(), 4, "every queued job must drain: {deliveries:?}");
+    assert_eq!(
+        deliveries.len(),
+        4,
+        "every queued job must drain: {deliveries:?}"
+    );
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -1371,7 +1512,10 @@ fn a_claude_worker_reports_its_result_and_tokens() {
         }
         thread::sleep(Duration::from_millis(100));
     };
-    assert_eq!(restored_job["tokens"]["total"]["totalTokens"], 15, "{restored_job}");
+    assert_eq!(
+        restored_job["tokens"]["total"]["totalTokens"], 15,
+        "{restored_job}"
+    );
     assert_eq!(restored_job["costUsd"], 0.0123);
 
     let _ = std::fs::remove_dir_all(&dir);
@@ -1514,7 +1658,11 @@ fn delegating_without_a_rule_set_records_none() {
     let core = Core::default();
     core.set_launcher(silent_launcher());
     let dir = workspace("rules-none");
-    call(&core, "alethe_delegate", json!({ "cwd": dir.to_string_lossy(), "tasks": ["one"] }));
+    call(
+        &core,
+        "alethe_delegate",
+        json!({ "cwd": dir.to_string_lossy(), "tasks": ["one"] }),
+    );
 
     assert_eq!(core.snapshot()["jobs"][0]["rules"], json!(null));
 
@@ -1533,9 +1681,19 @@ fn an_unknown_rule_set_refuses_the_call_and_starts_no_worker() {
     );
 
     let text = result["error"].as_str().unwrap_or_default();
-    assert!(text.contains("unknown rule set"), "the call must be refused: {result}");
-    assert!(text.contains("Backend"), "the refusal lists what exists: {text}");
-    assert_eq!(core.snapshot()["jobs"].as_array().map(Vec::len), Some(0), "no worker started");
+    assert!(
+        text.contains("unknown rule set"),
+        "the call must be refused: {result}"
+    );
+    assert!(
+        text.contains("Backend"),
+        "the refusal lists what exists: {text}"
+    );
+    assert_eq!(
+        core.snapshot()["jobs"].as_array().map(Vec::len),
+        Some(0),
+        "no worker started"
+    );
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -1929,7 +2087,10 @@ fn cancelling_through_the_core_settles_the_worker() {
         "alethe_delegate",
         json!({ "cwd": dir.to_string_lossy(), "tasks": ["hold"], "timeoutSeconds": 120 }),
     );
-    let job_id = core.snapshot()["jobs"][0]["id"].as_str().expect("a job").to_string();
+    let job_id = core.snapshot()["jobs"][0]["id"]
+        .as_str()
+        .expect("a job")
+        .to_string();
 
     let cancelled = core.cancel_jobs(&[job_id.clone()]);
 
@@ -2606,14 +2767,29 @@ fn a_role_is_the_only_source_for_what_it_sets() {
     let cwd = dir.to_string_lossy().into_owned();
 
     let cases = [
-        ("another model", json!({ "role": "reviewer", "model": "gpt-6-astra" })),
-        ("another effort", json!({ "role": "reviewer", "effort": "low" })),
+        (
+            "another model",
+            json!({ "role": "reviewer", "model": "gpt-6-astra" }),
+        ),
+        (
+            "another effort",
+            json!({ "role": "reviewer", "effort": "low" }),
+        ),
         // A planner must not be able to run a read-only role as a writable worker.
         ("writable", json!({ "role": "reviewer", "readOnly": false })),
-        ("another agent", json!({ "role": "reviewer", "agent": "claude" })),
-        ("another budget", json!({ "role": "reviewer", "timeoutSeconds": 60 })),
+        (
+            "another agent",
+            json!({ "role": "reviewer", "agent": "claude" }),
+        ),
+        (
+            "another budget",
+            json!({ "role": "reviewer", "timeoutSeconds": 60 }),
+        ),
         ("unknown role", json!({ "role": "auditor" })),
-        ("a field left null", json!({ "role": "reviewer", "model": null })),
+        (
+            "a field left null",
+            json!({ "role": "reviewer", "model": null }),
+        ),
         ("role that is not a name", json!({ "role": true })),
     ];
     for (case, options) in cases {
@@ -2622,7 +2798,10 @@ fn a_role_is_the_only_source_for_what_it_sets() {
             arguments[key] = value.clone();
         }
         let result = call(&core, "alethe_delegate", arguments);
-        assert!(result.get("error").is_some(), "{case} must be refused: {result}");
+        assert!(
+            result.get("error").is_some(),
+            "{case} must be refused: {result}"
+        );
     }
     let unknown = call(
         &core,
@@ -2630,7 +2809,10 @@ fn a_role_is_the_only_source_for_what_it_sets() {
         json!({ "tasks": ["anything"], "cwd": cwd, "role": "auditor" }),
     );
     assert!(
-        unknown["error"].as_str().unwrap_or_default().contains("reviewer"),
+        unknown["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("reviewer"),
         "an unknown role names the ones that exist: {unknown}"
     );
     assert_eq!(
@@ -2845,7 +3027,12 @@ fn a_planner_sees_its_own_workers_and_a_count_of_the_rest() {
     assert_eq!(jobs[0]["plannerId"], "planner-a");
     assert_eq!(mine["omitted"], json!(1), "{mine}");
 
-    let all = call_as(&core, Some("planner-a"), "alethe_status", json!({ "all": true }));
+    let all = call_as(
+        &core,
+        Some("planner-a"),
+        "alethe_status",
+        json!({ "all": true }),
+    );
     assert_eq!(all["jobs"].as_array().map(Vec::len), Some(2), "{all}");
     assert_eq!(all["omitted"], json!(0), "{all}");
 
@@ -3280,7 +3467,10 @@ fn a_codex_thread_that_fails_to_open_fails_its_worker() {
     assert_eq!(job_field(&core, "job-01", "status"), "failed");
     let summary = job_field(&core, "job-01", "summary");
     assert!(
-        summary.as_str().unwrap_or_default().contains("unknown model: gpt-nope"),
+        summary
+            .as_str()
+            .unwrap_or_default()
+            .contains("unknown model: gpt-nope"),
         "{summary}"
     );
     assert_eq!(core.counts().0, 0, "the failed worker gives its slot back");
@@ -6532,7 +6722,10 @@ fn a_denial_line_still_being_written_never_reads_as_no_denial() {
     assert_eq!(job["status"], "failed", "{job}");
     let summary = job["summary"].as_str().unwrap_or_default();
     assert!(summary.contains("[unverified]"), "{job}");
-    assert!(summary.contains("still fine"), "the reply was dropped: {job}");
+    assert!(
+        summary.contains("still fine"),
+        "the reply was dropped: {job}"
+    );
 
     let _ = std::fs::remove_dir_all(&dir);
     let _ = std::fs::remove_dir_all(&fake);

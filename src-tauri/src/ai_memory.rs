@@ -336,7 +336,10 @@ pub fn extract_tar_gz_bounded(
     std::fs::create_dir_all(destination).map_err(|e| format!("mkdir_failed:{e}"))?;
     let mut entry_count: usize = 0;
     let mut written: u64 = 0;
-    for entry in archive.entries().map_err(|e| format!("tar_read_failed:{e}"))? {
+    for entry in archive
+        .entries()
+        .map_err(|e| format!("tar_read_failed:{e}"))?
+    {
         entry_count += 1;
         if entry_count > max_entries {
             return Err("tar_too_many_entries".to_string());
@@ -396,8 +399,15 @@ pub struct Counts {
 pub fn parse_counts(stdout: &str) -> Counts {
     let mut counts = Counts::default();
     for line in stdout.lines() {
-        let Some((label, rest)) = line.trim().split_once(':') else { continue };
-        let Some(value) = rest.trim().split_whitespace().next().and_then(|v| v.parse().ok()) else {
+        let Some((label, rest)) = line.trim().split_once(':') else {
+            continue;
+        };
+        let Some(value) = rest
+            .trim()
+            .split_whitespace()
+            .next()
+            .and_then(|v| v.parse().ok())
+        else {
             continue;
         };
         match label.trim() {
@@ -433,7 +443,9 @@ pub(crate) fn command_for(app: &AppHandle, explicit: Option<String>) -> (String,
     let managed = managed_binary(app);
     let cmd = pick_command(managed.clone(), explicit);
     let data_dir = if managed.as_deref() == Some(cmd.as_str()) {
-        managed_data_dir(app).ok().map(|d| d.to_string_lossy().to_string())
+        managed_data_dir(app)
+            .ok()
+            .map(|d| d.to_string_lossy().to_string())
     } else {
         None
     };
@@ -488,7 +500,10 @@ pub(crate) fn invalidate_hook_config_cache() {
 pub fn hook_config(app: &AppHandle, port: u16) -> Result<Value, String> {
     let (cmd, data_dir) = command_for(app, None);
     let key: HookConfigKey = (cmd.clone(), data_dir.clone(), port);
-    if let Some(cached) = hook_config_cache().lock().ok().and_then(|cache| cache.get(&key).cloned())
+    if let Some(cached) = hook_config_cache()
+        .lock()
+        .ok()
+        .and_then(|cache| cache.get(&key).cloned())
     {
         return Ok(cached);
     }
@@ -523,7 +538,9 @@ pub fn hook_config(app: &AppHandle, port: u16) -> Result<Value, String> {
 
     let stdout = String::from_utf8_lossy(&bytes);
     // The command prints comment lines before the JSON body.
-    let start = stdout.find('{').ok_or_else(|| "ai_memory_hooks_no_json".to_string())?;
+    let start = stdout
+        .find('{')
+        .ok_or_else(|| "ai_memory_hooks_no_json".to_string())?;
     let parsed: Value = serde_json::from_str(stdout[start..].trim())
         .map_err(|e| format!("ai_memory_hooks_bad_json:{e}"))?;
     let hooks = parsed
@@ -729,23 +746,33 @@ mod tests {
     #[test]
     fn the_hook_config_cache_is_keyed_by_command_and_data_dir_and_persists_until_an_install_invalidates_it(
     ) {
-        let profile_a: HookConfigKey =
-            ("/profile-a/ai-memory".into(), Some("/profile-a/ai-memory-data".into()), 65001);
+        let profile_a: HookConfigKey = (
+            "/profile-a/ai-memory".into(),
+            Some("/profile-a/ai-memory-data".into()),
+            65001,
+        );
         // Same port as `profile_a`, different command and data directory: a cache keyed by port
         // alone would collide with the entry below and hand profile B's terminals profile A's hooks.
-        let profile_b_same_port: HookConfigKey =
-            ("/profile-b/ai-memory".into(), Some("/profile-b/ai-memory-data".into()), 65001);
+        let profile_b_same_port: HookConfigKey = (
+            "/profile-b/ai-memory".into(),
+            Some("/profile-b/ai-memory-data".into()),
+            65001,
+        );
 
-        assert!(hook_config_cache().lock().unwrap().get(&profile_a).is_none());
+        assert!(hook_config_cache()
+            .lock()
+            .unwrap()
+            .get(&profile_a)
+            .is_none());
 
         hook_config_cache()
             .lock()
             .unwrap()
             .insert(profile_a.clone(), serde_json::json!({ "Stop": [] }));
-        hook_config_cache()
-            .lock()
-            .unwrap()
-            .insert(profile_b_same_port.clone(), serde_json::json!({ "Stop": ["b"] }));
+        hook_config_cache().lock().unwrap().insert(
+            profile_b_same_port.clone(),
+            serde_json::json!({ "Stop": ["b"] }),
+        );
 
         // A fresh call to the accessor still sees both inserts: it is the same static map, and the
         // two profiles do not collide despite sharing a port.
@@ -754,7 +781,11 @@ mod tests {
             Some(serde_json::json!({ "Stop": [] })),
         );
         assert_eq!(
-            hook_config_cache().lock().unwrap().get(&profile_b_same_port).cloned(),
+            hook_config_cache()
+                .lock()
+                .unwrap()
+                .get(&profile_b_same_port)
+                .cloned(),
             Some(serde_json::json!({ "Stop": ["b"] })),
         );
 
@@ -763,11 +794,19 @@ mod tests {
         // install, which may no longer be the one it resolves to now.
         invalidate_hook_config_cache();
         assert!(
-            hook_config_cache().lock().unwrap().get(&profile_a).is_none(),
+            hook_config_cache()
+                .lock()
+                .unwrap()
+                .get(&profile_a)
+                .is_none(),
             "the entry must not survive an install",
         );
         assert!(
-            hook_config_cache().lock().unwrap().get(&profile_b_same_port).is_none(),
+            hook_config_cache()
+                .lock()
+                .unwrap()
+                .get(&profile_b_same_port)
+                .is_none(),
             "the entry must not survive an install",
         );
         assert!(
@@ -840,7 +879,10 @@ mod tests {
     fn codex_gets_a_bare_url_under_its_own_unquoted_table_header() {
         let block = codex_mcp_block(49374);
         assert!(block.contains("[mcp_servers.ai-memory]"), "{block}");
-        assert!(block.contains("url = \"http://127.0.0.1:49374/mcp\""), "{block}");
+        assert!(
+            block.contains("url = \"http://127.0.0.1:49374/mcp\""),
+            "{block}"
+        );
         assert!(!block.contains("command"), "{block}");
         assert!(!block.contains("args"), "{block}");
     }
@@ -874,17 +916,26 @@ mod tests {
     fn an_explicit_command_always_wins() {
         // The caller named a binary; nothing may second-guess that.
         assert_eq!(
-            pick_command(Some("/profile/ai-memory".into()), Some("/usr/bin/ai-memory".into())),
+            pick_command(
+                Some("/profile/ai-memory".into()),
+                Some("/usr/bin/ai-memory".into())
+            ),
             "/usr/bin/ai-memory"
         );
-        assert_eq!(pick_command(None, Some("/usr/bin/ai-memory".into())), "/usr/bin/ai-memory");
+        assert_eq!(
+            pick_command(None, Some("/usr/bin/ai-memory".into())),
+            "/usr/bin/ai-memory"
+        );
     }
 
     #[test]
     fn the_copy_alethe_installed_travels_as_a_full_path() {
         // It lives in the profile folder, which is not on PATH: handing the agent the bare name
         // would give it a command it cannot resolve, and memory would silently never work.
-        assert_eq!(pick_command(Some("/profile/ai-memory".into()), None), "/profile/ai-memory");
+        assert_eq!(
+            pick_command(Some("/profile/ai-memory".into()), None),
+            "/profile/ai-memory"
+        );
     }
 
     #[test]
@@ -921,19 +972,39 @@ mod tests {
             header[..name.len()].copy_from_slice(name);
 
             // File mode: 0000644 (octal for regular file, rw-r--r--)
-            "0000644\0".as_bytes().iter().enumerate().for_each(|(i, &b)| header[100 + i] = b);
+            "0000644\0"
+                .as_bytes()
+                .iter()
+                .enumerate()
+                .for_each(|(i, &b)| header[100 + i] = b);
 
             // Owner's UID: 0
-            "0000000\0".as_bytes().iter().enumerate().for_each(|(i, &b)| header[108 + i] = b);
+            "0000000\0"
+                .as_bytes()
+                .iter()
+                .enumerate()
+                .for_each(|(i, &b)| header[108 + i] = b);
 
             // Group GID: 0
-            "0000000\0".as_bytes().iter().enumerate().for_each(|(i, &b)| header[116 + i] = b);
+            "0000000\0"
+                .as_bytes()
+                .iter()
+                .enumerate()
+                .for_each(|(i, &b)| header[116 + i] = b);
 
             // File size: 4 (in octal: 000000000004)
-            "000000000004".as_bytes().iter().enumerate().for_each(|(i, &b)| header[124 + i] = b);
+            "000000000004"
+                .as_bytes()
+                .iter()
+                .enumerate()
+                .for_each(|(i, &b)| header[124 + i] = b);
 
             // Modification time (use a fixed value: 1234567890 in octal)
-            "12345677720".as_bytes().iter().enumerate().for_each(|(i, &b)| header[136 + i] = b);
+            "12345677720"
+                .as_bytes()
+                .iter()
+                .enumerate()
+                .for_each(|(i, &b)| header[136 + i] = b);
 
             // Checksum field (start at offset 148, 8 bytes, filled with spaces during calc)
             // Type flag (offset 156): '0' for regular file
@@ -951,7 +1022,12 @@ mod tests {
 
             // Write checksum field in octal with trailing space and null
             let checksum_str = format!("{:06o} ", checksum);
-            checksum_str.as_bytes().iter().take(8).enumerate().for_each(|(i, &b)| header[148 + i] = b);
+            checksum_str
+                .as_bytes()
+                .iter()
+                .take(8)
+                .enumerate()
+                .for_each(|(i, &b)| header[148 + i] = b);
 
             tar_bytes.extend_from_slice(&header);
             tar_bytes.extend_from_slice(b"nope");
@@ -973,7 +1049,8 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("alethe-aimem-tar-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
 
-        extract_tar_gz(&tar_gz(&[("ai-memory", b"binary")]), &dir).expect("a plain tarball unpacks");
+        extract_tar_gz(&tar_gz(&[("ai-memory", b"binary")]), &dir)
+            .expect("a plain tarball unpacks");
         assert!(dir.join("ai-memory").is_file());
 
         let evil = create_evil_tar_gz();
@@ -1004,7 +1081,8 @@ mod tests {
             gz.finish().unwrap()
         }
 
-        let dir = std::env::temp_dir().join(format!("alethe-aimem-tar-many-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("alethe-aimem-tar-many-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
 
         // Create an archive with 5 entries, but test with a limit of 3
@@ -1034,13 +1112,17 @@ mod tests {
             gz.finish().unwrap()
         }
 
-        let dir = std::env::temp_dir().join(format!("alethe-aimem-tar-size-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("alethe-aimem-tar-size-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
 
         // Create an archive with 100 bytes of data, but test with a limit of 50 bytes
         let tarball = tar_gz(&[("file1", &[0u8; 100])]);
         let err = extract_tar_gz_bounded(&tarball, &dir, MAX_ENTRIES, 50).unwrap_err();
-        assert_eq!(err, "tar_too_large", "unpacked bytes cap is enforced: {err}");
+        assert_eq!(
+            err, "tar_too_large",
+            "unpacked bytes cap is enforced: {err}"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1049,7 +1131,10 @@ mod tests {
     fn the_plugin_extraction_path_is_unchanged() {
         // Verify that extract_zip still rejects archives exceeding the plugin cap,
         // and that the plugin download limit is untouched.
-        use crate::plugin_package::{extract_zip, MAX_DOWNLOAD_BYTES as PLUGIN_MAX_DL, MAX_UNPACKED_BYTES as PLUGIN_MAX_UP, MAX_ENTRIES as PLUGIN_MAX_ENTRIES};
+        use crate::plugin_package::{
+            extract_zip, MAX_DOWNLOAD_BYTES as PLUGIN_MAX_DL, MAX_ENTRIES as PLUGIN_MAX_ENTRIES,
+            MAX_UNPACKED_BYTES as PLUGIN_MAX_UP,
+        };
 
         let dir = std::env::temp_dir().join(format!("alethe-plugin-cap-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
@@ -1062,7 +1147,9 @@ mod tests {
             use std::io::Write;
             writer.start_file("file.bin", options).unwrap();
             // Write more than PLUGIN_MAX_UP bytes
-            writer.write_all(&vec![0u8; (PLUGIN_MAX_UP + 1) as usize]).unwrap();
+            writer
+                .write_all(&vec![0u8; (PLUGIN_MAX_UP + 1) as usize])
+                .unwrap();
             writer.finish().unwrap();
         }
 
@@ -1070,8 +1157,16 @@ mod tests {
         assert!(result.is_err(), "plugin cap still enforced");
 
         // Verify the plugin constants are what we expect
-        assert_eq!(PLUGIN_MAX_DL, 8 * 1024 * 1024, "plugin download limit unchanged");
-        assert_eq!(PLUGIN_MAX_UP, 32 * 1024 * 1024, "plugin unpacked limit unchanged");
+        assert_eq!(
+            PLUGIN_MAX_DL,
+            8 * 1024 * 1024,
+            "plugin download limit unchanged"
+        );
+        assert_eq!(
+            PLUGIN_MAX_UP,
+            32 * 1024 * 1024,
+            "plugin unpacked limit unchanged"
+        );
         assert_eq!(PLUGIN_MAX_ENTRIES, 2_000, "plugin entry limit unchanged");
 
         let _ = std::fs::remove_dir_all(&dir);
@@ -1098,7 +1193,10 @@ mod tests {
                    sessions:     2\n  \
                    observations: 17\n";
         let counts = parse_counts(out);
-        assert_eq!((counts.pages, counts.sessions, counts.observations), (3, 2, 17));
+        assert_eq!(
+            (counts.pages, counts.sessions, counts.observations),
+            (3, 2, 17)
+        );
     }
 
     #[test]
@@ -1106,7 +1204,10 @@ mod tests {
         // A freshly reset store prints no count lines. Zero is the truth there; failing would make
         // the panel show an error for a healthy, empty service.
         let counts = parse_counts("ai-memory 2.4.0 (server)\n");
-        assert_eq!((counts.pages, counts.sessions, counts.observations), (0, 0, 0));
+        assert_eq!(
+            (counts.pages, counts.sessions, counts.observations),
+            (0, 0, 0)
+        );
     }
 
     #[test]
@@ -1129,7 +1230,10 @@ mod tests {
             gz.finish().unwrap()
         }
 
-        let dir = std::env::temp_dir().join(format!("alethe-aimem-install-cleanup-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!(
+            "alethe-aimem-install-cleanup-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&dir);
 
         // 5 entries against a cap of 3: the entry-count check trips partway through, after the
@@ -1137,10 +1241,19 @@ mod tests {
         let tarball = tar_gz(5);
         let extraction = extract_tar_gz_bounded(&tarball, &dir, 3, MAX_UNPACKED_BYTES);
         assert!(extraction.is_err(), "the cap should have tripped");
-        assert!(dir.exists(), "the failed extraction itself still leaves the partial dir behind");
+        assert!(
+            dir.exists(),
+            "the failed extraction itself still leaves the partial dir behind"
+        );
 
         let outcome = cleanup_on_extract_failure(&dir, extraction);
-        assert!(outcome.is_err(), "the error is still propagated, not swallowed");
-        assert!(!dir.exists(), "install's cleanup removes what the failed extraction left behind");
+        assert!(
+            outcome.is_err(),
+            "the error is still propagated, not swallowed"
+        );
+        assert!(
+            !dir.exists(),
+            "install's cleanup removes what the failed extraction left behind"
+        );
     }
 }

@@ -54,7 +54,10 @@ pub struct ShellOwner {
 
 impl ShellOwner {
     pub fn planner(id: impl Into<String>) -> Self {
-        Self { kind: ShellOwnerKind::Planner, id: id.into() }
+        Self {
+            kind: ShellOwnerKind::Planner,
+            id: id.into(),
+        }
     }
 
     pub fn to_value(&self) -> Value {
@@ -67,7 +70,10 @@ impl ShellOwner {
         if id.is_empty() {
             return None;
         }
-        Some(Self { kind, id: id.to_string() })
+        Some(Self {
+            kind,
+            id: id.to_string(),
+        })
     }
 }
 
@@ -108,11 +114,17 @@ pub fn find_equivalent_running<'a>(
     command: &str,
     cwd: &str,
 ) -> Option<&'a Shell> {
-    shells.iter().find(|shell| is_equivalent_running(shell, command, cwd))
+    shells
+        .iter()
+        .find(|shell| is_equivalent_running(shell, command, cwd))
 }
 
 pub fn default_name(command: &str) -> String {
-    command.split_whitespace().next().unwrap_or("shell").to_string()
+    command
+        .split_whitespace()
+        .next()
+        .unwrap_or("shell")
+        .to_string()
 }
 
 /// Removes terminal escape sequences: CSI (colors, cursor moves), OSC (window titles) and the
@@ -201,7 +213,12 @@ impl Shell {
 
     /// A shell read back from disk never runs: its process died with the app that owned it.
     pub fn from_record(value: &Value) -> Option<Shell> {
-        let text = |key: &str| value.get(key).and_then(Value::as_str).map(ToOwned::to_owned);
+        let text = |key: &str| {
+            value
+                .get(key)
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned)
+        };
         Some(Shell {
             id: text("id")?,
             name: text("name").unwrap_or_default(),
@@ -320,8 +337,16 @@ mod tests {
 
     #[test]
     fn a_different_command_or_cwd_is_not_equivalent() {
-        assert!(!is_equivalent_running(&sample(), "npm run build", "C:\\app"));
-        assert!(!is_equivalent_running(&sample(), "npm run dev", "C:\\other"));
+        assert!(!is_equivalent_running(
+            &sample(),
+            "npm run build",
+            "C:\\app"
+        ));
+        assert!(!is_equivalent_running(
+            &sample(),
+            "npm run dev",
+            "C:\\other"
+        ));
     }
 
     #[test]

@@ -86,8 +86,9 @@ impl Launcher {
 
     /// `bypassPermissions`: this stream has no interactive approval channel — a tool call needing
     /// permission is auto-denied and reported, not paused for an answer. The worker keeps its shell
-    /// so it can run tests and builds, and runs apart from the person's own setup: its isolation is
-    /// built from `home` each time it starts (`Core::claude_isolation`, #151).
+    /// so it can run tests and builds, unless it is read-only (`spawn_worker`), and runs apart from
+    /// the person's own setup: its isolation is built from `home` each time it starts
+    /// (`Core::claude_isolation`, #151).
     pub fn claude_headless(program: PathBuf, home: PathBuf) -> Self {
         Self {
             kind: "claude".into(),
@@ -2033,7 +2034,7 @@ fn resolve_role(
 /// (`claude_isolation_args`), so the person's hooks, plugins, skills and agents stay out. Their
 /// CLAUDE.md is excluded by path, because leaving out the user settings does not drop it, and
 /// auto-memory goes off again, because it was off through their settings' `env`. The project's
-/// CLAUDE.md still loads.
+/// CLAUDE.md still loads, except for a read-only worker, which loads no settings source.
 ///
 /// Of the person's `settings.json` (`user_settings`, None when there is none) only the `PreToolUse`
 /// hooks are carried, the tool guards a worker with a shell still needs, plus the model and effort
@@ -2090,10 +2091,12 @@ fn glob_literal(path: &str) -> String {
 /// project and local settings, no MCP server, and the worker's own settings from a file Alethe
 /// wrote (`claude_worker_settings`). A file rather than JSON on the command line: the person's hook
 /// commands would show in the process list, and an npm `claude.cmd` shim mangles quotes.
-fn claude_isolation_args(settings_file: &str) -> Vec<String> {
+/// A read-only worker loads no project or local settings either: their hooks run commands that can
+/// write (#207). The person's guards still ride in `settings_file`.
+fn claude_isolation_args(settings_file: &str, read_only: bool) -> Vec<String> {
     [
         "--setting-sources",
-        "project,local",
+        if read_only { "" } else { "project,local" },
         "--strict-mcp-config",
         "--settings",
         settings_file,
@@ -2109,6 +2112,10 @@ const CLAUDE_WORKER_BRIEF: &str = "Rules for this worker, whatever the task:\n\
 - Never print a secret, token, key or the contents of a credentials or .env file.\n\
 - Work only inside the task's directory and change only what the task needs.\n\
 - When the task cannot be done as written, stop and say what is missing.\n";
+
+/// Added to a read-only worker's brief: with no settings source, Claude loads none of the
+/// project's instructions either (#207).
+const CLAUDE_READ_ONLY_BRIEF: &str = "- The project's own instructions are not loaded: read its CLAUDE.md or AGENTS.md first, when there is one.\n";
 
 /// Writes `bytes` as `name` in `dir`, creating `dir`: the temp file is only ever new and goes over
 /// `name` by rename, so a link or hard link already at `name` is replaced, never written through.
@@ -2923,6 +2930,7 @@ impl Core {
         &self,
         job_id: &str,
         home: Option<&std::path::Path>,
+        read_only: bool,
     ) -> Result<Vec<String>, String> {
         let home = home.ok_or_else(|| {
             "the Claude worker has no settings folder, so it does not start without its isolation"
@@ -2964,8 +2972,13 @@ impl Core {
             settings.to_string().as_bytes(),
             "settings",
         )?;
-        let brief = written("claude-brief.md", CLAUDE_WORKER_BRIEF.as_bytes(), "brief")?;
-        let mut args = claude_isolation_args(&file.to_string_lossy());
+        let brief = if read_only {
+            format!("{CLAUDE_WORKER_BRIEF}{CLAUDE_READ_ONLY_BRIEF}")
+        } else {
+            CLAUDE_WORKER_BRIEF.to_string()
+        };
+        let brief = written("claude-brief.md", brief.as_bytes(), "brief")?;
+        let mut args = claude_isolation_args(&file.to_string_lossy(), read_only);
         args.extend(claude_brief_args(&brief.to_string_lossy()));
         Ok(args)
     }
@@ -3040,7 +3053,8 @@ impl Core {
         // Claude keeps its own session on disk under this id — no separate resume RPC like Codex's
         // `thread/resume`, the CLI just needs the id up front.
         if agent == "claude" {
-            match self.claude_isolation(job_id, launcher.claude_home.as_deref()) {
+            let read_only = sandbox == SANDBOX_READ_ONLY;
+            match self.claude_isolation(job_id, launcher.claude_home.as_deref(), read_only) {
                 Ok(args) => {
                     command.args(args);
                 }
@@ -3054,6 +3068,11 @@ impl Core {
                 model.as_deref(),
                 effort.as_deref(),
             ));
+            // Bash and PowerShell can write too, so a read-only worker keeps only the tools that
+            // read (#207). Last on the line: `--tools` takes every argument after it.
+            if read_only {
+                command.args(["--tools", "Read,Grep,Glob"]);
+            }
         }
         let mut agy_log = None;
         if agent == "antigravity" {
@@ -4557,7 +4576,7 @@ pub fn tools() -> Value {
                     "agent": {
                         "type": "string",
                         "enum": ["codex", "claude", "antigravity"],
-                        "description": "Which CLI runs the worker. Defaults to codex. A Claude worker runs without an approval channel (bypasses permissions) and does not yet report a live diff. An Antigravity (agy) worker reads and edits files on its own but runs no commands at all: no git, tests, builds or package scripts. It names what should run, and you run git, tests and builds after its turn. It always works in its own git worktree, so its folder must be in a git repository. It has no approval channel or read-only mode, and cannot be interrupted: a steer waits for its turn to end. A turn where agy denied a tool ends with outcome blocked. Each vendor meters a different set of windows - Codex a 5 hour and a weekly one, Claude those two plus a separate weekly budget for Opus - so how much room one has left says nothing about the other. Do not reason about that from here: every response these tools return carries a fitness block with the current reading and names the side with room in headroom. Read it and prefer that side when one is running out."
+                        "description": "Which CLI runs the worker. Defaults to codex. A Claude worker runs without an approval channel (bypasses permissions) and does not yet report a live diff; read-only, it gets only Read, Grep and Glob. An Antigravity (agy) worker reads and edits files on its own but runs no commands at all: no git, tests, builds or package scripts. It names what should run, and you run git, tests and builds after its turn. It always works in its own git worktree, so its folder must be in a git repository. It has no approval channel or read-only mode, and cannot be interrupted: a steer waits for its turn to end. A turn where agy denied a tool ends with outcome blocked. Each vendor meters a different set of windows - Codex a 5 hour and a weekly one, Claude those two plus a separate weekly budget for Opus - so how much room one has left says nothing about the other. Do not reason about that from here: every response these tools return carries a fitness block with the current reading and names the side with room in headroom. Read it and prefer that side when one is running out."
                     },
                     "cwd": { "type": "string", "description": "Working directory. Defaults to the lead's directory." },
                     "rules": {
@@ -4591,7 +4610,7 @@ pub fn tools() -> Value {
                     },
                     "readOnly": {
                         "type": "boolean",
-                        "description": "Start each Codex worker in a read-only sandbox: it can read files and run commands, but cannot write. Use it for reviews and audits that must not change anything. Cannot be combined with askForApproval, and not available for Claude or Antigravity workers."
+                        "description": "Start each worker read-only, so it cannot write. A Codex worker runs in a read-only sandbox: it reads files and runs commands. A Claude worker gets only Read, Grep and Glob and none of the project's settings or instructions: it reads and searches files but runs no commands, so you run the tests, and it reads the project's CLAUDE.md or AGENTS.md itself. Use it for reviews and audits that must not change anything. Cannot be combined with askForApproval, and not available for Antigravity workers."
                     },
                     "timeoutSeconds": {
                         "type": "number",
@@ -5097,11 +5116,6 @@ fn dispatch_tool(
                 .filter(|value| !value.is_empty())
                 .unwrap_or("codex")
                 .to_string();
-            // The headless Claude launch bypasses permissions. Dropping readOnly silently would
-            // hand a worker meant to only read the right to write.
-            if agent == "claude" && read_only {
-                return Err("readOnly applies to Codex workers only".into());
-            }
             // agy runs in accept-edits with no approval channel and no read-only mode. Either flag
             // dropped silently would let a worker write that was meant to ask or only read.
             if agent == "antigravity" {
@@ -6208,7 +6222,7 @@ mod restart_tests {
             Ok(isolated("C:/Users/me/.claude"))
         );
         assert_eq!(
-            claude_isolation_args(r"D:\data\jobs\job-01\claude-settings.json"),
+            claude_isolation_args(r"D:\data\jobs\job-01\claude-settings.json", false),
             [
                 "--setting-sources",
                 "project,local",
@@ -6216,6 +6230,11 @@ mod restart_tests {
                 "--settings",
                 r"D:\data\jobs\job-01\claude-settings.json"
             ]
+        );
+        // A read-only worker loads no project or local settings, whose hooks could write (#207).
+        assert_eq!(
+            claude_isolation_args(r"D:\data\jobs\job-01\claude-settings.json", true)[..2],
+            ["--setting-sources", ""]
         );
     }
 

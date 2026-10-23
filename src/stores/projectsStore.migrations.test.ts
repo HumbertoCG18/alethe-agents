@@ -288,7 +288,7 @@ describe('preference normalization', () => {
           writer,
           // Claude takes an effort (`claude --effort`), so this one is kept.
           { ...writer, name: 'thinker', effort: 'high' },
-          // Repairing this would change what it means: a read-only Claude role made writable.
+          // A read-only Claude role runs with only Read, Grep and Glob, so it is kept (#207).
           { ...writer, name: 'reader', readOnly: true },
           { ...reviewer, model: null },
           { ...reviewer, name: '-flag' },
@@ -303,7 +303,12 @@ describe('preference normalization', () => {
     expect(preferences.orchestration).toEqual({
       maxConcurrent: 16,
       defaultTimeoutSeconds: 900,
-      roles: [reviewer, writer, { ...writer, name: 'thinker', effort: 'high' }],
+      roles: [
+        reviewer,
+        writer,
+        { ...writer, name: 'thinker', effort: 'high' },
+        { ...writer, name: 'reader', readOnly: true },
+      ],
     })
   })
 

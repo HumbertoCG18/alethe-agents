@@ -648,7 +648,10 @@ export type OrchestrationRole = {
   model: string | null
   /** Reasoning effort, as the chosen CLI names it; null keeps the CLI's setting. */
   effort: string | null
-  /** Codex read-only sandbox. Always false for Claude and Antigravity. */
+  /**
+   * Read-only worker: Codex's read-only sandbox, or Claude with only Read, Grep and Glob. Always
+   * false for Antigravity.
+   */
   readOnly: boolean
   /** null uses the default budget; 0 lets the worker run without a limit. */
   timeoutSeconds: number | null

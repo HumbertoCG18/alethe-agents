@@ -108,7 +108,7 @@ export type OrchestratorJob = {
   model: string | null
   /** Codex reasoning effort the planner asked for; null keeps the CLI's own setting. */
   effort: string | null
-  /** Started in a read-only sandbox: it can read and run commands but not write. */
+  /** Started read-only: it can read but not write. */
   readOnly: boolean
   pendingApproval: OrchestratorPendingApproval | null
   /** The worker that took this one's task over after it ended without finishing it. */

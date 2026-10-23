@@ -58,13 +58,13 @@ export function isValidRole(role: unknown): role is OrchestrationRole {
   if (!optionalName(model) || !optionalName(effort) || typeof readOnly !== 'boolean') return false
   if (timeoutSeconds !== null && !wholeSeconds(timeoutSeconds)) return false
   if (!ORCHESTRATORS.includes(orchestrator)) return false
-  // The headless Claude and Antigravity launches have no read-only mode.
-  return agent === 'codex' || !readOnly
+  // The headless Antigravity launch has no read-only mode; a read-only Claude worker only reads.
+  return agent !== 'antigravity' || !readOnly
 }
 
 /**
  * Settings read from disk. A role the orchestrator would refuse is dropped rather than repaired:
- * making a read-only Claude role writable, say, would change what it means.
+ * making a read-only Antigravity role writable, say, would change what it means.
  */
 export function normalizeOrchestrationSettings(raw: unknown): OrchestrationSettings {
   const source = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}

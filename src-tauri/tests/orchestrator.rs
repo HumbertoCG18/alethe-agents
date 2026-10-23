@@ -2544,10 +2544,10 @@ fn model_options_that_cannot_hold_are_refused_without_creating_a_job() {
     let cwd = dir.to_string_lossy().into_owned();
 
     let cases = [
-        // The headless Claude launch bypasses permissions: dropping readOnly would let it write.
+        // agy runs in accept-edits with no read-only mode: dropping readOnly would let it write.
         (
-            "read-only claude worker",
-            json!({ "agent": "claude", "readOnly": true }),
+            "read-only antigravity worker",
+            json!({ "agent": "antigravity", "readOnly": true }),
         ),
         (
             "read-only worker that asks",
@@ -6327,6 +6327,151 @@ fn a_claude_worker_reads_its_settings_at_each_start_and_never_starts_without_its
     );
     assert_eq!(written["autoMemoryEnabled"], false, "{written}");
     assert!(written.get("env").is_none(), "{written}");
+}
+
+/// The tools a read-only Claude worker is started with: `--tools` and its list close the command
+/// line, since the flag takes every argument after it.
+fn read_only_claude_tools(args: &[String]) -> Result<(), String> {
+    let n = args.len();
+    if n < 2 || args[n - 2] != "--tools" || args[n - 1] != "Read,Grep,Glob" {
+        return Err(format!("no closing --tools Read,Grep,Glob: {args:?}"));
+    }
+    if !args.iter().any(|arg| arg == "--strict-mcp-config") {
+        return Err(format!("no --strict-mcp-config: {args:?}"));
+    }
+    // A project or local hook runs commands that can write, so neither source loads.
+    let sources = args.iter().position(|arg| arg == "--setting-sources");
+    if sources.and_then(|at| args.get(at + 1)).map(String::as_str) != Some("") {
+        return Err(format!("project or local settings load: {args:?}"));
+    }
+    // Without them the project's instructions do not load either, so the brief says to read them.
+    let brief = args
+        .iter()
+        .position(|arg| arg == "--append-system-prompt-file")
+        .and_then(|at| args.get(at + 1))
+        .and_then(|file| std::fs::read_to_string(file).ok())
+        .unwrap_or_default();
+    if !brief.contains("AGENTS.md") {
+        return Err(format!(
+            "the brief does not point at the project's instructions: {brief}"
+        ));
+    }
+    for tool in ["Edit", "Write", "Bash", "PowerShell", "NotebookEdit"] {
+        if args.iter().any(|arg| arg.contains(tool)) {
+            return Err(format!("{tool} on the command line: {args:?}"));
+        }
+    }
+    Ok(())
+}
+
+// A read-only Claude worker can only read: its tool set is Read, Grep and Glob, with no MCP server
+// and no project or local settings, while a writable one keeps the CLI's tools (#207).
+#[test]
+fn a_read_only_claude_worker_starts_with_only_the_reading_tools() {
+    let dir = workspace("claude-read-only");
+    let fake = workspace("claude-read-only-fake");
+    let home = workspace("claude-read-only-home");
+    let store = workspace("claude-read-only-store");
+    let core = Core::default();
+    core.set_store(store.join("orchestrator.json"));
+    core.set_launcher(scripted_claude(&fake, &home, "reviewed"));
+    let delegate = |read_only: bool| {
+        call(
+            &core,
+            "alethe_delegate",
+            json!({
+                "tasks": ["review"],
+                "cwd": dir.to_string_lossy(),
+                "agent": "claude",
+                "model": "claude-opus-5-5",
+                "readOnly": read_only
+            }),
+        )
+    };
+
+    let delegated = delegate(true);
+    let read_only = job_settled(&core, "job-01");
+    let read_only_args: Vec<String> = read_lossy(&fake.join("args.txt"))
+        .lines()
+        .map(|line| line.trim().to_string())
+        .collect();
+    let flagged = job_field(&core, "job-01", "readOnly");
+    let checked = read_only_claude_tools(&read_only_args);
+    delegate(false);
+    let writable = job_settled(&core, "job-02");
+    let writable_args = read_lossy(&fake.join("args.txt"));
+
+    let _ = call(
+        &core,
+        "alethe_cancel",
+        json!({ "jobIds": ["job-01", "job-02"] }),
+    );
+    for folder in [&dir, &fake, &home, &store] {
+        let _ = std::fs::remove_dir_all(folder);
+    }
+    assert!(delegated.get("error").is_none(), "{delegated}");
+    assert_eq!(read_only, "done");
+    assert_eq!(flagged, true);
+    checked.unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(writable, "done");
+    assert!(
+        !writable_args.lines().any(|arg| arg.trim() == "--tools"),
+        "{writable_args}"
+    );
+}
+
+// A read-only Claude worker that gets more work after its process went keeps its reading tools: a
+// second message must not hand it the right to write (#207).
+#[test]
+fn a_revived_read_only_claude_worker_keeps_only_the_reading_tools() {
+    let dir = workspace("claude-read-only-revived");
+    let fake = workspace("claude-read-only-revived-fake");
+    let home = workspace("claude-read-only-revived-home");
+    let store = workspace("claude-read-only-revived-store");
+    let turn = concat!(
+        r#"{"type":"system","subtype":"init","session_id":"read-only-session"}"#,
+        "\n",
+        r#"{"type":"result","is_error":false,"result":"reviewed"}"#,
+        "\n",
+    );
+    let core = Core::default();
+    core.set_store(store.join("orchestrator.json"));
+    core.set_launcher(scripted_claude(&fake, &home, "reviewed"));
+    std::fs::write(fake.join("turn.jsonl"), turn).expect("turn");
+
+    call(
+        &core,
+        "alethe_delegate",
+        json!({ "tasks": ["review"], "cwd": dir.to_string_lossy(), "agent": "claude", "readOnly": true }),
+    );
+    let first = job_settled(&core, "job-01");
+    let thread = job_field(&core, "job-01", "threadId");
+    // Its process goes; its session stays with Claude.
+    call(&core, "alethe_release", json!({ "jobIds": ["job-01"] }));
+    let sent = call(
+        &core,
+        "alethe_send",
+        json!({ "jobId": "job-01", "message": "now fix what you found" }),
+    );
+    let launches = wait_for_lines(&fake.join("launches.txt"), 2, 20);
+    let args = wait_for_lines(&fake.join("args.txt"), 1, 5);
+    let checked = read_only_claude_tools(&args);
+
+    let _ = call(&core, "alethe_cancel", json!({ "jobIds": ["job-01"] }));
+    for folder in [&dir, &fake, &home, &store] {
+        let _ = std::fs::remove_dir_all(folder);
+    }
+    assert_eq!(first, "done");
+    assert_eq!(thread, "read-only-session");
+    assert_eq!(sent["revived"], json!("job-01"), "{sent}");
+    assert_eq!(launches.len(), 2, "the worker was not started again");
+    let resumed = args.iter().position(|arg| arg == "--resume");
+    assert_eq!(
+        resumed.and_then(|at| args.get(at + 1)).map(String::as_str),
+        Some("read-only-session"),
+        "{args:?}"
+    );
+    checked.unwrap_or_else(|error| panic!("{error}"));
 }
 
 // A settings file that cannot be read stops the worker; with none at all it starts isolated, with

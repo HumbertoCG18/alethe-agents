@@ -1153,7 +1153,7 @@ export const en = {
   'prefs.orchestrationModelsFailed':
     'Could not list the Codex models ({error}). You can still type a model name.',
   'prefs.orchestrationCustomModel': 'Use "{value}"',
-  'prefs.orchestrationCodexOnly': 'Codex workers only',
+  'prefs.orchestrationNoReadOnly': 'Not available for Antigravity workers',
   'prefs.multiagentSchedulerTitle': 'Scheduler & task queue',
   'prefs.multiagentSchedulerDesc':
     'Manages execution waves from the real `.planning/task.md` backlog per project.',
@@ -2702,8 +2702,7 @@ export const en = {
   'orchestrator.modelEffortTitle':
     'Runs on {model} with {effort} reasoning effort, as the orchestrator asked',
   'orchestrator.readOnly': 'read-only',
-  'orchestrator.readOnlyTitle':
-    'Started in a read-only sandbox: it reads files and runs commands but cannot write',
+  'orchestrator.readOnlyTitle': 'Started read-only: it can read files but cannot write',
   'orchestrator.status.queued': 'waiting for a slot',
   'orchestrator.status.running': 'running',
   'orchestrator.status.done': 'done',

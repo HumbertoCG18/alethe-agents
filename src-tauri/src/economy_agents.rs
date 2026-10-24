@@ -1,7 +1,4 @@
-// Fase 3 do agent canvas — "modo economia".
-//
-
-//
+// Agent canvas phase 3 — economy mode.
 
 use std::fs;
 use std::path::PathBuf;
@@ -49,9 +46,7 @@ Regras:
 "#,
     ),
     (
-        // (validado na POC — ele roda find/grep por conta). O hook PreToolUse
-
-        // `codex exec`, devolvendo o motivo pro modelo tentar de novo certo.
+        // PreToolUse restricts the executor to `codex exec` and explains denials.
         "codex-only-guard.cjs",
         r#"                                                               
 let raw = ''
@@ -62,7 +57,27 @@ process.stdin.on('end', () => {
     cmd = JSON.parse(raw).tool_input.command || ''
   } catch {}
   if (!/^\s*codex\s+exec\b/.test(cmd)) {
-    console.error('Bloqueado: o codex-executor só pode rodar `codex exec ...`. Monte a tarefa como instrução autocontida e delega pro codex.')
+    console.error('Blocked: the codex-executor may only run `codex exec ...`. Write the task as a self-contained instruction and delegate it to codex.')
+    process.exit(2)
+  }
+  let quote = ''
+  for (let i = 0; i < cmd.length; i++) {
+    const c = cmd[i]
+    if (quote === "'") {
+      if (c === "'") quote = ''
+    } else if (c === '\\') {
+      i++
+    } else if (c === '$' || c === '`' || (!quote && ';&|<>\r\n'.includes(c))) {
+      console.error('Blocked: shell operators and expansions are not allowed. Use `codex exec` with a literal prompt.')
+      process.exit(2)
+    } else if (c === quote) {
+      quote = ''
+    } else if (!quote && (c === "'" || c === '"')) {
+      quote = c
+    }
+  }
+  if (quote) {
+    console.error('Blocked: unterminated quote in the `codex exec` command.')
     process.exit(2)
   }
 })
@@ -141,4 +156,159 @@ pub fn set_economy_agents(folder: String, enabled: bool) -> Result<Vec<String>, 
     }
 
     Ok(touched)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AGENTS;
+    use std::fs;
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    fn assert_hook(input: &str, expected: i32) {
+        let body = AGENTS
+            .iter()
+            .find(|(name, _)| *name == "codex-only-guard.cjs")
+            .expect("embedded guard must exist")
+            .1;
+        let path =
+            std::env::temp_dir().join(format!("alethe-codex-only-guard-{}.cjs", nanoid::nanoid!()));
+        fs::write(&path, body).expect("write guard script");
+        let output = (|| -> std::io::Result<_> {
+            let mut child = Command::new("node")
+                .arg(&path)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()?;
+            child.stdin.take().unwrap().write_all(input.as_bytes())?;
+            child.wait_with_output()
+        })();
+        fs::remove_file(&path).expect("remove guard script");
+        let output = output.expect("node must be on PATH and execute the guard successfully");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(
+            output.status.code(),
+            Some(expected),
+            "hook input: {input:?}; stderr: {stderr}"
+        );
+        if expected == 2 {
+            assert!(stderr.starts_with("Blocked:"), "missing reason: {stderr}");
+        }
+    }
+
+    fn assert_command(command: &str, expected: i32) {
+        let payload = serde_json::json!({ "tool_input": { "command": command } });
+        assert_hook(&payload.to_string(), expected);
+    }
+
+    #[test]
+    fn guard_allows_literal_prompt_text() {
+        for command in [
+            r#"codex exec --skip-git-repo-check "do x; then y | z > w""#,
+            r#"codex exec '$HOME $(whoami) `whoami`; & | < >'"#,
+            r#"codex exec 'literal \ and "quotes" $HOME'"#,
+            r#"codex exec "literal ; & | < >""#,
+            "codex exec 'line one\nline two\rline three'",
+            "codex exec \"line one\nline two\rline three\"",
+        ] {
+            assert_command(command, 0);
+        }
+    }
+
+    #[test]
+    fn guard_allows_escaped_characters() {
+        for command in [
+            r#"codex exec \;\&\|\<\>\`\$\'\""#,
+            r#"codex exec "\$HOME \`whoami\` \"quoted\" \\""#,
+        ] {
+            assert_command(command, 0);
+        }
+    }
+
+    #[test]
+    fn guard_denies_semicolon() {
+        for command in [
+            r#"codex exec "x"; whoami"#,
+            r#"codex exec x\\;whoami"#,
+            r#"codex exec 'x\';whoami"#,
+        ] {
+            assert_command(command, 2);
+        }
+    }
+
+    #[test]
+    fn guard_denies_ampersand() {
+        for command in [r#"codex exec "x" && whoami"#, "codex exec x & whoami"] {
+            assert_command(command, 2);
+        }
+    }
+
+    #[test]
+    fn guard_denies_pipe() {
+        for command in [r#"codex exec "x" | sh"#, "codex exec x || whoami"] {
+            assert_command(command, 2);
+        }
+    }
+
+    #[test]
+    fn guard_denies_redirection() {
+        for command in ["codex exec x < input", "codex exec x > output"] {
+            assert_command(command, 2);
+        }
+    }
+
+    #[test]
+    fn guard_denies_unquoted_expansion() {
+        for command in ["codex exec $HOME", "codex exec `whoami`"] {
+            assert_command(command, 2);
+        }
+    }
+
+    #[test]
+    fn guard_denies_double_quoted_substitution() {
+        assert_command(r#"codex exec "$(whoami)""#, 2);
+    }
+
+    #[test]
+    fn guard_denies_double_quoted_environment_variable() {
+        for command in [
+            r#"codex exec "$OPENAI_API_KEY""#,
+            r#"codex exec "\\$HOME""#,
+            r#"codex exec "\"$HOME""#,
+        ] {
+            assert_command(command, 2);
+        }
+    }
+
+    #[test]
+    fn guard_denies_double_quoted_backtick() {
+        assert_command(r#"codex exec "`whoami`""#, 2);
+    }
+
+    #[test]
+    fn guard_denies_unquoted_newline() {
+        for newline in ["\n", "\r", "\r\n"] {
+            assert_command(&format!("codex exec x{newline}whoami"), 2);
+        }
+    }
+
+    #[test]
+    fn guard_denies_unterminated_quote() {
+        for command in ["codex exec 'x", "codex exec \"x", r#"codex exec "x\""#] {
+            assert_command(command, 2);
+        }
+    }
+
+    #[test]
+    fn guard_denies_non_codex_command() {
+        assert_command("whoami", 2);
+    }
+
+    #[test]
+    fn guard_denies_invalid_json() {
+        for input in ["not JSON", "", "{"] {
+            assert_hook(input, 2);
+        }
+    }
 }

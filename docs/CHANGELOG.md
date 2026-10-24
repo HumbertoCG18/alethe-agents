@@ -10,6 +10,7 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ## [Unreleased]
 
+- Economy mode: the Codex executor rejects shell chaining, redirection, expansions, and unterminated quotes while preserving literal quoted and escaped prompt text (#191).
 - Antigravity usage card: shows Antigravity's real quota groups, Gemini and Claude/GPT, each with its 5-hour and weekly usage and reset, read from `agy /usage`, which spends no quota. The badge and footer count those groups, and the headline names the window closest to its limit. The per-model grouping and model count are gone, and a signed-out CLI now reads as "usage unavailable" with the sign-in hint. Antigravity usage refreshes every 5 minutes, since each reading starts the agy CLI; the refresh button still reads it right away.
 - Claude usage: the fixed Opus row is gone from the usage card, the title bar popover and the workspace usage menu, since Claude no longer meters Opus apart. Model limits such as Fable show only when Claude reports them, Opus included, and each model limit shows its own reset in the usage card. Limit-reset notifications cover the 5-hour and weekly windows.
 - Codex usage card: adds the account overview from Codex's own `/usage` — lifetime tokens, peak day, longest chat, and current and best streak. It is read only while the card is on screen and kept for 30 minutes, apart from the limit polling, since only a started Codex CLI reports it.

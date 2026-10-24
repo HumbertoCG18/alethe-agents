@@ -57,7 +57,7 @@ process.stdin.on('end', () => {
     cmd = JSON.parse(raw).tool_input.command || ''
   } catch {}
   if (!/^\s*codex\s+exec\b/.test(cmd)) {
-    console.error('Bloqueado: o codex-executor só pode rodar `codex exec ...`. Monte a tarefa como instrução autocontida e delega pro codex.')
+    console.error('Blocked: the codex-executor may only run `codex exec ...`. Write the task as a self-contained instruction and delegate it to codex.')
     process.exit(2)
   }
   let quote = ''
@@ -68,7 +68,7 @@ process.stdin.on('end', () => {
     } else if (c === '\\') {
       i++
     } else if (c === '$' || c === '`' || (!quote && ';&|<>\r\n'.includes(c))) {
-      console.error('Bloqueado: operadores e expansões de shell não são permitidos. Use `codex exec` com um prompt literal.')
+      console.error('Blocked: shell operators and expansions are not allowed. Use `codex exec` with a literal prompt.')
       process.exit(2)
     } else if (c === quote) {
       quote = ''
@@ -77,7 +77,7 @@ process.stdin.on('end', () => {
     }
   }
   if (quote) {
-    console.error('Bloqueado: aspas não terminadas no comando `codex exec`.')
+    console.error('Blocked: unterminated quote in the `codex exec` command.')
     process.exit(2)
   }
 })
@@ -193,7 +193,7 @@ mod tests {
             "hook input: {input:?}; stderr: {stderr}"
         );
         if expected == 2 {
-            assert!(stderr.starts_with("Bloqueado:"), "missing reason: {stderr}");
+            assert!(stderr.starts_with("Blocked:"), "missing reason: {stderr}");
         }
     }
 

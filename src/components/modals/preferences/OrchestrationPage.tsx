@@ -274,7 +274,7 @@ export function OrchestrationPage() {
                     agent: agentLabel(role.orchestrator),
                   })
                 : name
-              const codex = role.agent === 'codex'
+              const readOnlyAllowed = role.agent !== 'antigravity'
               const draft =
                 nameDraft && nameDraft.index === index && nameDraft.base === role.name
                   ? nameDraft.text
@@ -353,8 +353,8 @@ export function OrchestrationPage() {
                       className={controls.switch}
                       aria-checked={role.readOnly}
                       aria-label={t('prefs.orchestrationReadOnlyFor', { name: label })}
-                      disabled={!codex}
-                      title={codex ? undefined : t('prefs.orchestrationCodexOnly')}
+                      disabled={!readOnlyAllowed}
+                      title={readOnlyAllowed ? undefined : t('prefs.orchestrationNoReadOnly')}
                       onClick={() => saveRole(index, { readOnly: !role.readOnly })}
                     />
                     <input

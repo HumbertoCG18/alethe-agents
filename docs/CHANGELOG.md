@@ -60,6 +60,13 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ### Added
 
+- **Read-only Claude workers.** A Claude role in Preferences > Orchestration, or a Claude worker
+  the lead delegates, can now be read-only: it starts with only the Read, Grep and Glob tools, no
+  MCP server and none of the project's settings, whose hooks could run commands, so it reads and
+  searches files but cannot edit, write or run commands, and the lead runs the tests. It is told to
+  read the project's CLAUDE.md or AGENTS.md itself. A worker picked up again or sent more work
+  keeps that restriction. A read-only Codex role can now fall back to a read-only Claude role.
+  Antigravity workers still have no read-only mode.
 - **Antigravity workers in orchestration.** The lead can delegate to Antigravity (`agy`) next to
   Claude Code and Codex, and a role in Preferences > Orchestration can run on it with the approved
   models: Claude Sonnet 5.5 (medium or high), Claude Opus 5.5 High, and Gemini 3.8 Flash (medium or
@@ -285,8 +292,8 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
   pass `model`, `effort` and `readOnly` when it delegates, so work such as an independent review on
   another model runs as a worker on the orchestration board instead of outside Alethe. The worker
   card shows the model, the effort and a read-only mark, and a worker picked up again keeps them.
-  `readOnly` applies to Codex workers; asking for it on a Claude worker is refused, while `effort`
-  reaches Claude as `--effort`.
+  `readOnly` applies to Codex and Claude workers (see read-only Claude workers above), while
+  `effort` reaches Claude as `--effort`.
 - **Grok Build and Codewhale are now native agents.** Grok Build (xAI, `grok` CLI) and
   Codewhale (`codewhale` CLI) appear in every agent picker with their own icons and accent
   colors. Install entries cover the official Grok PowerShell/npm installers and
@@ -405,6 +412,9 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ### Changed
 
+- **Claude workers get a short brief of fixed rules.** Isolated from your own CLAUDE.md, a worker
+  now still starts with a few rules that hold for any task: no commit, push or deploy unless the task
+  asks, never print a secret, stay in the task's directory.
 - **Antigravity workers edit files but run no commands.** Each worker now runs as the
   `alethe-worker` agy agent, which Alethe installs and keeps up to date in
   `~/.gemini/config/agents/alethe-worker/`, without your own agy hooks, rules, GEMINI.md or MCP
@@ -590,6 +600,9 @@ Notable user-facing changes to **Alethe** are documented here. The format is bas
 
 ### Fixed
 
+- **A discarded campaign task no longer counts in the campaign's percentage.** The `descartada` state
+  (closed without delivery, as in the registry's lab) leaves both the done count and the total, and
+  no longer keeps a campaign or its dependents from finishing.
 - **A Claude worker's diff shows the files it created**, and it clears once the worker reverts its
   changes instead of keeping the last one.
 - **Agent CLIs installed with both a `.cmd` and an `.exe` launch the `.exe`**, so the arguments you

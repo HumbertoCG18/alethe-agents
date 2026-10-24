@@ -362,13 +362,18 @@ impl RemoteHub {
     }
 
     pub(crate) fn refresh_host(&self) {
+        self.refresh_host_with(tailscale_ip);
+    }
+
+    /// `detect_tailscale` is injectable so tests don't depend on a real install.
+    fn refresh_host_with(&self, detect_tailscale: impl FnOnce() -> Option<String>) {
         // Fail closed: when Tailscale is requested but not detected,
         // `tailscale_ip()` returns `None` and this resolves to an empty
         // string, which fails `IpAddr` parsing in `bind_listener` — the
         // listener then refuses to bind at all instead of silently falling
         // back to the LAN (or any wider) address.
         let ip = if self.use_tailscale.load(Ordering::Relaxed) {
-            tailscale_ip().unwrap_or_default()
+            detect_tailscale().unwrap_or_default()
         } else {
             local_ip()
         };
@@ -1432,12 +1437,22 @@ mod tests {
         let hub = RemoteHub::new();
         hub.set_use_tailscale(true);
 
-        hub.refresh_host();
+        hub.refresh_host_with(|| None);
 
-        // No real Tailscale install in CI, so detection returns `None` and
-        // `host()` must resolve to something `bind_listener` cannot parse —
-        // never the LAN address or `0.0.0.0`.
+        // Detection returns `None` (stubbed: a dev machine may have a real
+        // Tailscale) and `host()` must resolve to something `bind_listener`
+        // cannot parse — never the LAN address or `0.0.0.0`.
         assert!(hub.host().parse::<std::net::IpAddr>().is_err());
+    }
+
+    #[test]
+    fn tailscale_mode_with_a_detected_ip_binds_to_it() {
+        let hub = RemoteHub::new();
+        hub.set_use_tailscale(true);
+
+        hub.refresh_host_with(|| Some("100.64.0.7".into()));
+
+        assert_eq!(hub.host(), "100.64.0.7");
     }
 
     #[test]

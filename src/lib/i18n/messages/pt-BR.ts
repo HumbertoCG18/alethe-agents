@@ -908,6 +908,7 @@ export const ptBR: Record<MessageKey, string> = {
   'todo.campaigns.stateBlocked': 'Bloqueada',
   'todo.campaigns.stateReserved': 'Reservada',
   'todo.campaigns.stateDone': 'Concluída',
+  'todo.campaigns.stateDiscarded': 'Descartada',
   'todo.campaigns.updated': 'Atualizada {when}',
   'todo.campaigns.open': 'Abrir',
   'todo.campaigns.openLabel': 'Abrir campanha {id}',
@@ -933,7 +934,7 @@ export const ptBR: Record<MessageKey, string> = {
   'todo.campaignEmpty': 'Nenhuma tarefa aqui.',
   'todo.activeSection': 'Ativas',
   'todo.activeEmpty': 'Nenhuma campanha ativa: abra uma em Campanhas.',
-  'todo.activeDone': '{count} concluídas',
+  'todo.activeDone': '{count} encerradas',
   'todo.agentLabel': 'Agente:',
   'todo.pending.title': 'Pendentes',
   'todo.pending.hint': 'aguardando você',
@@ -1175,7 +1176,7 @@ export const ptBR: Record<MessageKey, string> = {
   'prefs.orchestrationModelsFailed':
     'Não foi possível listar os modelos do Codex ({error}). Você ainda pode digitar o nome de um modelo.',
   'prefs.orchestrationCustomModel': 'Usar "{value}"',
-  'prefs.orchestrationCodexOnly': 'Só para workers Codex',
+  'prefs.orchestrationNoReadOnly': 'Indisponível para workers Antigravity',
   'prefs.multiagentSchedulerTitle': 'Agendador e fila de tarefas',
   'prefs.multiagentSchedulerDesc':
     'Gerencia ondas de execução a partir do backlog real de `.planning/task.md` por projeto.',
@@ -2743,8 +2744,7 @@ export const ptBR: Record<MessageKey, string> = {
   'orchestrator.modelEffortTitle':
     'Roda no {model} com esforço de raciocínio {effort}, como o orquestrador pediu',
   'orchestrator.readOnly': 'somente leitura',
-  'orchestrator.readOnlyTitle':
-    'Iniciado em sandbox somente leitura: lê arquivos e roda comandos, mas não escreve',
+  'orchestrator.readOnlyTitle': 'Iniciado em somente leitura: lê arquivos, mas não escreve',
   'orchestrator.status.queued': 'aguardando vaga',
   'orchestrator.status.running': 'rodando',
   'orchestrator.status.done': 'concluído',

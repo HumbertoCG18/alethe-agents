@@ -20,9 +20,21 @@ const FRONTEND: &str = include_str!("../assets/rules/frontend.md");
 /// What ships with Alethe. The person edits these or replaces them entirely.
 pub fn default_rule_sets() -> Vec<RuleSet> {
     vec![
-        RuleSet { id: GENERAL_ID.into(), name: "General".into(), text: GENERAL.into() },
-        RuleSet { id: "backend".into(), name: "Backend".into(), text: BACKEND.into() },
-        RuleSet { id: "frontend".into(), name: "Frontend".into(), text: FRONTEND.into() },
+        RuleSet {
+            id: GENERAL_ID.into(),
+            name: "General".into(),
+            text: GENERAL.into(),
+        },
+        RuleSet {
+            id: "backend".into(),
+            name: "Backend".into(),
+            text: BACKEND.into(),
+        },
+        RuleSet {
+            id: "frontend".into(),
+            name: "Frontend".into(),
+            text: FRONTEND.into(),
+        },
     ]
 }
 
@@ -83,7 +95,11 @@ pub fn unknown_set_error(sets: &[RuleSet], name: &str) -> String {
     let names: Vec<&str> = sets.iter().map(|set| set.name.as_str()).collect();
     format!(
         "unknown rule set {name:?}. Available: {}",
-        if names.is_empty() { "none".to_string() } else { names.join(", ") }
+        if names.is_empty() {
+            "none".to_string()
+        } else {
+            names.join(", ")
+        }
     )
 }
 
@@ -111,7 +127,9 @@ pub fn rules_block(sets: &[RuleSet], named: Option<&str>) -> Result<String, Stri
         .map(|set| set.text.trim())
         .collect::<Vec<_>>()
         .join("\n\n");
-    Ok(format!("<alethe-rules>\n{PRECEDENCE}\n\n{body}\n</alethe-rules>\n\n"))
+    Ok(format!(
+        "<alethe-rules>\n{PRECEDENCE}\n\n{body}\n</alethe-rules>\n\n"
+    ))
 }
 
 #[cfg(test)]
@@ -120,17 +138,34 @@ mod tests {
 
     fn sets() -> Vec<RuleSet> {
         vec![
-            RuleSet { id: "general".into(), name: "General".into(), text: "always".into() },
-            RuleSet { id: "db".into(), name: "Banco de Dados".into(), text: "sql".into() },
+            RuleSet {
+                id: "general".into(),
+                name: "General".into(),
+                text: "always".into(),
+            },
+            RuleSet {
+                id: "db".into(),
+                name: "Banco de Dados".into(),
+                text: "sql".into(),
+            },
         ]
     }
 
     #[test]
     fn a_name_matches_regardless_of_case_and_accents() {
         // An agent typing a set name is one keystroke from a failed call.
-        assert_eq!(find_set(&sets(), "banco de dados").map(|s| s.id.as_str()), Some("db"));
-        assert_eq!(find_set(&sets(), "BANCO DE DADOS").map(|s| s.id.as_str()), Some("db"));
-        assert_eq!(find_set(&sets(), "Banco de Dados").map(|s| s.id.as_str()), Some("db"));
+        assert_eq!(
+            find_set(&sets(), "banco de dados").map(|s| s.id.as_str()),
+            Some("db")
+        );
+        assert_eq!(
+            find_set(&sets(), "BANCO DE DADOS").map(|s| s.id.as_str()),
+            Some("db")
+        );
+        assert_eq!(
+            find_set(&sets(), "Banco de Dados").map(|s| s.id.as_str()),
+            Some("db")
+        );
         assert_eq!(find_set(&sets(), "banco"), None);
     }
 
@@ -150,7 +185,10 @@ mod tests {
             name: "Sessa\u{0303}o".into(),
             text: "sql".into(),
         }];
-        assert_eq!(find_set(&with_marks, "sessão").map(|s| s.id.as_str()), Some("db"));
+        assert_eq!(
+            find_set(&with_marks, "sessão").map(|s| s.id.as_str()),
+            Some("db")
+        );
     }
 
     #[test]
@@ -158,7 +196,10 @@ mod tests {
         let block = rules_block(&sets(), None).expect("a block");
         assert!(block.contains("always"), "{block}");
         assert!(!block.contains("sql"), "{block}");
-        assert!(block.contains("the repository wins"), "precedence is stated: {block}");
+        assert!(
+            block.contains("the repository wins"),
+            "precedence is stated: {block}"
+        );
     }
 
     #[test]
@@ -170,12 +211,19 @@ mod tests {
     #[test]
     fn an_unknown_name_is_refused_and_lists_what_exists() {
         let error = rules_block(&sets(), Some("Backend")).expect_err("refusal");
-        assert!(error.contains("General") && error.contains("Banco de Dados"), "{error}");
+        assert!(
+            error.contains("General") && error.contains("Banco de Dados"),
+            "{error}"
+        );
     }
 
     #[test]
     fn without_a_general_set_the_block_is_whatever_was_named() {
-        let only_db = vec![RuleSet { id: "db".into(), name: "DB".into(), text: "sql".into() }];
+        let only_db = vec![RuleSet {
+            id: "db".into(),
+            name: "DB".into(),
+            text: "sql".into(),
+        }];
         let block = rules_block(&only_db, Some("DB")).expect("a block");
         assert!(block.contains("sql"), "{block}");
     }
@@ -185,6 +233,9 @@ mod tests {
         let defaults = default_rule_sets();
         let ids: Vec<&str> = defaults.iter().map(|set| set.id.as_str()).collect();
         assert_eq!(ids, vec!["general", "backend", "frontend"]);
-        assert!(defaults.iter().all(|set| set.text.len() > 200), "assets are loaded, not empty");
+        assert!(
+            defaults.iter().all(|set| set.text.len() > 200),
+            "assets are loaded, not empty"
+        );
     }
 }

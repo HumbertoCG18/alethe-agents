@@ -12,6 +12,10 @@ import type { GitCheckout, GitCheckouts } from './tauri/git'
 import type { OrchestratorJob } from './tauri/orchestrator'
 
 const DONE = 'concluída'
+const DISCARDED = 'descartada'
+/** Closed states: `descartada` is closed without delivery, so it stays out of the progress count. */
+const FINAL: readonly string[] = [DONE, DISCARDED]
+export const isFinal = (state: string) => FINAL.includes(state)
 export const TASK_STATES = [
   'proposta',
   'pronta',
@@ -19,6 +23,7 @@ export const TASK_STATES = [
   'bloqueada',
   'reservada',
   DONE,
+  DISCARDED,
 ] as const
 export const CAMPAIGN_WINDOWS = ['assistida', 'noite', 'qualquer'] as const
 
@@ -229,15 +234,16 @@ export function parseCampaigns(source: string): CampaignRegistry | null {
   const campaignsById = new Map(parsed.map((campaign) => [campaign.id, campaign]))
   const tasksById = new Map(parsed.flatMap((campaign) => campaign.tasks.map((t) => [t.id, t])))
   const campaignDone = (campaign: (typeof parsed)[number]) =>
-    campaign.decomposed && campaign.tasks.every((task) => task.state === DONE)
+    campaign.decomposed && campaign.tasks.every((task) => FINAL.includes(task.state))
   const finished = (id: string): boolean => {
     const campaign = campaignsById.get(id)
-    return campaign ? campaignDone(campaign) : tasksById.get(id)?.state === DONE
+    return campaign ? campaignDone(campaign) : FINAL.includes(tasksById.get(id)?.state ?? '')
   }
 
   const campaigns = parsed.map((campaign) => {
     const { tasks } = campaign
-    const done = tasks.filter((task) => task.state === DONE).length
+    const counted = tasks.filter((task) => task.state !== DISCARDED)
+    const done = counted.filter((task) => task.state === DONE).length
     for (const task of tasks) {
       task.unmet = [...campaign.dependsOn, ...task.dependsOn].filter((id) => !finished(id))
     }
@@ -249,8 +255,8 @@ export function parseCampaigns(source: string): CampaignRegistry | null {
     return {
       ...campaign,
       done,
-      total: tasks.length,
-      percent: tasks.length > 0 ? Math.round((100 * done) / tasks.length) : 0,
+      total: counted.length,
+      percent: counted.length > 0 ? Math.round((100 * done) / counted.length) : 0,
       situation,
       night: tasks.some((task) => task.window === 'noite'),
     }
@@ -271,7 +277,7 @@ function situationOf(
   const taskWaits = [
     ...new Set(
       tasks
-        .filter((task) => task.state !== DONE)
+        .filter((task) => !FINAL.includes(task.state))
         .flatMap((task) => task.dependsOn.filter((id) => task.unmet.includes(id))),
     ),
   ].sort()
@@ -291,17 +297,18 @@ function situationOf(
 export function nightView(campaign: Campaign): Campaign | null {
   const tasks = campaign.tasks.filter((task) => task.window === 'noite')
   if (tasks.length === 0) return null
-  const done = tasks.filter((task) => task.state === DONE).length
+  const counted = tasks.filter((task) => task.state !== DISCARDED)
+  const done = counted.filter((task) => task.state === DONE).length
   return {
     ...campaign,
     tasks,
     done,
-    total: tasks.length,
-    percent: Math.round((100 * done) / tasks.length),
+    total: counted.length,
+    percent: counted.length > 0 ? Math.round((100 * done) / counted.length) : 0,
     situation: situationOf(
       tasks,
       campaign.dependsOn.filter((id) => campaign.tasks.some((task) => task.unmet.includes(id))),
-      done === tasks.length,
+      tasks.every((task) => FINAL.includes(task.state)),
     ),
   }
 }
@@ -463,7 +470,7 @@ export function campaignPrerequisites(
     const dependency = campaigns.find((item) => item.id === id)
     return dependency
       ? dependency.situation.kind !== 'done'
-      : !campaigns.some((item) => item.tasks.some((task) => task.id === id && task.state === DONE))
+      : !campaigns.some((item) => item.tasks.some((task) => task.id === id && isFinal(task.state)))
   })
 }
 
@@ -488,9 +495,9 @@ export function campaignTaskView(
   filter: 'all' | 'active' | 'completed',
 ): CampaignTask[] {
   const rank = (task: CampaignTask) =>
-    task.state === DONE ? OPEN_ORDER.length : OPEN_ORDER.indexOf(task.state)
+    isFinal(task.state) ? OPEN_ORDER.length : OPEN_ORDER.indexOf(task.state)
   return tasks
-    .filter((task) => filter === 'all' || (filter === 'completed') === (task.state === DONE))
+    .filter((task) => filter === 'all' || (filter === 'completed') === isFinal(task.state))
     .sort((a, b) => rank(a) - rank(b) || a.id.localeCompare(b.id, 'en', { numeric: true }))
 }
 
@@ -579,7 +586,7 @@ export function stepProgress(task: Pick<CampaignTask, 'steps'>): {
  */
 export function campaignStepTitle(campaign: Campaign): string | null {
   for (const task of campaign.tasks) {
-    if (task.state === DONE) continue
+    if (isFinal(task.state)) continue
     const { done, total } = stepProgress(task)
     if (done > 0 && done < total) return `${task.id} ${done}/${total}`
   }
@@ -661,7 +668,7 @@ export type CampaignBlock = { waiting: string; on: string; ids: string[] }
 export function campaignBlock(a: Campaign, b: Campaign): CampaignBlock | null {
   const waitsOn = (campaign: Campaign) => [
     ...campaign.situation.waits,
-    ...campaign.tasks.filter((task) => task.state !== DONE).flatMap((task) => task.unmet),
+    ...campaign.tasks.filter((task) => !isFinal(task.state)).flatMap((task) => task.unmet),
   ]
   const owns = (campaign: Campaign, id: string) =>
     id === campaign.id || campaign.tasks.some((task) => task.id === id)
@@ -919,7 +926,7 @@ export function resumeTask(campaign: Campaign): CampaignTask | null {
   return (
     campaign.tasks.find((task) => task.state === 'em execução') ??
     campaign.tasks.find(resumable) ??
-    campaign.tasks.find((task) => task.state !== DONE) ??
+    campaign.tasks.find((task) => !isFinal(task.state)) ??
     null
   )
 }
